@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+build/
+dist_app/
+.test_tmp/
+*.spec.bak
+.DS_Store
+
+# PyInstaller 输出与安装包（通过 GitHub Releases 分发，不进仓库）
+dist/
+installer/
+output/
+
+# 本地测试截图与日志
+.test_*.png
+.test_out.log
+
+# 工作区工具目录
+.workbuddy/
+.zcode/
