@@ -23,7 +23,7 @@
 
 ### 方式一：直接运行打包版
 
-1. 双击 `dist\FileButler\FileButler.exe`
+1. 前往 [Releases 页面](https://github.com/7SteveJohn/FileButler/releases) 下载最新版安装包（或绿色版压缩包）并安装/解压
 2. 前往「设置」页确认 Ollama 状态（本机已装 Ollama 会自动检测）
 3. 若缺模型，在设置页一键下载：对话模型（qwen2.5 系列）+ 向量模型 bge-m3（约 1.2 GB）
 
