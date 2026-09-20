@@ -684,15 +684,21 @@ def search(query=None, category=None, ext=None, min_size=None, is_image=None,
                 f"ORDER BY file_index.{col} {order} LIMIT ? OFFSET ?")
     conn = db.get_conn()
     try:
+        # 先取行再决定要不要计数：首页且没填满一页时，行数就是精确总数。
+        # 两字中文词（「报告」「设置」）不足 3 字符走不了 trigram，只能 LIKE '%…%' 全表扫，
+        # 计数与取行各扫一遍实测 337ms + 333ms；省掉那次计数直接减半。
+        rows = conn.execute(sql_rows, fts_params + params + [limit, offset]).fetchall()
+        items = [dict(r) for r in rows]
         capped = False
-        if join_fts and not conds:
+        if offset == 0 and len(items) < limit:
+            total = len(items)
+        elif join_fts and not conds:
             total = conn.execute(_SQL_FTS_COUNT_CAPPED,
                                  (fts_params[0], _FTS_COUNT_CAP)).fetchone()["c"]
             capped = total >= _FTS_COUNT_CAP
         else:
             total = conn.execute(sql_total, fts_params + params).fetchone()["c"]
-        rows = conn.execute(sql_rows, fts_params + params + [limit, offset]).fetchall()
-        return {"total": total, "items": [dict(r) for r in rows], "total_capped": capped}
+        return {"total": total, "items": items, "total_capped": capped}
     finally:
         conn.close()
 
