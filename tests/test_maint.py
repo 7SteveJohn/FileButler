@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -93,6 +94,31 @@ def main():
         n = conn.execute("SELECT COUNT(*) c FROM file_index").fetchone()["c"]
         conn.close()
         check("data intact after vacuum", n == 0, str(n))
+
+        # 多线程形态回归位：应用的 vacuum_db 把 VACUUM 丢到后台新线程跑，而 UI /
+        # watcher / 预热线程各持一条带 mmap 的长期缓存连接——只关自己那条没用，
+        # SQLite 会因为别的连接还映射着文件而不截断。上面那条单线程 vacuum 抓不到
+        # 这个（它当时就是绿的，而功能是坏的），所以这里刻意让主线程持有连接。
+        conn = db.get_conn()
+        conn.executemany(
+            "INSERT INTO file_index(root_id,path,name,ext,category,size,mtime) "
+            "VALUES(?,?,?,?,?,?,?)",
+            [(1, f"C:\\fb_maint_mt\\{'z' * 200}\\f{i}.txt", f"f{i}.txt", "txt", "文档", 10, 1.0)
+             for i in range(4000)])
+        conn.commit()
+        conn.execute("DELETE FROM file_index WHERE path LIKE ?", ("C:\\fb_maint_mt\\%",))
+        conn.commit()
+        before_mt = os.path.getsize(db.DB_PATH)
+        box = {}
+        th = threading.Thread(target=lambda: box.update(r=db.vacuum()))
+        th.start()
+        th.join()
+        after_mt = os.path.getsize(db.DB_PATH)
+        check("vacuum shrinks across threads", after_mt < before_mt,
+              f"{before_mt} -> {after_mt} {box.get('r')}")
+        check("其它连接 mmap 已恢复",
+              conn.execute("PRAGMA mmap_size").fetchone()[0] == db.MMAP_SIZE)
+        conn.close()
 
         # 4. FTS 后台一致性重建：人为制造漂移 → init_db 触发后台修复 → 轮询等齐
         conn = db.get_conn()

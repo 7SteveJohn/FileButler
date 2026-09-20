@@ -7,6 +7,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from backend import db
 from backend.core import dedupe, executor, planner, rules, scanner
 from backend.db import DB_PATH
 from backend.knowledge import chunker, parsers
@@ -26,6 +27,7 @@ def check(name, cond, detail=""):
 
 
 def main():
+    db.init_db()   # rules/executor 走 sqlite；不自己建表就只能蹭同目录别的套件建好的库
     sandbox = tempfile.mkdtemp(prefix="fb_test_")
     src = os.path.join(sandbox, "source")
     out = os.path.join(sandbox, "sorted")
