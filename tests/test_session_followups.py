@@ -1,10 +1,14 @@
-"""本 session 三项改动的回归测试：FTS 计数封顶、收藏备注、OCR 状态契约。
+"""接手 FileButler 交接清单后各项改动的回归测试：
+FTS 计数封顶 / 收藏备注 / OCR 状态契约 / 盘根只在首次或新增时补入 /
+空库时能发现有数据的其它库。
 
 运行方式（APPDATA 必须指向一次性目录，否则会写进真实用户库）：
     APPDATA='C:\\tmp\\fb_captest' python tests/test_session_followups.py
 """
 import os
+import shutil
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -168,6 +172,40 @@ def test_roots_sticky():
     check("没见过的盘仍会自动补入", victim in paths(), f"{victim} 没补回来")
 
 
+def test_find_data_dirs():
+    print("\n[5] 空库时能找到别处的 FileButler 库")
+    base = os.path.join(tempfile.gettempdir(), "fb_finddirs")
+    shutil.rmtree(base, ignore_errors=True)
+    big = os.path.join(base, "libBig")
+    small = os.path.join(base, "libSmall")
+    for d, size in ((big, 4096), (small, 512)):
+        os.makedirs(d)
+        with open(os.path.join(d, "filebutler.db"), "wb") as f:
+            f.write(b"0" * size)
+    # 二级目录：扫描刻意是有界的，不该伸到这里来
+    nested = os.path.join(big, "nested")
+    os.makedirs(nested)
+    with open(os.path.join(nested, "filebutler.db"), "wb") as f:
+        f.write(b"0" * 8192)
+
+    def mine(res):
+        return [h for h in res if h["dir"].startswith(base)]
+
+    found = mine(db.find_data_dirs([base], exclude=os.path.join(base, "none", "filebutler.db"),
+                                   min_bytes=100))
+    dirs = {h["dir"] for h in found}
+    check("找到盘根一级子目录里的库", dirs == {big, small}, str(sorted(dirs)))
+    check("按体积降序返回", found and found[0]["dir"] == big, str(found))
+    check("不做递归全盘扫描", nested not in dirs, str(sorted(dirs)))
+    ex = mine(db.find_data_dirs([base], exclude=os.path.join(big, "filebutler.db"),
+                                min_bytes=100))
+    check("排除当前正在用的库", {h["dir"] for h in ex} == {small}, str(ex))
+    check("低于门槛的碎文件不算候选",
+          os.path.join(base, "tiny") not in {h["dir"] for h in
+                                             mine(db.find_data_dirs([base], min_bytes=1 << 20))})
+    shutil.rmtree(base, ignore_errors=True)
+
+
 def main():
     print(f"APPDATA = {os.environ.get('APPDATA')}")
     print(f"DB_PATH = {db.DB_PATH}")
@@ -179,6 +217,7 @@ def main():
     test_favorites_note()
     test_ocr_status_contract()
     test_roots_sticky()
+    test_find_data_dirs()
     conn = db.get_conn()
     try:
         conn.execute("DELETE FROM file_index")

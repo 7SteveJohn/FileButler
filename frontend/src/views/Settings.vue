@@ -753,6 +753,24 @@ onMounted(() => {
               {{ dataDir.is_default ? '默认' : '自定义' }}
             </n-tag>
           </div>
+          <n-alert v-if="dataDir.alternatives && dataDir.alternatives.length"
+            type="warning" :bordered="false">
+            <div style="font-size:13px">
+              当前索引库是空的，但在别处发现了装着数据的 FileButler 库——通常是数据目录指针
+              丢失或迁移中途被打断。确认是你要的那份后点「切换到这里」，走的是下面的搬迁流程
+              （默认复制，原目录保留为备份）。
+            </div>
+            <div v-for="a in dataDir.alternatives" :key="a.db_path"
+              style="display:flex;align-items:center;gap:8px;margin-top:6px">
+              <code class="fb-path" style="flex:1;min-width:0" :title="a.db_path">{{ a.dir }}</code>
+              <n-text depth="3" style="font-size:12px;flex-shrink:0">
+                {{ (a.size / 1e6).toFixed(0) }} MB
+              </n-text>
+              <n-button size="tiny" round type="primary" ghost @click="pendingDir = a.dir">
+                切换到这里
+              </n-button>
+            </div>
+          </n-alert>
           <n-text depth="3" style="font-size:12.5px">
             数据库 + 缩略图缓存共 {{ (dataDir.total_size / 1e6).toFixed(1) }} MB。
             切换到同步盘/其他盘后，备份时只需拷贝该目录。

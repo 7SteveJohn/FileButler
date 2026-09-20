@@ -52,6 +52,43 @@ def _apply_data_dir():
     DB_PATH = os.path.join(APP_DIR, "filebutler.db")
 
 
+def find_data_dirs(drives=(), exclude=None, min_bytes=1 << 20):
+    """有界地找一找别处是否还有装着数据的 FileButler 库。
+
+    只用于「当前库是空的」这一异常场景（指针文件丢失 / 迁移半途失败），所以刻意
+    不做递归全盘扫描：只看默认目录、各盘根本身、以及盘根的一级子目录里的
+    filebutler.db——一次 readdir 加若干 stat，代价可控。
+    返回按体积降序的前 5 个候选，调用方据此提示用户，切换与否仍由用户决定。
+    """
+    exc = os.path.normcase(os.path.abspath(exclude or DB_PATH))
+    dirs = [DEFAULT_DIR]
+    for d in drives:
+        dirs.append(d)
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            dirs.append(e.path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    hits = {}
+    for parent in dirs:
+        p = os.path.join(parent, "filebutler.db")
+        if os.path.normcase(os.path.abspath(p)) == exc:
+            continue
+        try:
+            size = os.path.getsize(p)
+        except OSError:
+            continue
+        if size < min_bytes:
+            continue
+        hits[os.path.normcase(p)] = {"dir": parent, "db_path": p, "size": size}
+    return sorted(hits.values(), key=lambda x: -x["size"])[:5]
+
+
 _apply_data_dir()
 
 SCHEMA = """

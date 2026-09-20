@@ -1780,9 +1780,23 @@ class Api:
                     size += os.path.getsize(os.path.join(root, n))
                 except OSError:
                     pass
+        # 当前库空着、别处却有一个装着数据的 filebutler.db → 极可能是数据目录指针
+        # 丢了（迁移半途、或指针文件被删）。用户只会看到"库空了"，所以主动找出来提示。
+        # 扫描是有界的（见 db.find_data_dirs），且只在库确实为空时才跑。
+        try:
+            conn = db.get_conn()
+            try:
+                n_index = conn.execute("SELECT COUNT(*) c FROM file_index").fetchone()["c"]
+            finally:
+                conn.close()
+        except Exception:
+            n_index = -1
+        alts = (db.find_data_dirs(fileindex.enumerate_drives(), exclude=db.DB_PATH)
+                if n_index == 0 else [])
         return {"current": cur, "default_dir": db.DEFAULT_DIR,
                 "is_default": os.path.normcase(cur) == os.path.normcase(db.DEFAULT_DIR),
-                "total_size": size, "db_path": db.DB_PATH}
+                "total_size": size, "db_path": db.DB_PATH,
+                "n_indexed": n_index, "alternatives": alts}
     def open_data_dir(self):
         os.startfile(db.get_data_dir())
         return {"ok": True}
