@@ -1190,7 +1190,7 @@ refresh()
 
         <!-- 内容搜索结果（文档 + 图片语义，融合展示） -->
         <n-card v-if="contentResults && (contentResults.results.length || contentResults.images.length)"
-          size="small" title="内容匹配（文档 + 图片语义）">
+          size="small" title="内容匹配（文档正文 + 知识库 + 图片语义）">
           <template #header-extra>
             <n-tag size="small" :type="contentResults.mode === 'vector' ? 'success' : 'warning'">
               {{ contentResults.mode === 'vector' ? '语义' : '关键词' }}
@@ -1215,7 +1215,8 @@ refresh()
           </div>
         </n-card>
         <n-card v-else-if="contentResults && contentLoading === false && query" size="small">
-          <n-empty description="知识库中没有匹配内容——把相关文件夹加入「知识库」页并索引后即可内容级搜索" />
+          <n-empty :description="contentResults.fulltext_reason
+            || '没有正文命中——正文级搜索需先在 设置 → 全盘内容索引 建立索引；也可把文件夹加入「知识库」做语义搜索'" />
         </n-card>
       </n-space>
     </n-card>

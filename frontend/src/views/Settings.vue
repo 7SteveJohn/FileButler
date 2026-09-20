@@ -348,6 +348,40 @@ imgOffs.push(on('img_desc_done', (r) => {
 imgOffs.push(on('img_desc_error', (e) => { imgDescProgress.value = null; message.error(String(e)) }))
 onUnmounted(() => imgOffs.forEach((f) => f()))
 
+// ---------- 全盘内容索引（正文进 FTS，手动启动 + 预算受控） ----------
+const ci = ref(null)           // {status: {...}, plan: {...}|null}
+const ciBusy = ref(false)
+const ciRunning = computed(() => !!ci.value?.status?.running)
+
+async function loadContentIndex() {
+  try { ci.value = await api('content_index_status') } catch (e) { /* 忽略 */ }
+}
+
+async function ciStart() {
+  ciBusy.value = true
+  await api('content_index_start')
+  await loadContentIndex()
+  ciBusy.value = false
+}
+
+async function ciStop() {
+  await api('content_index_stop')
+  message.info('已请求停止，当前文件处理完即退出')
+}
+
+let ciOffs = []
+ciOffs.push(on('content_index_progress', (p) => {
+  if (!ci.value) ci.value = { status: {}, plan: null }
+  ci.value.status = { ...ci.value.status, ...p, running: true }
+}))
+ciOffs.push(on('content_index_done', (s) => {
+  if (s.budget_hit) message.warning('已达预算上限，可在设置里放宽篇数或体积上限')
+  else message.success(`内容索引结束：成功 ${s.ok || 0} 篇，失败 ${s.failed || 0} 篇`)
+  loadContentIndex()
+}))
+onUnmounted(() => ciOffs.forEach((f) => f()))
+loadContentIndex()
+
 // ---------- 功能开关 ----------
 const autoKb = ref(true)
 const autostart = ref(false)
@@ -884,6 +918,41 @@ onMounted(() => {
             </n-list-item>
           </n-list>
           <n-text v-else depth="3">Ollama 未运行或尚无模型</n-text>
+        </n-space>
+      </n-card>
+
+      <!-- ============ 全盘内容索引 ============ -->
+      <n-card title="全盘内容索引（正文搜索）">
+        <n-space vertical size="small">
+          <n-text depth="3" style="font-size:12.5px">
+            把已编目文档（PDF / Word / PPT / Excel / 文本 / 代码）的正文抽进本地全文索引，
+            之后「搜内容」可直接命中正文里的词。不依赖 AI 模型、不产生向量，
+            与上面的「自动知识库索引」互不影响。
+          </n-text>
+          <n-space size="small" align="center" style="margin-top:4px">
+            <n-button size="small" type="primary" ghost :disabled="ciRunning" :loading="ciBusy"
+              @click="ciStart">{{ ciRunning ? '索引进行中…' : '开始索引' }}</n-button>
+            <n-button size="small" :disabled="!ciRunning" @click="ciStop">停止</n-button>
+            <n-button size="small" quaternary @click="loadContentIndex">刷新</n-button>
+          </n-space>
+          <n-progress v-if="ciRunning && ci?.status?.total" type="line" :percentage="Math.min(99.5, Math.round((ci.status.done || 0) / ci.status.total * 100))"
+            indicator-placement="inside" processing />
+          <n-text depth="3" style="font-size:12px">
+            已索引 {{ ci?.status?.indexed?.ok ?? 0 }} 篇 ·
+            正文 {{ fmtMB(ci?.status?.indexed?.bytes ?? 0) }} ·
+            失败 {{ ci?.status?.indexed?.failed ?? 0 }} 篇
+          </n-text>
+          <n-text v-if="ci?.plan" depth="3" style="font-size:12px">
+            待处理候选 {{ ci.plan.candidates }} 篇，预算内还会索引 {{ ci.plan.will_index }} 篇 ·
+            上限 {{ ci.plan.budget.max_docs }} 篇 / {{ (ci.plan.budget.max_body_bytes / 1e9).toFixed(1) }} GB
+          </n-text>
+          <n-text depth="3" style="font-size:12px">
+            单文件不超过 10 MB、正文最多取前 20 万字符；可随时停止，已完成的进度会保留并增量续跑。
+          </n-text>
+          <n-text v-if="ci?.status?.budget_hit || (ci?.plan && ci.plan.budget.docs_left === 0)"
+            type="warning" style="font-size:12px">
+            已达预算上限——放宽上限后再次点「开始索引」即可继续。
+          </n-text>
         </n-space>
       </n-card>
 

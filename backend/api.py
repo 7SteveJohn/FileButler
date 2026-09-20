@@ -12,7 +12,7 @@ import time
 
 import webview
 
-from backend import db, fileindex
+from backend import contentindex, db, fileindex
 from backend.core import classifier, cleanup, dedupe, executor, planner, rules as rules_mod, scanner
 from backend.knowledge import indexer, imgsearch, rag
 from backend.ollama_client import OllamaClient, OllamaNotRunning
@@ -410,6 +410,44 @@ class Api:
 
         threading.Thread(target=worker, daemon=True).start()
         return {"started": True}
+
+    # ---------- 全盘内容索引（正文进 FTS；默认不自动跑，设置页手动启动） ----------
+
+    def content_index_status(self, with_plan=True):
+        """进度 + 计划摘要。跑动中不重复算 plan（要扫一遍 83 万行候选集）。"""
+        st = contentindex.status()
+        return {"status": st,
+                "plan": contentindex.plan() if (with_plan and not st["running"]) else None}
+
+    def content_index_budget(self, max_docs=None, max_body_bytes=None):
+        """读/写预算上限（不传参 = 读）。"""
+        if max_docs is not None or max_body_bytes is not None:
+            contentindex.set_budgets(max_docs, max_body_bytes)
+        n, b = contentindex.budgets()
+        return {"max_docs": n, "max_body_bytes": b}
+
+    def content_index_start(self):
+        if contentindex.is_running():
+            return {"ok": True, "already": True}
+        r = contentindex.start(progress_cb=lambda stage, i, n, detail: self._emit(
+            "content_index_progress", {"stage": stage, "i": i, "n": n, "detail": detail}))
+        if not r.get("ok"):
+            return r
+
+        def waiter():
+            while contentindex.is_running():
+                time.sleep(1.0)
+            self._emit("content_index_done", contentindex.status())
+
+        self._emit("content_index_start", {})
+        threading.Thread(target=waiter, daemon=True, name="fb-content-notify").start()
+        return {"ok": True}
+
+    def content_index_stop(self):
+        return contentindex.stop()
+
+    def content_search(self, query, limit=20):
+        return contentindex.search(query, limit)
 
     # ---------- 事件推送 ----------
 
@@ -1370,14 +1408,20 @@ class Api:
     # ---------- 文件总索引（Everything 式，只读） ----------
 
     def global_search(self, query):
-        """全局搜索：文件名匹配（即时）+ 内容匹配（知识库 + 图片语义描述/OCR）。"""
+        """全局搜索：文件名匹配（即时）+ 内容匹配（全盘正文 FTS + 知识库向量 + 图片语义）。"""
         filename = fileindex.search(query=query, limit=200)
-        content = rag.search(query, k=6) if query.strip() else {"mode": "vector", "results": [], "images": []}
+        q = (query or "").strip()
+        fulltext = contentindex.search(q, limit=8) if q else {"results": []}
+        content = rag.search(q, k=6) if q else {"mode": "vector", "results": [], "images": []}
+        seen = {r.get("file_path") for r in fulltext["results"]}
+        merged = fulltext["results"] + [r for r in content.get("results", [])
+                                        if r.get("file_path") not in seen]
         return {"query": query,
                 "filename": filename,
-                "content": {"mode": content.get("mode"),
-                            "results": content.get("results", []),
-                            "images": content.get("images", [])}}
+                "content": {"mode": "keyword" if fulltext["results"] else content.get("mode"),
+                            "results": merged,
+                            "images": content.get("images", []),
+                            "fulltext_reason": fulltext.get("reason") or ""}}
 
     def browse_files(self, query=None, category=None, is_image=None, offset=0, limit=200,
                      sort_by="mtime", sort_order="desc", tag_ids=None,

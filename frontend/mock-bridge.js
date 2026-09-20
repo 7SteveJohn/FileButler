@@ -150,6 +150,14 @@
       return { ok: true }
     },
     ocr_status: () => ({ available: true, reason: '', hint: '' }),
+    content_index_status: () => ({
+      status: { running: false, done: 0, total: 0, ok: 0, failed: 0, body_bytes: 0,
+        budget_hit: false, stage: '', detail: '', finished_at: null,
+        indexed: { docs: 0, ok: 0, failed: 0, bytes: 0 } },
+      plan: { candidates: 12, will_index: 12, indexed: { docs: 0, ok: 0, failed: 0, bytes: 0 },
+        budget: { max_docs: 50000, max_body_bytes: 2e9, docs_left: 50000, bytes_left: 2e9 } },
+    }),
+    content_index_budget: () => ({ max_docs: 50000, max_body_bytes: 2e9 }),
     open_url: () => ({ ok: true }),
     thumb_base: () => ({ base: null }),
     set_titlebar_theme: () => ({ ok: true }),
