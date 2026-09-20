@@ -192,10 +192,10 @@ window.__fbSendToIngest = (names) => {
     :theme="naiveTheme" :theme-overrides="themeDef.naive" style="height:100%">
     <n-message-provider>
       <div class="fb-root" :class="{ 'fb-dark': themeDef.dark }">
-        <!-- 自绘标题栏（ZCode 风格）：左 logo / 中面包屑标题 / 右工具图标 + 窗口控制 -->
+        <!-- 自绘标题栏（ZCode 风格）：左活动指示 / 中面包屑标题 / 右工具图标 + 窗口控制。
+             刻意不放 logo：侧栏品牌区已有同一个图标 + 应用名，frameless 窗口里两处并排会重复 -->
         <div class="fb-titlebar pywebview-drag-region" @dblclick="onTitleDblclick">
           <div class="fb-tb-left">
-            <img :src="logoUrl" class="fb-tb-logo" alt="" />
             <span v-if="scanning" class="fb-tb-activity" title="正在后台编目文件库">
               <span class="fb-tb-spin"></span>编目中
             </span>

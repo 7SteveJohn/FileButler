@@ -55,11 +55,6 @@ html, body {
   display: flex; align-items: center;
   min-width: 0;
 }
-.fb-tb-logo {
-  width: 20px; height: 20px;
-  border-radius: 6px;
-  pointer-events: none;   /* mousedown 直接命中栏本身才能拖动 */
-}
 .fb-tb-center {
   position: absolute;
   left: 50%;
