@@ -25,12 +25,16 @@ export const THEMES = {
         successColor: '#0e9f6e', borderRadius: '8px', borderRadiusSmall: '6px',
         fontFamily: FONT, bodyColor: '#f4f6f4', cardColor: '#ffffff',
         borderColor: 'rgba(17,24,39,.07)',
-        textColor1: '#101826', textColor2: '#3d4a56', textColor3: '#7a8694',
+        textColor1: '#101826', textColor2: '#3d4a56', textColor3: '#5f6b78',
         fontWeightStrong: '600',
       },
       Card: { borderRadius: '12px', paddingMedium: '16px 20px' },
       Input: { borderRadius: '8px' },
-      Tag: { borderRadius: '999px', fontWeight: '500' },
+      Tag: {
+        borderRadius: '999px', fontWeight: '500',
+        // naive 默认 warning/error 文字压在同色淡底上不到 2:1，压深文字色
+        textColorWarning: '#8a5a00', textColorError: '#a8202b',
+      },
       Menu: { borderRadius: '8px', itemHeight: '36px' },
       Button: { borderRadius: '8px', fontWeight: '500' },
       DataTable: { fontWeightStrong: '600' },
@@ -76,12 +80,16 @@ export const THEMES = {
         borderRadius: '8px', borderRadiusSmall: '6px',
         fontFamily: FONT, bodyColor: '#f3f5fa', cardColor: '#ffffff',
         borderColor: 'rgba(17,24,39,.07)',
-        textColor1: '#101826', textColor2: '#3d4a56', textColor3: '#7a8694',
+        textColor1: '#101826', textColor2: '#3d4a56', textColor3: '#5f6b78',
         fontWeightStrong: '600',
       },
       Card: { borderRadius: '12px', paddingMedium: '16px 20px' },
       Input: { borderRadius: '8px' },
-      Tag: { borderRadius: '999px', fontWeight: '500' },
+      Tag: {
+        borderRadius: '999px', fontWeight: '500',
+        // naive 默认 warning/error 文字压在同色淡底上不到 2:1，压深文字色
+        textColorWarning: '#8a5a00', textColorError: '#a8202b',
+      },
       Menu: { borderRadius: '8px', itemHeight: '36px' },
       Button: { borderRadius: '8px', fontWeight: '500' },
       DataTable: { fontWeightStrong: '600' },
@@ -131,6 +139,8 @@ export const THEMES = {
       },
       Card: { borderRadius: '12px', paddingMedium: '16px 20px' },
       Input: { borderRadius: '8px' },
+      /* cyber 是深色主题：标签文字要往亮里走，naive 深色默认值本来就够，
+         不能套用浅色主题那套"压深文字色"的做法（会反过来看不清）*/
       Tag: { borderRadius: '999px', fontWeight: '500' },
       Menu: {
         borderRadius: '8px', itemHeight: '36px',
