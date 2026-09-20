@@ -147,6 +147,8 @@ async function loadDataDir() {
 // ---------- 数据库维护 ----------
 const dbMaint = ref({ db_size: 0, wal_size: 0, backups: 0, vacuum_running: false })
 const fmtMB = (n) => ((n || 0) / 1e6).toFixed(1) + ' MB'
+// 正文索引刚起步时是 KB 量级，一律按 MB 显示会变成「0.0 MB」，看着像没干活
+const fmtBody = (n) => (n >= 1e6 ? fmtMB(n) : ((n || 0) / 1024).toFixed(0) + ' KB')
 
 async function loadDbMaint() {
   try { dbMaint.value = await api('db_maintenance_info') } catch (e) { /* 忽略 */ }
@@ -371,6 +373,17 @@ async function ciStart() {
 async function ciStop() {
   await api('content_index_stop')
   message.info('已请求停止，当前文件处理完即退出')
+}
+
+const ciHasIndex = computed(() => !!ci.value?.status?.indexed?.docs)
+
+async function ciReset() {
+  if (!window.confirm('清空已索引的文档正文？预算额度会一并释放，之后可重新开始索引。\n'
+    + '（磁盘空间要再点一次「压缩数据库」才会真的腾出来）')) return
+  const r = await api('content_index_reset')
+  if (r && r.ok === false) { message.error(r.error || '清空失败'); return }
+  message.success('正文索引已清空')
+  loadContentIndex()
 }
 
 let ciOffs = []
@@ -937,13 +950,15 @@ onMounted(() => {
             <n-button size="small" type="primary" ghost :disabled="ciRunning" :loading="ciBusy"
               @click="ciStart">{{ ciRunning ? '索引进行中…' : '开始索引' }}</n-button>
             <n-button size="small" :disabled="!ciRunning" @click="ciStop">停止</n-button>
+            <n-button size="small" quaternary type="error" :disabled="ciRunning || !ciHasIndex"
+              @click="ciReset">清空索引</n-button>
             <n-button size="small" quaternary @click="loadContentIndex">刷新</n-button>
           </n-space>
           <n-progress v-if="ciRunning && ci?.status?.total" type="line" :percentage="Math.min(99.5, Math.round((ci.status.done || 0) / ci.status.total * 100))"
             indicator-placement="inside" processing />
           <n-text depth="3" style="font-size:12px">
             已索引 {{ ci?.status?.indexed?.ok ?? 0 }} 篇 ·
-            正文 {{ fmtMB(ci?.status?.indexed?.bytes ?? 0) }} ·
+            正文 {{ fmtBody(ci?.status?.indexed?.bytes ?? 0) }} ·
             失败 {{ ci?.status?.indexed?.failed ?? 0 }} 篇
           </n-text>
           <n-text v-if="ci?.plan" depth="3" style="font-size:12px">

@@ -446,6 +446,12 @@ class Api:
     def content_index_stop(self):
         return contentindex.stop()
 
+    def content_index_reset(self):
+        """清空正文索引：预算触顶想换一批、或想重建时用。跑动中拒绝。"""
+        if contentindex.is_running():
+            return {"ok": False, "error": "索引正在进行，请先停止"}
+        return contentindex.reset()
+
     def content_search(self, query, limit=20):
         return contentindex.search(query, limit)
 

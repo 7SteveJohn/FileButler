@@ -27,6 +27,9 @@
     { path: 'C:\\Users\\SevenJohn\\Pictures\\相册\\海边日落.jpg', note: '', created_at: Date.now() / 1000 - 3600 },
   ]
 
+  // 全盘内容索引的假状态（清空后归零，好让设置页按钮在 dev 下也有反馈）
+  const ciStats = { docs: 0, failed: 0, bytes: 0 }
+
   const MOCK = {
     get_status: () => ({
       ollama: { running: true, version: '0.32.13',
@@ -153,10 +156,13 @@
     content_index_status: () => ({
       status: { running: false, done: 0, total: 0, ok: 0, failed: 0, body_bytes: 0,
         budget_hit: false, stage: '', detail: '', finished_at: null,
-        indexed: { docs: 0, ok: 0, failed: 0, bytes: 0 } },
-      plan: { candidates: 12, will_index: 12, indexed: { docs: 0, ok: 0, failed: 0, bytes: 0 },
-        budget: { max_docs: 50000, max_body_bytes: 2e9, docs_left: 50000, bytes_left: 2e9 } },
+        indexed: { docs: ciStats.docs, ok: ciStats.docs, failed: ciStats.failed, bytes: ciStats.bytes } },
+      plan: { candidates: ciStats.docs ? 0 : 12, will_index: ciStats.docs ? 0 : 12,
+        indexed: { docs: ciStats.docs, ok: ciStats.docs, failed: ciStats.failed, bytes: ciStats.bytes },
+        budget: { max_docs: 50000, max_body_bytes: 2e9,
+          docs_left: 50000 - ciStats.docs, bytes_left: 2e9 - ciStats.bytes } },
     }),
+    content_index_reset: () => { ciStats.docs = 0; ciStats.failed = 0; ciStats.bytes = 0; return { ok: true } },
     content_index_budget: () => ({ max_docs: 50000, max_body_bytes: 2e9 }),
     open_url: () => ({ ok: true }),
     thumb_base: () => ({ base: null }),

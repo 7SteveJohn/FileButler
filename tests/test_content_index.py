@@ -160,6 +160,22 @@ def main():
     check("失败文件不影响其它命中",
           len(contentindex.search(PHRASE, limit=20)["results"]) >= 1)
 
+    print("\n[5] 清空与重建")
+    before = contentindex.status()["indexed"]
+    check("清空前有内容", before["ok"] >= 1, str(before))
+    check("清空成功", contentindex.reset().get("ok") is True)
+    after = contentindex.status()["indexed"]
+    check("清空后计数归零", after["ok"] == 0 and after["docs"] == 0, str(after))
+    check("清空后搜不到正文", contentindex.search(PHRASE, limit=5)["results"] == [])
+    pl5 = contentindex.plan()
+    check("预算额度被释放", pl5["budget"]["docs_left"] == contentindex.DEF_MAX_DOCS,
+          str(pl5["budget"]))
+    check("候选重新变满", pl5["candidates"] >= 6, str(pl5))
+    contentindex.start()
+    _wait()
+    check("重建后又能搜到",
+          len(contentindex.search(PHRASE, limit=20)["results"]) >= 1)
+
     # 清理
     conn = db.get_conn()
     try:

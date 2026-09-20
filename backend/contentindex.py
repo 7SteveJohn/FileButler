@@ -139,6 +139,23 @@ def plan():
                                       "docs_left": docs_left, "bytes_left": bytes_left}}
 
 
+def reset():
+    """清空正文索引（FTS 与增量记账一起清），用于重建或回收预算额度。
+
+    注意：删行不会让库文件变小（SQLite 只是把页放进 freelist），要真的把磁盘腾出来
+    还得再跑一次设置页的「压缩数据库」（db.vacuum 会撤掉各连接的映射后截断文件）。
+    """
+    ensure()
+    conn = db.get_conn()
+    try:
+        conn.execute("DELETE FROM doc_content_fts")
+        conn.execute("DELETE FROM doc_content_state")
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
 def status():
     """进度快照 + 已索引统计（跑动中也能廉价刷新，plan 才需要扫候选集）。"""
     out = dict(_prog)
