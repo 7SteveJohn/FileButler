@@ -833,6 +833,8 @@ def upsert_img(path, mtime, size, descr, vec, ocr=""):
 # ---------- 数据库备份 ----------
 
 BACKUP_KEEP = 5
+# 备份总占用上限：份数之外再套一层体积预算，避免大库把 5 份变成 5GB
+BACKUP_MAX_TOTAL = 2 * 1024 ** 3
 
 
 def backup_dir():
@@ -841,7 +843,8 @@ def backup_dir():
 
 def backup_db(only_if_changed=False):
     """在线备份到 backups/（官方 sqlite3 backup API：活库/WAL 下安全，
-    见 docs.python.org sqlite3.Connection.backup），保留最近 BACKUP_KEEP 份。
+    见 docs.python.org sqlite3.Connection.backup），保留最近 BACKUP_KEEP 份
+    且总占用不超过 BACKUP_MAX_TOTAL（至少留最新一份）。
     only_if_changed=True 且库自上次备份后无写入（主文件+WAL 的 size/mtime
     均未变）时跳过，返回 None——避免退出时每天无谓复制大库。
     变更标记存在备份目录的独立文件里（存库内会因写入标记本身改变库而失效）。"""
@@ -896,15 +899,40 @@ def backup_db(only_if_changed=False):
             f.write(_db_change_sig())
     except OSError:
         pass
-    # 轮转：只留最近 N 份
+    # 轮转：既限份数也限总体积（见 rotate_backups）
+    rotate_backups(bdir)
+    return dst
+
+
+def rotate_backups(bdir=None):
+    """按「份数 + 总体积」双预算轮转备份，返回保留下来的文件名列表。
+
+    只按份数保留的话，磁盘占用会随库大小线性膨胀——838MB 的库配 BACKUP_KEEP=5
+    就是静默的 4.2GB（本机实测就是这么堆出来的）。所以再套一层体积预算；
+    但无论如何都至少留下最新一份，否则等于把唯一的备份也删了。
+    """
+    import re as _re
+    bdir = bdir or backup_dir()
+    if not os.path.isdir(bdir):
+        return []
     backups = sorted(f for f in os.listdir(bdir)
                      if _re.fullmatch(r"filebutler-\d{8}-\d{6}(-\d+)?\.db", f))
-    for old in backups[:-BACKUP_KEEP]:
+    kept, kept_bytes = [], 0
+    for i, name in enumerate(reversed(backups)):      # 升序列表，倒着走 = 新→旧
+        path = os.path.join(bdir, name)
         try:
-            os.remove(os.path.join(bdir, old))
+            sz = os.path.getsize(path)
         except OSError:
-            pass
-    return dst
+            continue
+        if i and (i >= BACKUP_KEEP or kept_bytes + sz > BACKUP_MAX_TOTAL):
+            try:
+                os.remove(path)
+            except OSError:
+                kept.append(name)     # 删不掉就当留着，别让计数骗人
+        else:
+            kept.append(name)
+            kept_bytes += sz
+    return kept
 
 
 def _backup_sig_file():

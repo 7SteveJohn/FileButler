@@ -158,6 +158,49 @@ def main():
         shutil.rmtree(tmp, ignore_errors=True)
         print("指针已恢复:", saved)
 
+    # 5. 备份轮转的双预算：份数 + 总体积（只按份数保留会让占用随库大小线性膨胀）
+    rd = tempfile.mkdtemp(prefix="fb_rotate_")
+    MB = 1024 * 1024
+
+    def mk(name, mb):
+        with open(os.path.join(rd, name), "wb") as fh:
+            fh.write(b"0" * int(mb * MB))
+
+    stamps = [f"202601{d:02d}-000000" for d in range(1, 7)]
+    for s in stamps:
+        mk(f"filebutler-{s}.db", 1)
+    mk("not-a-backup.db", 1)
+    mk("filebutler-bad.db", 1)
+    kept = db.rotate_backups(rd)
+    check("份数预算生效", len(kept) == db.BACKUP_KEEP, str(kept))
+    check("留下的是最新几份", kept[0] == f"filebutler-{stamps[-1]}.db", str(kept))
+    check("最旧一份已删除",
+          not os.path.exists(os.path.join(rd, f"filebutler-{stamps[0]}.db")))
+    check("不匹配的文件不碰",
+          os.path.exists(os.path.join(rd, "not-a-backup.db"))
+          and os.path.exists(os.path.join(rd, "filebutler-bad.db")))
+
+    shutil.rmtree(rd, ignore_errors=True)
+    rd = tempfile.mkdtemp(prefix="fb_rotate2_")
+    orig_max = db.BACKUP_MAX_TOTAL
+    try:
+        db.BACKUP_MAX_TOTAL = 7 * MB
+        for s in stamps[:4]:
+            mk(f"filebutler-{s}.db", 3)
+        kept2 = db.rotate_backups(rd)
+        check("体积预算先触发", kept2 == [f"filebutler-{stamps[3]}.db",
+                                          f"filebutler-{stamps[2]}.db"], str(kept2))
+        # 唯一一份就算超预算也必须留着，否则等于把唯一的备份删了
+        shutil.rmtree(rd, ignore_errors=True)
+        os.makedirs(rd, exist_ok=True)
+        mk(f"filebutler-{stamps[-1]}.db", 40)
+        kept3 = db.rotate_backups(rd)
+        check("永远保留最新一份", kept3 == [f"filebutler-{stamps[-1]}.db"]
+              and os.path.getsize(os.path.join(rd, kept3[0])) > 0, str(kept3))
+    finally:
+        db.BACKUP_MAX_TOTAL = orig_max
+        shutil.rmtree(rd, ignore_errors=True)
+
     print(f"\n{'ALL PASS' if FAIL == 0 else 'FAILURES: ' + str(FAIL)} ({PASS} passed, {FAIL} failed)")
     return 1 if FAIL else 0
 

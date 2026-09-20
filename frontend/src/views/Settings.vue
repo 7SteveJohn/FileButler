@@ -892,7 +892,13 @@ onMounted(() => {
           <n-space>
             <n-button type="primary" ghost size="small" :loading="backingUp" @click="backupNow">立即备份</n-button>
             <n-text depth="3" style="font-size:12px;align-self:center">
-              应用运行期间每日自动备份一次（后台进行，不阻塞退出），保留最近 5 份，存于数据目录 backups\ 下
+              应用运行期间每日自动备份一次（后台进行，不阻塞退出），存于数据目录 backups\ 下。
+              保留最近 {{ dbMaint.backup_keep || 5 }} 份，且总占用不超过
+              {{ ((dbMaint.backup_max_total || 0) / 1e9).toFixed(1) }} GB——超预算先删最旧的，
+              至少留最新一份（份数之外还要限体积，否则大库的 5 份就是好几个 GB）。
+              <template v-if="dbMaint.backups">
+                当前 {{ dbMaint.backups }} 份 · 共 {{ fmtMB(dbMaint.backups_size || 0) }}
+              </template>
             </n-text>
           </n-space>
           <n-list v-if="backups.length" bordered size="small">

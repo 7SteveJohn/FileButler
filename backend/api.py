@@ -2037,10 +2037,14 @@ class Api:
     _vacuum_running = False
 
     def db_maintenance_info(self):
-        """库大小 / WAL 大小 / 备份数（设置页维护卡片）。"""
+        """库大小 / WAL 大小 / 备份份数与总占用（设置页维护卡片）。"""
         sizes = db.db_file_sizes()
+        bk = db.list_backups()
         return {"db_size": sizes["db"], "wal_size": sizes["wal"],
-                "backups": len(db.list_backups()),
+                "backups": len(bk),
+                "backups_size": sum(b.get("size", 0) for b in bk),
+                "backup_keep": db.BACKUP_KEEP,
+                "backup_max_total": db.BACKUP_MAX_TOTAL,
                 "vacuum_running": Api._vacuum_running}
 
     def vacuum_db(self):
