@@ -221,7 +221,40 @@ def _startup_bg_color():
     return "#f5f7f6"
 
 
+def _handle_set_data_dir() -> bool:
+    """"--set-data-dir <路径>"：安装器写完后指定数据目录，写完即退，不开窗口。
+
+    为什么让应用自己写指针，而不是安装器直接落文件：
+    1. 格式归 backend/db.py 所有（set_data_dir 会做 abspath 规范化），不该有两份实现；
+    2. 安装器写文本文件用的是 ANSI 编码，而 db.get_data_dir() 按 UTF-8 读——
+       中文路径会读出乱码，指针校验 isdir 失败后静默回落到默认目录，用户以为改了。
+    """
+    if "--set-data-dir" not in sys.argv:
+        return False
+    from backend import db
+    i = sys.argv.index("--set-data-dir")
+    if i + 1 >= len(sys.argv):
+        print("--set-data-dir 缺少路径参数")
+        return True
+    path = sys.argv[i + 1].strip().strip('"')
+    if not path:
+        print("--set-data-dir 路径为空")
+        return True
+    try:
+        os.makedirs(path, exist_ok=True)
+        db.set_data_dir(path)
+        db._apply_data_dir()
+        print("数据目录已设为:", db.get_data_dir())
+    except Exception as e:
+        print("设置数据目录失败:", e)
+    return True
+
+
 def main():
+    # 安装器的无头调用：写完数据目录指针就退出，不创建窗口、不抢单实例锁
+    if _handle_set_data_dir():
+        return
+
     import webview
     from backend.api import Api
 
