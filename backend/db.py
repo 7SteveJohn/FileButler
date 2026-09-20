@@ -24,26 +24,55 @@ APP_DIR = DEFAULT_DIR
 DB_PATH = os.path.join(APP_DIR, "filebutler.db")
 
 
+# 指针指向但已不存在的目录（None = 正常）。get_data_dir 会回落默认位置，
+# 但必须把这个异常留出来给设置页提示，否则用户只会看到"我明明选了 D 盘"。
+_POINTER_ISSUE = None
+
+
 def get_data_dir():
     """读取指针文件返回实际数据目录；无指针或指针失效则用默认目录。"""
+    global _POINTER_ISSUE
+    _POINTER_ISSUE = None
     try:
         with open(MARKER_FILE, "r", encoding="utf-8") as f:
             path = f.read().strip()
-        if path and os.path.isdir(path):
-            return path
     except OSError:
-        pass
+        return DEFAULT_DIR
+    if not path:
+        return DEFAULT_DIR
+    if os.path.isdir(path):
+        return path
+    _POINTER_ISSUE = path
     return DEFAULT_DIR
 
 
+def pointer_issue():
+    """指针指向、但当前已不存在的目录（None 表示指针正常）。"""
+    return _POINTER_ISSUE
+
+
 def set_data_dir(path):
-    """写入指针文件（path=None 恢复默认）。"""
+    """写入指针文件（path=None 恢复默认）。
+
+    先把目标目录建出来并试写一次：指针若指向一个不存在的目录，
+    get_data_dir 会静默回落默认位置，用户根本不知道切换没生效。
+    """
     os.makedirs(DEFAULT_DIR, exist_ok=True)
-    if path:
-        with open(MARKER_FILE, "w", encoding="utf-8") as f:
-            f.write(os.path.abspath(path))
-    elif os.path.exists(MARKER_FILE):
-        os.remove(MARKER_FILE)
+    if not path:
+        if os.path.exists(MARKER_FILE):
+            os.remove(MARKER_FILE)
+        return
+    abs_path = os.path.abspath(path)
+    try:
+        os.makedirs(abs_path, exist_ok=True)
+        probe = os.path.join(abs_path, ".fb_write_test")
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+    except OSError as e:
+        raise ValueError(f"数据目录不可用：{abs_path}（{e}）") from e
+    with open(MARKER_FILE, "w", encoding="utf-8") as f:
+        f.write(abs_path)
 
 
 def _apply_data_dir():

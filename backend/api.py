@@ -1796,6 +1796,7 @@ class Api:
         return {"current": cur, "default_dir": db.DEFAULT_DIR,
                 "is_default": os.path.normcase(cur) == os.path.normcase(db.DEFAULT_DIR),
                 "total_size": size, "db_path": db.DB_PATH,
+                "pointer_issue": db.pointer_issue(),
                 "n_indexed": n_index, "alternatives": alts}
     def open_data_dir(self):
         os.startfile(db.get_data_dir())
@@ -1823,6 +1824,12 @@ class Api:
     def reset_data_dir(self, overwrite=False):
         """恢复默认数据目录（若默认位置仍有数据文件）。"""
         default = db.DEFAULT_DIR
+        if db.pointer_issue():
+            # 指针指向的目录已经没了：应用实际已在用默认位置，删掉失效指针即可，
+            # 不能走下面的搬迁分支（会报「新目录与当前目录相同」）
+            db.set_data_dir(None)
+            db._apply_data_dir()
+            return {"ok": True}
         if db.get_data_dir() != default:
             # 默认目录若残留旧库，直接换指针即可；否则先搬回去
             if os.path.exists(os.path.join(default, "filebutler.db")):

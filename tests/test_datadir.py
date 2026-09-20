@@ -1,4 +1,8 @@
-"""数据目录切换测试：指针文件、搬迁复制、完整性校验、恢复默认。"""
+"""数据目录切换测试：指针文件、搬迁复制、完整性校验、恢复默认、失效指针提示。
+
+运行方式（APPDATA 必须指向一次性目录，否则会把指针写进真实用户库）：
+    APPDATA='C:\\tmp\\fb_datadir' python tests/test_datadir.py
+"""
 import os
 import shutil
 import sys
@@ -23,6 +27,9 @@ def check(name, cond, detail=""):
 
 
 def main():
+    if "fb_datadir" not in (os.environ.get("APPDATA") or ""):
+        print("拒绝执行：APPDATA 未指向一次性目录，会把指针写进真实用户库。")
+        return 2
     os.makedirs(BASE, exist_ok=True)
     db.init_db()
     # 确保从默认目录开始
@@ -82,6 +89,39 @@ def main():
     check("back to default", db.get_data_dir() == db.DEFAULT_DIR)
     check("data intact after roundtrip",
           db.get_setting("after_switch", "") == "written-in-new")
+
+    # ---------- 5. 目标建不出来 / 指针失效 ----------
+    # 安装器实测踩过这两个：写了个用不了的目录，或目录后来被删，
+    # 应用都会静默回落到默认位置，用户完全看不出来。
+    made = os.path.join(BASE, "fb_created")
+    shutil.rmtree(made, ignore_errors=True)
+    db.set_data_dir(made)
+    db._apply_data_dir()
+    check("set_data_dir 会建出目标目录", os.path.isdir(made))
+    check("指针生效", db.get_data_dir() == made)
+    check("正常时不误报", db.pointer_issue() is None)
+
+    blocker = os.path.join(BASE, "fb_blocker")
+    with open(blocker, "wb") as f:
+        f.write(b"x")
+    try:
+        db.set_data_dir(os.path.join(blocker, "sub"))  # 父级是个文件，建不出来
+        check("不可用目标要报错", False, "没抛异常")
+    except ValueError as e:
+        check("不可用目标要报错", "不可用" in str(e), str(e))
+    check("报错后指针没被改写", db.get_data_dir() == made)
+    os.remove(blocker)
+
+    gone = os.path.join(BASE, "fb_vanished")
+    db.set_data_dir(gone)
+    shutil.rmtree(gone)
+    db._apply_data_dir()
+    check("失效指针回落到默认目录", db.get_data_dir() == db.DEFAULT_DIR)
+    check("失效指针被记下来（设置页据此提示）",
+          db.pointer_issue() == gone, str(db.pointer_issue()))
+    db.set_data_dir(None)
+    db._apply_data_dir()
+    check("清掉指针后不再报", db.pointer_issue() is None)
 
     # 清理
     db.set_setting("datadir_test_marker", "")

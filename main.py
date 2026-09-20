@@ -241,12 +241,13 @@ def _handle_set_data_dir() -> bool:
         print("--set-data-dir 路径为空")
         return True
     try:
-        os.makedirs(path, exist_ok=True)
         db.set_data_dir(path)
         db._apply_data_dir()
         print("数据目录已设为:", db.get_data_dir())
     except Exception as e:
+        # 非零退出码：安装器据此提示用户"改了但没生效"，而不是安静地用默认目录
         print("设置数据目录失败:", e)
+        sys.exit(3)
     return True
 
 

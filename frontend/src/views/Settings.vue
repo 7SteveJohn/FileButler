@@ -753,6 +753,13 @@ onMounted(() => {
               {{ dataDir.is_default ? '默认' : '自定义' }}
             </n-tag>
           </div>
+          <n-alert v-if="dataDir.pointer_issue" type="error" :bordered="false">
+            <div style="font-size:13px">
+              数据目录指针指向 <code class="fb-path">{{ dataDir.pointer_issue }}</code>，
+              但这个目录已经不存在了，所以实际用的是上面的默认位置——之前那次「更改位置」
+              并没有生效。点「恢复默认位置」清掉失效指针，或用「更改位置…」重新选一个。
+            </div>
+          </n-alert>
           <n-alert v-if="dataDir.alternatives && dataDir.alternatives.length"
             type="warning" :bordered="false">
             <div style="font-size:13px">
@@ -778,7 +785,8 @@ onMounted(() => {
           <n-space>
             <n-button size="small" round @click="api('open_data_dir')">打开数据目录</n-button>
             <n-button size="small" round type="primary" ghost @click="pickNewDataDir">更改位置…</n-button>
-            <n-button v-if="!dataDir.is_default" size="small" round @click="doResetDir">恢复默认位置</n-button>
+            <n-button v-if="!dataDir.is_default || dataDir.pointer_issue"
+              size="small" round @click="doResetDir">恢复默认位置</n-button>
           </n-space>
           <div v-if="pendingDir" class="fb-pending">
             <n-text style="font-size:13px">搬迁到</n-text>
