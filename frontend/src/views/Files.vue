@@ -446,6 +446,14 @@ async function loadSearchHistory() {
 async function loadDirTree() {
   try { dirTreeData.value = (await api('dir_tree')).tree } catch (e) { /* 忽略 */ }
 }
+
+// 树默认折叠，没必要在进页面时就做一次全表聚合（68 万行实测 613ms）。
+// 每次展开都调：后端有 120s 缓存 + 过期后台重算，命中时几乎瞬时，
+// 又能拿到重扫之后的新结构（只在为空时取会导致重扫后树一直不刷新）。
+function toggleDirTree() {
+  dirExpanded.value = !dirExpanded.value
+  if (dirExpanded.value) loadDirTree()
+}
 function saveHistory() {
   const q = query.value.trim()
   if (q) api('save_search_history', q)
@@ -854,7 +862,6 @@ onMounted(() => {
   window.addEventListener('fb-toast', onToast)
   loadTags()
   loadSearchHistory()
-  loadDirTree()
   loadFavs()
   loadSavedSearches()
   loadOcrStatus()
@@ -1087,7 +1094,7 @@ refresh()
 
         <!-- 目录树（可折叠） -->
         <div class="fb-dirtree-wrap">
-          <n-button size="tiny" quaternary @click="dirExpanded = !dirExpanded">
+          <n-button size="tiny" quaternary @click="toggleDirTree">
             {{ dirExpanded ? '▾ 收起目录树' : '▸ 目录树' }}
             <template v-if="currentDir"> · {{ currentDir }}</template>
           </n-button>
