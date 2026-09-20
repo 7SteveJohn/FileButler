@@ -16,7 +16,7 @@ html, body {
   display: flex;
   flex-direction: column;
   background: var(--fb-body-bg, #f4f6f4);
-  color: var(--fb-side-text, inherit);
+  color: var(--fb-text, inherit);
   transition: background-color .25s ease, color .25s ease;
 }
 .fb-shell {
@@ -44,7 +44,11 @@ html, body {
   display: flex;
   align-items: center;
   padding: 0 8px;
-  background: var(--fb-titlebar-bg, #f4f6f4);
+  /* 两段式窗口 chrome：让侧栏底色向上延续穿过标题栏。
+     否则浅色标题栏直接压在深色侧栏上方，接缝生硬（indigo 主题最明显）*/
+  background: linear-gradient(90deg,
+    var(--fb-sidebar-bg, #f4f6f4) 0 var(--fb-side-w, 200px),
+    var(--fb-titlebar-bg, #f4f6f4) var(--fb-side-w, 200px) 100%);
   color: var(--fb-titlebar-fg, #3f4a44);
   border-bottom: 1px solid var(--fb-border, rgba(0,0,0,.06));
   user-select: none;
@@ -54,6 +58,8 @@ html, body {
 .fb-tb-left {
   display: flex; align-items: center;
   min-width: 0;
+  /* 这块落在侧栏色上，得用侧栏文字色，不然深色主题下看不见 */
+  color: var(--fb-side-text, inherit);
 }
 .fb-tb-center {
   position: absolute;
@@ -271,7 +277,7 @@ html, body {
   font-weight: 650;
   letter-spacing: -.1px;
   margin: 0;
-  color: var(--fb-side-text, inherit);
+  color: var(--fb-text, inherit);
   display: flex;
   align-items: baseline;
   gap: 10px;
@@ -289,7 +295,7 @@ html, body {
 .fb-hello-sub {
   font-size: 12.5px;
   margin-top: 5px;
-  color: var(--fb-side-text-dim, rgba(0,0,0,.45));
+  color: var(--fb-text-dim, rgba(0,0,0,.45));
 }
 .fb-hello-stats {
   display: flex;
@@ -312,7 +318,7 @@ html, body {
 }
 .fb-hello-stat span {
   font-size: 11.5px;
-  color: var(--fb-side-text-dim, rgba(0,0,0,.45));
+  color: var(--fb-text-dim, rgba(0,0,0,.45));
 }
 .fb-hello-stat .fb-hello-online { color: var(--fb-accent, #0e9f6e); }
 .fb-hello-stat .fb-hello-offline { opacity: .45; }
@@ -746,7 +752,7 @@ html, body {
 .fb-dash-loading {
   padding: 60px 0;
   text-align: center;
-  color: var(--fb-side-text, inherit);
+  color: var(--fb-text, inherit);
   font-size: 15px;
 }
 .fb-dash-loading-sub {
@@ -782,10 +788,10 @@ html, body {
   background: transparent;
   padding: 15px 18px;
   font-size: 15px;
-  color: var(--fb-side-text, inherit);
+  color: var(--fb-text, inherit);
   box-sizing: border-box;
 }
-.fb-ql-input::placeholder { color: var(--fb-side-text-dim, rgba(0,0,0,.4)); }
+.fb-ql-input::placeholder { color: var(--fb-text-dim, rgba(0,0,0,.4)); }
 .fb-ql-list {
   max-height: 46vh; overflow: auto;
   border-top: 1px solid var(--fb-border, rgba(0,0,0,.07));
@@ -826,17 +832,17 @@ html, body {
 }
 .fb-ql-hint {
   font-size: 11.5px;
-  color: var(--fb-side-text-dim, rgba(0,0,0,.4));
+  color: var(--fb-text-dim, rgba(0,0,0,.4));
   max-width: 44%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   direction: rtl;   /* 左侧省略：路径太长时保住文件名一侧 */
   text-align: left;
   flex-shrink: 0;
 }
-.fb-ql-empty { padding: 22px 0; text-align: center; font-size: 12.5px; color: var(--fb-side-text-dim, rgba(0,0,0,.4)); }
+.fb-ql-empty { padding: 22px 0; text-align: center; font-size: 12.5px; color: var(--fb-text-dim, rgba(0,0,0,.4)); }
 .fb-ql-foot {
   padding: 8px 14px;
   font-size: 11px;
-  color: var(--fb-side-text-dim, rgba(0,0,0,.4));
+  color: var(--fb-text-dim, rgba(0,0,0,.4));
   border-top: 1px solid var(--fb-border, rgba(0,0,0,.07));
 }

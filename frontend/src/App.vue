@@ -191,7 +191,8 @@ window.__fbSendToIngest = (names) => {
   <n-config-provider :locale="zhCN" :date-locale="dateZhCN"
     :theme="naiveTheme" :theme-overrides="themeDef.naive" style="height:100%">
     <n-message-provider>
-      <div class="fb-root" :class="{ 'fb-dark': themeDef.dark }">
+      <div class="fb-root" :class="{ 'fb-dark': themeDef.dark }"
+        :style="{ '--fb-side-w': collapsed ? '64px' : '200px' }">
         <!-- 自绘标题栏（ZCode 风格）：左活动指示 / 中面包屑标题 / 右工具图标 + 窗口控制。
              刻意不放 logo：侧栏品牌区已有同一个图标 + 应用名，frameless 窗口里两处并排会重复 -->
         <div class="fb-titlebar pywebview-drag-region" @dblclick="onTitleDblclick">
