@@ -143,6 +143,31 @@ def test_ocr_status_contract():
     check("二次调用走缓存", dt < 0.02, f"{dt * 1000:.1f}ms")
 
 
+def test_roots_sticky():
+    print("\n[4] 盘根只在首次/新增时补入")
+    drives = fileindex.enumerate_drives()
+    if not drives:
+        check("枚举到本地盘", False, "enumerate_drives 返回空，无法验证")
+        return
+    paths = lambda: {r["path"] for r in fileindex.list_roots(only_enabled=False)}
+    check("首次运行补入全部盘根", all(d in paths() for d in drives), str(sorted(paths())))
+
+    victim = drives[-1]
+    rid = next(r["id"] for r in fileindex.list_roots(False) if r["path"] == victim)
+    fileindex.remove_root(rid, delete_index=False)
+    fileindex.ensure_default_roots()
+    check("用户删掉的盘根不会被补回", victim not in paths(), f"{victim} 又出现了")
+    check("删盘根没牵连索引行",
+          db.get_conn().execute("SELECT COUNT(*) c FROM file_index").fetchone()["c"] > 5000)
+
+    # 模拟「以前没见过的新盘」：把它从 known_drives 里抹掉，应当自动补入
+    known = {x for x in (db.get_setting("known_drives", "") or "").split("|") if x}
+    known.discard(victim)
+    db.set_setting("known_drives", "|".join(sorted(known)))
+    fileindex.ensure_default_roots()
+    check("没见过的盘仍会自动补入", victim in paths(), f"{victim} 没补回来")
+
+
 def main():
     print(f"APPDATA = {os.environ.get('APPDATA')}")
     print(f"DB_PATH = {db.DB_PATH}")
@@ -153,6 +178,7 @@ def main():
     test_capped_count()
     test_favorites_note()
     test_ocr_status_contract()
+    test_roots_sticky()
     conn = db.get_conn()
     try:
         conn.execute("DELETE FROM file_index")

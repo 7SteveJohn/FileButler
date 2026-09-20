@@ -64,6 +64,14 @@ def main():
     test_root = make_test_root()
     fileindex.add_root(test_root)
 
+    # 只保留本次测试的根。全盘根会让 full_scan 真的去扫整块盘，也会让
+    # 「白名单外的路径必须 403」「某个词恰好命中 1 个文件」这类断言失去意义。
+    # 盘根已被 settings(known_drives) 记住，后续再调 ensure_default_roots 也不会补回来。
+    keep = os.path.normcase(os.path.abspath(test_root))
+    for r in fileindex.list_roots(only_enabled=False):
+        if os.path.normcase(os.path.abspath(r["path"])) != keep:
+            fileindex.remove_root(r["id"], delete_index=False)
+
     # 1. 全量扫描
     result = fileindex.full_scan()
     check("full scan indexes files", result["total"] >= 4 and result["added"] >= 4, str(result))

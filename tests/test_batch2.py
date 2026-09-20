@@ -37,7 +37,7 @@ def main():
 
     # 构造测试根目录
     root = os.path.join(BASE, "fb_b2_root")
-    os.makedirs(root)
+    os.makedirs(root, exist_ok=True)   # 上一次中途失败会留下目录，不该让整轮跑不起来
     now = time.time()
     specs = [
         ("项目计划书.pdf", b"%PDF-1.4 " + b"p" * 5000, "文档"),

@@ -100,18 +100,24 @@ def totals():
         conn.close()
 
 
-def _candidates(conn):
-    """待索引 = 受支持格式 + 体积在限内 + 磁盘上还在 + 没抽过或已变化。"""
+def _cand_sql(select):
+    """候选集 SQL 片段（受支持格式 + 体积在限内 + 没抽过或已变化）。
+
+    plan() 只要个数、_run() 要取行，两处共用同一个谓词，避免计数与实际索引口径漂移。
+    """
     exts = sorted(parsers.SUPPORTED)
     marks = ",".join("?" * len(exts))
     # 只拼占位符，不拼用户数据（同 fileindex.search 的做法）
-    sql = ("SELECT f.path AS path, f.size AS size, f.mtime AS mtime "
-           "FROM file_index f "
+    sql = ("SELECT " + select + " FROM file_index f "
            "LEFT JOIN doc_content_state s ON s.path = f.path "
            "WHERE f.ext IN (" + marks + ") AND f.size > 0 AND f.size <= ? "
-           "AND (s.path IS NULL OR s.mtime <> f.mtime OR s.size <> f.size) "
-           "ORDER BY f.mtime DESC")
-    rows = conn.execute(sql, tuple(exts) + (MAX_FILE_BYTES,)).fetchall()
+           "AND (s.path IS NULL OR s.mtime <> f.mtime OR s.size <> f.size)")
+    return sql, tuple(exts) + (MAX_FILE_BYTES,)
+
+
+def _candidates(conn):
+    sql, params = _cand_sql("f.path AS path, f.size AS size, f.mtime AS mtime")
+    rows = conn.execute(sql + " ORDER BY f.mtime DESC", params).fetchall()
     return [(r["path"], r["size"], r["mtime"]) for r in rows]
 
 
@@ -122,7 +128,8 @@ def plan():
     t = totals()
     conn = db.get_conn()
     try:
-        n_cand = len(_candidates(conn))
+        sql, params = _cand_sql("COUNT(*) AS c")
+        n_cand = conn.execute(sql, params).fetchone()["c"]
     finally:
         conn.close()
     docs_left = max(0, max_docs - t["ok"])

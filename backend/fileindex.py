@@ -113,7 +113,15 @@ def enumerate_drives():
 
 
 def ensure_default_roots():
-    """首次运行写入默认用户目录；幂等补全所有本地盘根（开箱即用）。"""
+    """首次运行写入默认用户目录 + 全部本地盘根（开箱即用）；之后只补「没见过的新盘」。
+
+    老实现每次启动都无条件补全所有盘根，后果是用户在设置里删掉的盘根下次启动又回来，
+    而且 watch_roots 恒等于全部盘 → 缩略图服务的白名单形同虚设。现在把见过的盘记在
+    settings(known_drives) 里，只有从未出现过的盘（新装/新分区）才自动补入。
+    """
+    drives = enumerate_drives()
+    # 读在写事务开始之前：get_setting 会另开一条连接
+    known = {x for x in (db.get_setting("known_drives", "") or "").split("|") if x}
     conn = db.get_conn()
     try:
         conn.executescript(SCHEMA_EXTRA)
@@ -123,21 +131,30 @@ def ensure_default_roots():
         n = conn.execute("SELECT COUNT(*) c FROM watch_roots").fetchone()["c"]
         now = time.time()
         added = False
-        if n == 0:
+        first_run = n == 0
+        if first_run:
             # 首次：加用户目录（Desktop/Documents/...）
             for p, label in default_roots():
                 conn.execute("INSERT OR IGNORE INTO watch_roots(path,label,added_at) VALUES(?,?,?)",
                              (p, label, now))
             added = True
-        # 幂等：补全所有本地盘根（C:\ D:\ ...），用户已加的子目录不会被覆盖
-        # label 标"自动"让用户在设置里能识别/删除
-        for drive in enumerate_drives():
+        for drive in drives:
+            if not first_run and drive in known:
+                continue          # 这块盘见过：不在监控里就说明用户主动删过，不补回
             if conn.execute("SELECT 1 FROM watch_roots WHERE path=?",
                             (drive,)).fetchone():
                 continue
             conn.execute("INSERT INTO watch_roots(path,label,added_at) VALUES(?,?,?)",
                          (drive, f"{drive[:-1]}（自动）", now))
             added = True
+        # 记下「当前插着的盘 + 已在监控中的目录」，下次据此判断谁是新盘
+        seen = set(drives)
+        for r in conn.execute("SELECT path FROM watch_roots").fetchall():
+            seen.add(r["path"])
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            ("known_drives", "|".join(sorted(seen))))
         conn.commit()
         return added
     finally:

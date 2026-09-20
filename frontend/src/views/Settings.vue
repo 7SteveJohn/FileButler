@@ -165,7 +165,11 @@ offs.push(on('db_vacuum_done', (r) => {
   dbMaint.value.vacuum_running = false
   if (r.ok) {
     const saved = ((r.before - r.after) / 1e6).toFixed(1)
-    message.success(`压缩完成：${fmtMB(r.before)} → ${fmtMB(r.after)}（回收 ${saved} MB）`)
+    if (r.after >= r.before && r.note) {
+      message.warning(`未回收空间：${r.note}`)
+    } else {
+      message.success(`压缩完成：${fmtMB(r.before)} → ${fmtMB(r.after)}（回收 ${saved} MB）`)
+    }
   } else {
     message.error('压缩失败：' + (r.error || '未知'))
   }

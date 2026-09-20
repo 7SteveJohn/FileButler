@@ -868,8 +868,15 @@ def vacuum(on_done=None):
             return {"ok": False, "before": before, "after": before,
                     "error": f"磁盘空闲空间不足（VACUUM 需约 2 倍库大小："
                              f"{before * 2 // 1048576} MB）"}
+        # get_conn() 缓存线程本地连接，而 _connect() 开了 256MB mmap；SQLite 不会截断
+        # 「仍被某个连接内存映射着」的库文件，于是 VACUUM 只重组页、文件一字节不缩，
+        # 设置页的「压缩数据库」点了等于没点。先丢掉本线程缓存并让其它线程下次重开，
+        # 再用一条不映射文件的连接做 VACUUM。
+        _close_cached()
+        close_all_conns()
         conn = _connect()
         try:
+            conn.execute("PRAGMA mmap_size=0")
             conn.execute("VACUUM")
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             conn.commit()
@@ -882,6 +889,9 @@ def vacuum(on_done=None):
             pass
         after = _size()
         result = {"ok": True, "before": before, "after": after}
+        if after >= before:
+            result["note"] = ("页已重组但文件没缩小：多半是监控/扫描线程还持有映射连接，"
+                              "等它们下次取连接后再压缩一次")
     except Exception as e:
         result = {"ok": False, "before": before, "after": _size(), "error": str(e)}
     if on_done:
