@@ -178,6 +178,12 @@
         // Promise 链永远挂起（桥看似就绪但所有 await 卡死）
         if (prop === 'then' || prop === 'catch' || prop === 'finally') return undefined
         const m = MOCK[prop]
+        if (typeof m !== 'function') {
+          // 不静默伪造成功：真机上方法不存在会抛 TypeError，dev 却返回 {ok:true}
+          // 会让"后端根本没这个接口"这类 bug 只在打包后暴露
+          console.warn('[mock-bridge] 未 mock 的方法：' + String(prop)
+            + '（真机上若后端也不存在会抛错，请核对 backend/api.py）')
+        }
         return (...a) => Promise.resolve(typeof m === 'function' ? m(...a) : { ok: true })
       },
     }),

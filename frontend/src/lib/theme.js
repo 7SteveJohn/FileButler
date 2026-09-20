@@ -16,7 +16,8 @@ export const THEMES = {
     name: '清新自然',
     desc: '翡翠绿 · 白底通透',
     dark: false,
-    swatch: 'linear-gradient(135deg,#34d399,#059669)',
+    // 色板要跟实际主色一致：功能绿已调深到 #0a7d54，原先那块亮绿在应用里已不存在
+    swatch: 'linear-gradient(135deg,#0a7d54,#0e9f6e)',
     caption: { bg: '#f4f6f4', fg: '#1f2a25' },
     naive: {
       common: {
@@ -76,6 +77,7 @@ export const THEMES = {
     name: '静谧靛蓝',
     desc: '靛蓝主色 · 深色侧栏',
     dark: false,
+    swatch: 'linear-gradient(135deg,#4f46e5,#818cf8)',
     menuInverted: true,
     caption: { bg: '#f3f5fa', fg: '#252b3b' },
     naive: {
@@ -130,6 +132,7 @@ export const THEMES = {
     name: '暗色科技',
     desc: '深色底 · 青色点缀',
     dark: true,
+    swatch: 'linear-gradient(135deg,#22d3ee,#0e7490)',
     menuInverted: true,
     caption: { bg: '#0b0e13', fg: '#aebac6' },
     naive: {
