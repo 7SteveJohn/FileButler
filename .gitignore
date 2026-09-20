@@ -22,3 +22,6 @@ output/
 .workbuddy/
 .zcode/
 .mimosa/
+
+# Agent 交接笔记：只给接手的 agent/开发者看，不随仓库发布
+HANDOFF.md
