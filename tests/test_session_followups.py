@@ -206,6 +206,37 @@ def test_find_data_dirs():
     shutil.rmtree(base, ignore_errors=True)
 
 
+def test_update_check():
+    """更新源走 GitHub Releases：解析真实响应形状，而不是早期约定的简化 JSON。"""
+    gh = {"tag_name": "v9.9.9",
+          "html_url": "https://github.com/o/r/releases/tag/v9.9.9",
+          "body": "## 新增\n\n- **正文索引**：不依赖本地模型，可搜文档内容。\n",
+          "assets": [{"name": "sha256.txt", "browser_download_url": "https://x/sha256.txt"},
+                     {"name": "FileButler-Setup-9.9.9.exe",
+                      "browser_download_url": "https://x/FileButler-Setup-9.9.9.exe"}]}
+    r = Api._parse_release(gh, "1.1.5")
+    check("解析 GitHub tag_name", r["latest"] == "v9.9.9", str(r["latest"]))
+    check("取安装包资产而不是别的文件",
+          r["download"].endswith("FileButler-Setup-9.9.9.exe"), str(r["download"]))
+    check("旧版本判为可更新", r["outdated"] is True)
+    check("说明去掉了 markdown 强调符",
+          "**" not in r["notes"] and "正文索引" in r["notes"], str(r["notes"]))
+    check("同版本不提示更新", Api._parse_release(gh, "9.9.9")["outdated"] is False)
+    check("本地更新时也不提示", Api._parse_release(gh, "10.0.0")["outdated"] is False)
+
+    noexe = {"tag_name": "v9.9.9", "html_url": "https://x/page", "assets": []}
+    check("没有 exe 资产时回落到发布页",
+          Api._parse_release(noexe, "1.1.5")["download"] == "https://x/page")
+    legacy = {"version": "9.9.9", "download": "https://mirror/pkg.exe"}
+    lr = Api._parse_release(legacy, "1.1.5")
+    check("自建镜像的简化格式仍然可用",
+          lr["latest"] == "9.9.9" and lr["download"] == "https://mirror/pkg.exe", str(lr))
+    check("默认更新源指向本仓库 Releases",
+          "api.github.com/repos/" in Api.DEFAULT_UPDATE_URL
+          and Api.DEFAULT_UPDATE_URL.endswith("/releases/latest"),
+          Api.DEFAULT_UPDATE_URL)
+
+
 def main():
     print(f"APPDATA = {os.environ.get('APPDATA')}")
     print(f"DB_PATH = {db.DB_PATH}")
@@ -218,6 +249,7 @@ def main():
     test_ocr_status_contract()
     test_roots_sticky()
     test_find_data_dirs()
+    test_update_check()
     conn = db.get_conn()
     try:
         conn.execute("DELETE FROM file_index")

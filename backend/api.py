@@ -1264,32 +1264,61 @@ class Api:
         from backend import __version__, APP_NAME
         return {"name": APP_NAME, "version": __version__}
 
+    # 默认更新源：本仓库的 GitHub Releases 最新版（设置项可覆盖成自建镜像）
+    DEFAULT_UPDATE_URL = "https://api.github.com/repos/7SteveJohn/FileButler/releases/latest"
+
+    @staticmethod
+    def _parse_release(data, current):
+        """把 GitHub Releases JSON 归一成 {latest, download, notes}。
+
+        GitHub 用的是 tag_name / assets[].browser_download_url，而不是早期约定的
+        version / download，所以这里两种键都读：自建镜像仍可以返回简化格式。
+        """
+        latest = str(data.get("tag_name", "") or data.get("version", "") or "").strip()
+        # 优先级：安装包资产 > 显式 download > 发布页链接
+        download = (str(data.get("download", "") or "").strip()
+                    or str(data.get("html_url", "") or "").strip()
+                    or str(data.get("url", "") or "").strip())
+        for a in (data.get("assets") or []):
+            name = str(a.get("name", ""))
+            if name.lower().endswith(".exe"):
+                download = a.get("browser_download_url") or download
+                break
+        notes = ""
+        body = str(data.get("body", "") or data.get("notes", "") or "")
+        for line in body.splitlines():
+            s = line.strip().lstrip("#*-> ").replace("**", "").replace("`", "").strip()
+            if len(s) > 8:
+                notes = (s[:77] + "…") if len(s) > 80 else s
+                break
+        def _num(v):
+            return [int(x) for x in str(v).lstrip("vV").split(".")[:3]]
+        try:
+            outdated = _num(latest) > _num(current)
+        except Exception:
+            outdated = bool(latest) and latest != current
+        return {"latest": latest or None, "download": download or None,
+                "notes": notes, "outdated": outdated}
+
     def check_update(self):
-        """检查新版本：读 settings 里的更新源（GitHub Releases JSON），对比本地版本。"""
+        """检查新版本：默认走本仓库 GitHub Releases，对比本地版本。
+
+        隐私边界：这一步只向 api.github.com 发一个 GET，带的是 FileButler/<版本>
+        的 User-Agent，不含路径、文件名或任何库内容；且只在用户点「检查更新」时发生，
+        没有后台轮询。未认证时 GitHub 限 60 次/小时/IP，手动点够用。
+        """
         from backend import __version__
-        url = db.get_setting("update_check_url", "")
-        if not url:
-            return {"ok": False, "error": "未配置更新源（设置项 update_check_url）",
-                    "current": __version__}
+        url = db.get_setting("update_check_url", "") or self.DEFAULT_UPDATE_URL
         try:
             import json as _json
             import urllib.request as _url
-            req = _url.Request(url, headers={"User-Agent": "FileButler/" + __version__})
+            req = _url.Request(url, headers={
+                "User-Agent": "FileButler/" + __version__,
+                "Accept": "application/vnd.github+json"})
             with _url.urlopen(req, timeout=10) as resp:
                 data = _json.loads(resp.read().decode("utf-8"))
-            latest = str(data.get("version", "") or "").strip()
-            download = data.get("download", "") or data.get("url", "")
-            outdated = False
-            if latest:
-                def _num(v):
-                    return [int(x) for x in str(v).replace("v", "").split(".")[:3]]
-                try:
-                    outdated = _num(latest) > _num(__version__)
-                except Exception:
-                    outdated = latest != __version__
-            return {"ok": True, "current": __version__, "latest": latest or None,
-                    "outdated": outdated, "download": download or None,
-                    "notes": data.get("notes", "") or ""}
+            info = self._parse_release(data, __version__)
+            return {"ok": True, "current": __version__, "source": url, **info}
         except Exception as e:
             return {"ok": False, "error": f"检查失败：{e}", "current": __version__}
 

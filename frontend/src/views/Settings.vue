@@ -598,7 +598,7 @@ async function checkUpdate() {
   try {
     updateInfo.value = await api('check_update')
     if (!updateInfo.value.outdated && !updateInfo.value.latest) {
-      message.info(updateInfo.value.error || '检查失败，请先配置更新源')
+      message.info(updateInfo.value.error || '检查失败')
     }
   } catch (e) { message.error('检查更新失败：' + e) }
   checkingUpdate.value = false
@@ -1171,6 +1171,8 @@ onMounted(() => {
           <n-text depth="3" style="font-size:12.5px">
             完全本地运行：自动编目 / 语法搜索 / 知识库问答 / 智能整理与去重。
             AI 能力由本机 Ollama（或你配置的云端 API）提供，文件数据零上传。
+            <br>更新源为 GitHub Releases：点「检查更新」会向 api.github.com 发一次请求，
+            只带 FileButler 版本号的 User-Agent，不含文件名或库内容，也不会后台轮询。
           </n-text>
         </n-space>
       </n-card>
