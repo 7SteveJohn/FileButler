@@ -55,6 +55,7 @@ def main():
         print("SKIP: 系统无 OCR 语言包（设置→语言→选项→光学字符识别）")
         return 0
     check("ocr available + language", bool(winocr.languages()))
+    db.init_db()   # 本套件要写 img_index；不自己建表的话只能蹭别的套件建好的库
 
     tmp = tempfile.mkdtemp(prefix="fb_winocr_")
     try:

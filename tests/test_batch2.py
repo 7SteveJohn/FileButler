@@ -56,6 +56,11 @@ def main():
     os.utime(old, (now - 400 * 86400, now - 400 * 86400))
 
     fileindex.add_root(root)
+    # 只保留本次测试的根：否则 full_scan 会去扫整块盘（慢到超时，还把无关数据灌进库）
+    keep = os.path.normcase(os.path.abspath(root))
+    for r in fileindex.list_roots(only_enabled=False):
+        if os.path.normcase(os.path.abspath(r["path"])) != keep:
+            fileindex.remove_root(r["id"], delete_index=True)
     fileindex.full_scan()
 
     # ---------- 1. 语法搜索（断言全部限定在测试目录，避免被真实用户数据污染） ----------
@@ -108,6 +113,27 @@ def main():
     check("cleanup undoable", undone["undone"] == 1 and undone["failed"] == 0)
     check("file restored", os.path.exists(os.path.join(dupdir, "a.txt")))
 
+    # ---------- 3b. rename 与「系统回收站」的撤销语义 ----------
+    rn_dir = os.path.join(BASE, "fb_b2_rename")
+    os.makedirs(rn_dir, exist_ok=True)
+    r_src = os.path.join(rn_dir, "before.txt")
+    r_dst = os.path.join(rn_dir, "after.txt")
+    with open(r_src, "w", encoding="utf-8") as f:
+        f.write("x")
+    bid = db.new_batch_id()
+    shutil.move(r_src, r_dst)
+    db.log_operation(bid, "rename", r_src, r_dst)
+    u = executor.undo(bid)
+    check("rename undoable", u["undone"] == 1 and os.path.exists(r_src)
+          and not os.path.exists(r_dst), str(u))
+
+    # 进系统回收站的操作 dst 记的是"回收站"字面量，应用搬不回来：
+    # 必须如实报 recycle_bin，不能把批次翻成"已撤销"骗过用户
+    bid2 = db.new_batch_id()
+    db.log_operation(bid2, "trash", os.path.join(rn_dir, "gone.txt"), "回收站")
+    u2 = executor.undo(bid2)
+    check("回收站操作不计入已撤销", u2["undone"] == 0 and u2["recycle_bin"] == 1, str(u2))
+
     # ---------- 4. 预览 ----------
     from backend.api import Api
     api = Api()
@@ -115,7 +141,13 @@ def main():
     r = api.preview_file(os.path.join(root, "main.py"))
     check("preview text", r.get("type") == "text" and "print" in r.get("content", ""))
     r = api.preview_file(os.path.join(root, "big_video.mp4"))
-    check("preview unknown", r.get("type") == "unknown")
+    check("preview video", r.get("type") == "video", str(r.get("type")))
+    # 真·未知格式才该落到 unknown（mp4 已随「视频预览」功能改为返回 video）
+    blob = os.path.join(root, "blob.zzz")
+    with open(blob, "wb") as f:
+        f.write(b"\x00\x01not a format anyone previews")
+    r = api.preview_file(blob)
+    check("preview unknown", r.get("type") == "unknown", str(r.get("type")))
 
     # ---------- 5. QA 历史 ----------
     s = api.qa_new_session("测试会话")

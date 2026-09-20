@@ -35,15 +35,42 @@ def execute(plan_rows, batch_id=None):
     return {"batch_id": batch_id, "results": results}
 
 
+def _looks_like_path(dst):
+    """dst 是不是一个真实路径。进系统回收站的操作 dst 记的是「回收站」字面量。"""
+    d = dst or ""
+    return os.sep in d or (os.altsep or "") in d or bool(os.path.splitdrive(d)[0])
+
+
+def _restorable(action, dst):
+    """哪些操作能由应用自己搬回来。
+
+    move/rename 两端都是真实路径；trash 分两种——移进「待清理」目录的（dst 是路径）
+    可以原样搬回，进系统回收站的只能由用户自己从回收站还原。copy 永远跳过：
+    撤销副本等于删副本，那是破坏性操作。
+    """
+    if action not in ("move", "rename", "trash"):
+        return False
+    if action == "trash" and not _looks_like_path(dst):
+        return False
+    return True
+
+
 def undo(batch_id):
-    """按日志逆序撤销一个批次的全部移动。
-    只回滚 move 操作：copy/其他操作跳过（撤销副本等于删副本，不做）。"""
+    """按日志逆序撤销一个批次的可逆操作。
+
+    不可逆的部分会如实计数返回：copy 计入 skipped，进系统回收站的 trash 计入
+    recycle_bin（这些只能由用户从回收站还原）。
+    """
     ops = db.list_operations(batch_id)
-    undone, failed = 0, 0
+    undone = failed = skipped = in_bin = 0
     for op in reversed(ops):
-        if op["action"] != "move":
+        src, dst, action = op["src"], op["dst"], op["action"]
+        if not _restorable(action, dst):
+            if action == "trash":
+                in_bin += 1
+            else:
+                skipped += 1
             continue
-        src, dst = op["src"], op["dst"]
         try:
             if not os.path.exists(dst):
                 raise FileNotFoundError(f"目标不存在：{dst}")
@@ -61,7 +88,8 @@ def undo(batch_id):
             failed += 1
     if failed == 0:
         db.mark_undone(batch_id)
-    return {"batch_id": batch_id, "undone": undone, "failed": failed}
+    return {"batch_id": batch_id, "undone": undone, "failed": failed,
+            "skipped": skipped, "recycle_bin": in_bin}
 
 
 def redo(batch_id):
@@ -75,8 +103,8 @@ def redo(batch_id):
         conn.close()
     redone, failed = 0, 0
     for op in ops:
-        if op["action"] != "move":
-            continue  # copy/其他操作不参与撤销重做
+        if not _restorable(op["action"], op["dst"]):
+            continue  # copy 与进系统回收站的操作不参与重做
         src, dst = op["src"], op["dst"]
         try:
             if not os.path.exists(src):

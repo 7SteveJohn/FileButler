@@ -425,8 +425,12 @@ async function cleanEmptyDirs() {
 
 async function undo(batchId) {
   const r = await api('undo_batch', batchId)
-  if (r.failed === 0) message.success(`已撤销 ${r.undone} 个操作`)
-  else message.warning(`撤销 ${r.undone} 个，失败 ${r.failed} 个`)
+  if (r.failed) message.warning(`撤销 ${r.undone} 个，失败 ${r.failed} 个`)
+  else if (r.recycle_bin) {
+    message.info(`已撤销 ${r.undone} 个；${r.recycle_bin} 个在系统回收站，需从回收站还原`)
+  } else if (!r.undone) {
+    message.info('该批次没有可由应用撤销的操作')
+  } else message.success(`已撤销 ${r.undone} 个操作`)
   loadHistory()
 }
 
