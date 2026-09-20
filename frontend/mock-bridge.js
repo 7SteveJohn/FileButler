@@ -21,6 +21,12 @@
     size: 240000 + i * 7777, mtime: Date.now() / 1000 - i * 7200,
   }))
 
+  const favs = [
+    { path: 'C:\\Users\\SevenJohn\\Documents\\工作\\报销制度.docx',
+      note: '每月 15 号前提交，逾期不受理', created_at: Date.now() / 1000 - 7200 },
+    { path: 'C:\\Users\\SevenJohn\\Pictures\\相册\\海边日落.jpg', note: '', created_at: Date.now() / 1000 - 3600 },
+  ]
+
   const MOCK = {
     get_status: () => ({
       ollama: { running: true, version: '0.32.13',
@@ -46,10 +52,18 @@
         { path: 'D:\\大文件\\游戏安装包.exe', name: '游戏安装包.exe', category: '安装包', size: 8.4e9 },
         { path: 'C:\\Users\\SevenJohn\\Videos\\录屏.mp4', name: '录屏.mp4', category: '视频', size: 2.1e9 }],
     } }),
-    browse_files: (query, category, isImage, offset) => {
+    browse_files: (query, category, isImage, offset, limit, sortBy, sortOrder, tagIds, mFrom, mTo) => {
       let items = files
+      if (category) items = items.filter((f) => f.category === category)
       if (isImage) items = items.filter((f) => IMG.includes(f.ext))
-      return { total: items.length, items: items.slice(offset || 0, (offset || 0) + 120) }
+      if (mFrom != null) items = items.filter((f) => f.mtime >= mFrom)
+      if (mTo != null) items = items.filter((f) => f.mtime < mTo)
+      const by = sortBy || 'mtime'
+      const dir = sortOrder === 'asc' ? 1 : -1
+      items = items.slice().sort((a, b) => (a[by] > b[by] ? 1 : -1) * dir)
+      const n = limit || 120
+      const o = offset || 0
+      return { total: items.length, items: items.slice(o, o + n), total_capped: false }
     },
     global_search: (q) => ({ query: q, filename: { total: 3, items: files.slice(0, 3) },
       content: { mode: 'vector', results: [
@@ -119,6 +133,23 @@
     }),
     pick_folder: () => null,
     open_path: () => ({ ok: true }),
+    list_favorites: () => ({ items: favs.slice() }),
+    add_favorite: (p) => {
+      if (!favs.some((f) => f.path === p)) favs.unshift({ path: p, note: '', created_at: Date.now() / 1000 })
+      return { ok: true }
+    },
+    remove_favorite: (p) => {
+      const i = favs.findIndex((f) => f.path === p)
+      if (i >= 0) favs.splice(i, 1)
+      return { ok: true }
+    },
+    set_favorite_note: (p, note) => {
+      const f = favs.find((x) => x.path === p)
+      if (!f) return { ok: false, error: '该路径未在收藏夹中' }
+      f.note = note || ''
+      return { ok: true }
+    },
+    ocr_status: () => ({ available: true, reason: '', hint: '' }),
     open_url: () => ({ ok: true }),
     thumb_base: () => ({ base: null }),
     set_titlebar_theme: () => ({ ok: true }),

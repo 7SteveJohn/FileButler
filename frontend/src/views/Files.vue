@@ -3,7 +3,7 @@ import { ref, computed, onUnmounted, h, onMounted } from 'vue'
 import {
   NCard, NButton, NSpace, NInput, NTag, NDataTable, NEmpty, NSpin, NAlert,
   NRadioGroup, NRadioButton, NPagination, NModal, NTooltip, useMessage, NProgress, NSelect,
-  NPopover, NIcon, NDropdown,
+  NPopover, NIcon, NDropdown, NDatePicker,
 } from 'naive-ui'
 import { SearchOutline } from '@vicons/ionicons5'
 import { api, on } from '../lib/bridge'
@@ -153,6 +153,17 @@ async function toggleFav(row) {
 
 function openFav(p) { api('open_path', p) }
 
+async function editFavNote(f) {
+  const v = window.prompt('备注（留空清除）：', f.note || '')
+  if (v === null) return
+  const note = v.trim()
+  if (note === (f.note || '')) return
+  const r = await api('set_favorite_note', f.path, note)
+  if (r && r.ok === false) { message.error(r.error || '保存失败'); return }
+  f.note = note
+  message.success(note ? '备注已保存' : '已清除备注')
+}
+
 async function removeFav(p) {
   await api('remove_favorite', p)
   favList.value = favList.value.filter((x) => x.path !== p)
@@ -177,6 +188,14 @@ const baseName = (p) => p.split(/[\\/]/).pop()
 function checkedRowObjs() {
   return checkedRows.value.map((p) =>
     items.value.find((x) => x.path === p) || { path: p, name: baseName(p) })
+}
+
+// 网格视图的勾选也走同一个 checkedRows（路径数组），两种视图选择状态互通
+const isChecked = (p) => checkedRows.value.includes(p)
+function toggleCheck(p) {
+  checkedRows.value = isChecked(p)
+    ? checkedRows.value.filter((x) => x !== p)
+    : [...checkedRows.value, p]
 }
 
 async function aiSuggest() {
@@ -288,13 +307,29 @@ const menuX = ref(0)
 const menuY = ref(0)
 const menuRow = ref(null)
 
+// 系统 OCR 可用性（null = 未探测）。不阻塞列表渲染：探测结果回来后再刷新菜单项状态
+const ocrSt = ref(null)
+function loadOcrStatus() {
+  api('ocr_status').then((s) => { ocrSt.value = s }).catch(() => {})
+}
+
 const menuOptions = computed(() => {
   const row = menuRow.value
   if (!row) return []
   const many = checkedRows.value.includes(row.path) && checkedRows.value.length > 1
   const n = `（${checkedRows.value.length}）`
   const tools = []
-  if (isImg(row)) tools.push({ label: 'OCR 取字', key: 'ocr' })
+  if (isImg(row)) {
+    const off = ocrSt.value && !ocrSt.value.available
+    tools.push(off
+      ? {
+          label: 'OCR 取字（不可用）',
+          key: 'ocr',
+          disabled: true,
+          title: `${ocrSt.value.reason}${ocrSt.value.hint ? '。' + ocrSt.value.hint : ''}`
+        }
+      : { label: 'OCR 取字', key: 'ocr' })
+  }
   tools.push({ label: '哈希校验 (SHA-256)', key: 'hash' })
   return [
     ...(many ? [] : [
@@ -463,12 +498,111 @@ function onSearchEnter(e) {
   }
 }
 
-// ---------- 视图模式（列表 / 网格，偏好存后端） ----------
+// ---------- 视图模式（列表 / 网格 / 时间线，偏好存后端） ----------
 const viewMode = ref('list')
 function setViewMode(m) {
   viewMode.value = m
+  if (m === 'timeline') {
+    // 时间线按天分组，必须按修改时间倒序才有意义
+    sortBy.value = 'mtime'
+    sortOrder.value = 'desc'
+    page.value = 1
+    refresh()
+  }
   api('set_ui_state', 'view_mode', m).catch(() => {})
 }
+
+// ---------- 时间线（区间走后端 mtime 过滤；注意这是修改时间，不是创建时间） ----------
+const timeRange = ref('all')          // all | today | week | month | custom
+const customRange = ref(null)         // [ms, ms]，n-date-picker daterange
+const timeChips = [
+  { key: 'all', label: '不限' },
+  { key: 'today', label: '今天' },
+  { key: 'week', label: '本周' },
+  { key: 'month', label: '本月' },
+  { key: 'custom', label: '自定义' },
+]
+
+function _startOfDay(d) {
+  const x = new Date(d)
+  x.setHours(0, 0, 0, 0)
+  return x
+}
+
+// 后端区间是左闭右开（mtime>=from AND mtime<to），to=null 表示不设上界
+const mtimeRange = computed(() => {
+  const now = new Date()
+  if (timeRange.value === 'today') return { from: +_startOfDay(now) / 1000, to: null }
+  if (timeRange.value === 'week') {
+    const d = _startOfDay(now)
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7))   // 周一为一周起点
+    return { from: +d / 1000, to: null }
+  }
+  if (timeRange.value === 'month') {
+    const d = _startOfDay(now)
+    d.setDate(1)
+    return { from: +d / 1000, to: null }
+  }
+  if (timeRange.value === 'custom') {
+    const v = customRange.value
+    if (!Array.isArray(v) || v.length !== 2 || !v[0] || !v[1]) return { from: null, to: null }
+    return {
+      from: +_startOfDay(v[0]) / 1000,
+      to: +_startOfDay(new Date(v[1]).getTime() + 86400000) / 1000,  // 结束日整天算入内
+    }
+  }
+  return { from: null, to: null }
+})
+
+function pickTimeRange(k) {
+  timeRange.value = k
+  if (k === 'custom' && !customRange.value) {
+    const end = _startOfDay(new Date())
+    customRange.value = [+new Date(+end - 6 * 86400000), +end]   // 首次给「近 7 天」
+  }
+  page.value = 1
+  refresh()
+}
+
+const WEEK_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+function fmtClock(mtime) {
+  const d = new Date((mtime || 0) * 1000)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function onCustomRange(v) {
+  customRange.value = v
+  page.value = 1
+  refresh()
+}
+
+function dayLabel(d) {
+  const s = _startOfDay(d)
+  const diff = Math.round((+(_startOfDay(new Date())) - +s) / 86400000)
+  const date = `${s.getMonth() + 1} 月 ${s.getDate()} 日`
+  const w = WEEK_CN[s.getDay()]
+  if (diff === 0) return `今天 · ${date} ${w}`
+  if (diff === 1) return `昨天 · ${date} ${w}`
+  if (diff > 1 && diff <= 7) return `${diff} 天前 · ${date} ${w}`
+  return `${s.getFullYear()} 年 ${date} ${w}`
+}
+
+// 按本地日期分组（时间线视图用）；items 已由后端按 mtime 倒序返回
+const groupedByDay = computed(() => {
+  const out = []
+  const map = new Map()
+  for (const it of items.value) {
+    const d = new Date((it.mtime || 0) * 1000)
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+    if (!map.has(key)) {
+      const g = { key, label: dayLabel(d), items: [] }
+      map.set(key, g)
+      out.push(g)
+    }
+    map.get(key).items.push(it)
+  }
+  return out
+})
 
 // ---------- 键盘速查 ----------
 const showKeys = ref(false)
@@ -501,7 +635,8 @@ async function refresh() {
     }
     const r = await api('browse_files', query.value || null, category.value, null,
       (page.value - 1) * pageSize, pageSize, sortBy.value, sortOrder.value,
-      tagFilter.value.length ? tagFilter.value : null)
+      tagFilter.value.length ? tagFilter.value : null,
+      mtimeRange.value.from, mtimeRange.value.to)
     items.value = r.items
     total.value = r.total
     totalCapped.value = !!r.total_capped
@@ -683,7 +818,7 @@ function onKeydown(e) {
   } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
     e.preventDefault()
     e.stopPropagation()
-    checkedRows.value = [...items.value]
+    checkedRows.value = items.value.map((r) => r.path)  // 绑的是 row-key（路径），不是行对象
   } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
     e.preventDefault()
     e.stopPropagation()
@@ -722,8 +857,10 @@ onMounted(() => {
   loadDirTree()
   loadFavs()
   loadSavedSearches()
+  loadOcrStatus()
   api('get_ui_state').then(({ state }) => {
-    if (state && state.view_mode === 'grid') viewMode.value = 'grid'
+    const m = state && state.view_mode
+    if (m === 'grid' || m === 'timeline') viewMode.value = m
   }).catch(() => {})
 })
 onUnmounted(() => {
@@ -883,8 +1020,13 @@ refresh()
             <div v-if="favList.length" style="max-height:320px;overflow:auto">
               <div v-for="f in favList" :key="f.path"
                 style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed rgba(127,127,127,.2)">
-                <span class="mono" style="flex:1;cursor:pointer;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                  :title="'打开 ' + f.path" @click="openFav(f.path)">{{ f.path }}</span>
+                <div style="flex:1;min-width:0">
+                  <div class="mono" style="cursor:pointer;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    :title="'打开 ' + f.path" @click="openFav(f.path)">{{ f.path }}</div>
+                  <div v-if="f.note" style="font-size:11.5px;opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    :title="f.note">{{ f.note }}</div>
+                </div>
+                <n-button size="tiny" quaternary @click="editFavNote(f)">备注</n-button>
                 <n-button size="tiny" quaternary @click="removeFav(f.path)">移除</n-button>
               </div>
             </div>
@@ -896,6 +1038,7 @@ refresh()
           <n-radio-group :value="viewMode" size="small" @update:value="setViewMode">
             <n-radio-button value="list">列表</n-radio-button>
             <n-radio-button value="grid">网格</n-radio-button>
+            <n-radio-button value="timeline">时间线</n-radio-button>
           </n-radio-group>
         </n-space>
 
@@ -960,9 +1103,9 @@ refresh()
           </n-space>
         </div>
 
-        <!-- 批量操作栏（列表多选后出现）。此前写作 view === 'list'，
+        <!-- 批量操作栏（列表/网格多选后出现）。此前写作 view === 'list'，
              但 view 并非本组件的变量（永远 undefined），批量栏从未显示过 -->
-        <n-space v-if="viewMode === 'list' && checkedRows.length" align="center" class="fb-batchbar">
+        <n-space v-if="checkedRows.length" align="center" class="fb-batchbar">
           <n-text>已选 <b>{{ checkedRows.length }}</b> 个</n-text>
           <n-button size="small" type="primary" ghost :loading="transferring" @click="transferFiles('move')">移动到…</n-button>
           <n-button size="small" type="primary" ghost :loading="transferring" @click="transferFiles('copy')">复制到…</n-button>
@@ -973,12 +1116,54 @@ refresh()
           <n-text depth="3" style="font-size:11.5px">快捷键：Ctrl+A 全选 · Space 预览 · F2 重命名 · Delete 删除 · Enter 打开 · Ctrl+K 全局搜索</n-text>
         </n-space>
 
-        <!-- 网格视图：图片/普通浏览两相宜（批量操作请切回列表） -->
-        <n-spin v-if="viewMode === 'grid'" :show="loading">
+        <!-- 时间线：按修改时间区间筛选，结果按天分组 -->
+        <div v-if="viewMode === 'timeline'">
+          <n-space align="center" size="small" style="margin-bottom:10px">
+            <n-tag v-for="c in timeChips" :key="c.key" size="small" round
+              :type="timeRange === c.key ? 'primary' : 'default'" style="cursor:pointer"
+              @click="pickTimeRange(c.key)">{{ c.label }}</n-tag>
+            <n-date-picker v-if="timeRange === 'custom'" :value="customRange" type="daterange"
+              size="small" :clearable="false" style="width:262px" @update:value="onCustomRange" />
+            <n-text depth="3" style="font-size:11.5px">按「修改时间」统计，不是创建时间</n-text>
+          </n-space>
+          <n-spin :show="loading">
+            <div class="fb-timeline" style="min-height:180px">
+              <div v-for="g in groupedByDay" :key="g.key" class="fb-tlday">
+                <div class="fb-tlday-head">
+                  <span class="fb-tldot"></span>
+                  <b>{{ g.label }}</b>
+                  <n-text depth="3" style="font-size:12px">{{ g.items.length }} 个</n-text>
+                </div>
+                <div v-for="r in g.items" :key="r.path" class="fb-tlrow"
+                  :class="{ sel: isChecked(r.path) }" :title="r.path"
+                  @click="(e) => { if (e.detail === 1) isImg(r) ? openPreview(r) : previewFile(r) }"
+                  @dblclick="openItem(r)">
+                  <div class="fb-grid-check" :class="{ on: isChecked(r.path) }" title="选择"
+                    @click.stop="toggleCheck(r.path)">{{ isChecked(r.path) ? '✓' : '' }}</div>
+                  <span class="fb-tltime mono">{{ fmtClock(r.mtime) }}</span>
+                  <img v-if="isImg(r)" :src="thumbUrl(r)" class="fb-tlthumb" loading="lazy" alt="" />
+                  <span v-else class="fb-ext-badge fb-tlbadge"
+                    :style="{ '--h': String(_HUES[r.category] || 220) }">
+                    {{ (r.ext || 'file').slice(0, 3).toUpperCase() }}
+                  </span>
+                  <span class="fb-tlname">{{ r.name }}</span>
+                  <span class="mono fb-tlsize">{{ fmtSize(r.size) }}</span>
+                </div>
+              </div>
+              <n-empty v-if="!items.length" description="该时间段内没有文件" style="padding:40px 0" />
+            </div>
+          </n-spin>
+        </div>
+
+        <!-- 网格视图：图片/普通浏览两相宜，悬停出现勾选框可批量操作 -->
+        <n-spin v-else-if="viewMode === 'grid'" :show="loading">
           <div class="thumb-grid" style="min-height:220px">
-          <div v-for="r in items" :key="r.path" class="thumb-card" :title="r.path"
+          <div v-for="r in items" :key="r.path" class="thumb-card" :class="{ sel: isChecked(r.path) }"
+            :title="r.path"
             @click="(e) => { if (e.detail === 1) isImg(r) ? openPreview(r) : previewFile(r) }"
             @dblclick="openItem(r)">
+            <div class="fb-grid-check" :class="{ on: isChecked(r.path) }" title="选择"
+              @click.stop="toggleCheck(r.path)">{{ isChecked(r.path) ? '✓' : '' }}</div>
             <img v-if="isImg(r)" :src="thumbUrl(r)" loading="lazy" alt="" />
             <div v-else class="fb-ext-badge fb-grid-badge"
               :style="{ '--h': String(_HUES[r.category] || 220) }">

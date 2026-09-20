@@ -539,11 +539,18 @@ def parse_query(query):
     return rest.strip(), filters
 
 
+_fts_ok_memo = False
+
+
 def _fts_available():
+    global _fts_ok_memo
+    if _fts_ok_memo:
+        return True
     try:
         conn = db.get_conn()
         try:
             conn.execute("SELECT COUNT(*) c FROM file_fts LIMIT 1").fetchone()
+            _fts_ok_memo = True  # 只记忆成功：瞬时的库锁不该把 FTS 永久降级成 LIKE
             return True
         finally:
             conn.close()
@@ -551,12 +558,28 @@ def _fts_available():
         return False
 
 
+# 纯文本 FTS 搜索的计数封顶：file_fts 与 file_index 由触发器一一对应，
+# 命中数可以脱离主表直接数，极端高频子串因此不再拖慢列表页。
+_FTS_COUNT_CAP = 5000
+_SQL_FTS_COUNT_CAPPED = ("SELECT COUNT(*) c FROM "
+                         "(SELECT 1 FROM file_fts WHERE file_fts MATCH ? LIMIT ?)")
+
+
 def search(query=None, category=None, ext=None, min_size=None, is_image=None,
-           limit=300, offset=0, sort_by="mtime", sort_order="desc", tag_ids=None):
+           limit=300, offset=0, sort_by="mtime", sort_order="desc", tag_ids=None,
+           mtime_from=None, mtime_to=None):
     """文件搜索：支持语法过滤；长关键词走 FTS5，短关键词退回 LIKE。
-    sort_by: mtime/name/size/ext；sort_order: asc/desc；tag_ids: 命中任一标签即返回。"""
+    sort_by: mtime/name/size/ext；sort_order: asc/desc；tag_ids: 命中任一标签即返回。
+    mtime_from/mtime_to: 修改时间区间（epoch 秒，左闭右开，供时间线视图用）。
+    纯文本 FTS 搜索的计数封顶为 _FTS_COUNT_CAP，此时 total_capped=True。"""
     text, f = parse_query(query)
     conds, params = [], []
+    if mtime_from is not None:
+        conds.append("file_index.mtime>=?")
+        params.append(float(mtime_from))
+    if mtime_to is not None:
+        conds.append("file_index.mtime<?")
+        params.append(float(mtime_to))
     if f["exts"]:
         marks = ",".join("?" * len(f["exts"]))
         conds.append(f"file_index.ext IN ({marks})")
@@ -644,9 +667,15 @@ def search(query=None, category=None, ext=None, min_size=None, is_image=None,
                 f"ORDER BY file_index.{col} {order} LIMIT ? OFFSET ?")
     conn = db.get_conn()
     try:
-        total = conn.execute(sql_total, fts_params + params).fetchone()["c"]
+        capped = False
+        if join_fts and not conds:
+            total = conn.execute(_SQL_FTS_COUNT_CAPPED,
+                                 (fts_params[0], _FTS_COUNT_CAP)).fetchone()["c"]
+            capped = total >= _FTS_COUNT_CAP
+        else:
+            total = conn.execute(sql_total, fts_params + params).fetchone()["c"]
         rows = conn.execute(sql_rows, fts_params + params + [limit, offset]).fetchall()
-        return {"total": total, "items": [dict(r) for r in rows]}
+        return {"total": total, "items": [dict(r) for r in rows], "total_capped": capped}
     finally:
         conn.close()
 

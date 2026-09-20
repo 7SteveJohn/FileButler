@@ -18,6 +18,8 @@ _engine = None          # 缓存的 OcrEngine
 _engine_lock = threading.Lock()
 _loop = None            # WinRT 异步调用专用的常驻事件循环（daemon 线程）
 _max_dim = None         # 引擎支持的最大图像边长（像素）
+_avail = None           # 可用性探测缓存（False 时配合 _avail_reason，避免重复走 WinRT 互操作）
+_avail_reason = ""
 
 
 def _imports():
@@ -34,14 +36,20 @@ def _imports():
 
 def get_engine():
     """获取（并缓存）OCR 引擎。无可用语言包时返回 None。"""
-    global _engine, _max_dim
+    global _engine, _max_dim, _avail, _avail_reason
     if _engine is not None:
         return _engine
+    if _avail is False:
+        return None
     with _engine_lock:
         if _engine is not None:
             return _engine
+        if _avail is False:
+            return None
         mods = _imports()
         if mods is None:
+            _avail = False
+            _avail_reason = "未安装 WinRT OCR 组件"
             return None
         Language, OcrEngine, _, _, _ = mods
         engine = None
@@ -56,12 +64,15 @@ def get_engine():
         except Exception:
             engine = None
         if engine is None:
+            _avail = False
+            _avail_reason = "系统缺少 OCR 语言包"
             return None
         try:
             _max_dim = OcrEngine.max_image_dimension or 10000
         except Exception:
             _max_dim = 10000
         _engine = engine
+        _avail = True
         return _engine
 
 
@@ -83,6 +94,14 @@ def languages():
 
 def available():
     return get_engine() is not None
+
+
+def status():
+    """可用性 + 不可用原因（前端菜单置灰、设置页展示用）。探测结果已缓存。"""
+    ok = available()
+    return {"available": ok,
+            "reason": "" if ok else (_avail_reason or "系统 OCR 不可用"),
+            "hint": "" if ok else "请在 系统设置→时间和语言→语言→选项 中添加「光学字符识别」"}
 
 
 # ---------- 常驻事件循环（WinRT 异步 API 用） ----------

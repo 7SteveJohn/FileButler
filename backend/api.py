@@ -613,6 +613,11 @@ class Api:
 
     _OCR_EXTS = ("jpg", "jpeg", "png", "bmp", "webp", "tif", "tiff", "gif")
 
+    def ocr_status(self):
+        """系统 OCR 可用性（轻量，结果在后端缓存；供右键菜单置灰用）。"""
+        from backend.knowledge import winocr
+        return winocr.status()
+
     def ocr_extract(self, path):
         """图片 OCR 取字（Windows 系统内置引擎，零模型依赖）。"""
         from backend.knowledge import winocr
@@ -621,8 +626,9 @@ class Api:
         ext = os.path.splitext(path)[1].lstrip(".").lower()
         if ext not in self._OCR_EXTS:
             return {"ok": False, "error": f".{ext} 不是支持的图片格式"}
-        if not winocr.available():
-            return {"ok": False, "error": "系统 OCR 不可用：请在 系统设置→时间和语言→语言→选项 中添加「光学字符识别」"}
+        st = winocr.status()
+        if not st["available"]:
+            return {"ok": False, "error": f"{st['reason']}：{st['hint']}"}
         try:
             text = winocr.ocr_file(path)
             return {"ok": True, "text": text or "（未识别到文字）"}
@@ -1374,12 +1380,14 @@ class Api:
                             "images": content.get("images", [])}}
 
     def browse_files(self, query=None, category=None, is_image=None, offset=0, limit=200,
-                     sort_by="mtime", sort_order="desc", tag_ids=None):
-        """分页浏览文件总索引。"""
+                     sort_by="mtime", sort_order="desc", tag_ids=None,
+                     mtime_from=None, mtime_to=None):
+        """分页浏览文件总索引。mtime_from/to 为修改时间区间（epoch 秒，左闭右开）。"""
         try:
             return fileindex.search(query=query or None, category=category or None,
                                     is_image=is_image or None, offset=offset, limit=limit,
-                                    sort_by=sort_by, sort_order=sort_order, tag_ids=tag_ids)
+                                    sort_by=sort_by, sort_order=sort_order, tag_ids=tag_ids,
+                                    mtime_from=mtime_from, mtime_to=mtime_to)
         except Exception as e:
             # 临时状态（如 FTS 触发器异常）返回空结果，不弹错
             print(f"browse_files fallback: {e}")
@@ -2115,6 +2123,20 @@ class Api:
         try:
             conn.execute("DELETE FROM favorites WHERE path=?", (os.path.abspath(path),))
             conn.commit()
+        finally:
+            conn.close()
+        return {"ok": True}
+
+    def set_favorite_note(self, path, note=""):
+        """修改收藏备注；路径未收藏时返回错误（不隐式新建收藏）。
+        纯空白按空处理，否则前端会把它渲染成一条看着是空的备注行。"""
+        conn = db.get_conn()
+        try:
+            cur = conn.execute("UPDATE favorites SET note=? WHERE path=?",
+                               ((note or "").strip(), os.path.abspath(path)))
+            conn.commit()
+            if cur.rowcount == 0:
+                return {"ok": False, "error": "该路径未在收藏夹中"}
         finally:
             conn.close()
         return {"ok": True}
