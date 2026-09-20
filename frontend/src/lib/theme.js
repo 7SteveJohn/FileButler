@@ -34,6 +34,7 @@ export const THEMES = {
         borderRadius: '999px', fontWeight: '500',
         // naive 默认 warning/error 文字压在同色淡底上不到 2:1，压深文字色
         textColorWarning: '#8a5a00', textColorError: '#a8202b',
+        textColorSuccess: '#0b6e3d', // 同上：naive 的 #18a05b 在淡绿底上只有 3.03
       },
       Menu: { borderRadius: '8px', itemHeight: '36px' },
       Button: { borderRadius: '8px', fontWeight: '500' },
@@ -89,6 +90,7 @@ export const THEMES = {
         borderRadius: '999px', fontWeight: '500',
         // naive 默认 warning/error 文字压在同色淡底上不到 2:1，压深文字色
         textColorWarning: '#8a5a00', textColorError: '#a8202b',
+        textColorSuccess: '#0b6e3d', // 同上：naive 的 #18a05b 在淡绿底上只有 3.03
       },
       Menu: { borderRadius: '8px', itemHeight: '36px' },
       Button: { borderRadius: '8px', fontWeight: '500' },

@@ -115,9 +115,15 @@ def _cand_sql(select):
     return sql, tuple(exts) + (MAX_FILE_BYTES,)
 
 
-def _candidates(conn):
+def _candidates(conn, limit=None):
+    """待索引候选。limit 按剩余预算截断：真机 68 万行的库里候选有 40 万条，
+    而预算只吃得下 5 万，全量物化实测 692ms / ~55MB，纯属白读。"""
     sql, params = _cand_sql("f.path AS path, f.size AS size, f.mtime AS mtime")
-    rows = conn.execute(sql + " ORDER BY f.mtime DESC", params).fetchall()
+    sql += " ORDER BY f.mtime DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = params + (max(0, int(limit)),)
+    rows = conn.execute(sql, params).fetchall()
     return [(r["path"], r["size"], r["mtime"]) for r in rows]
 
 
@@ -220,7 +226,10 @@ def _run(cb):
     try:
         conn = db.get_conn()
         try:
-            todo = _candidates(conn)
+            # 只取预算还吃得下的那么多候选（库里可能有几十万条待选）
+            docs_room = max_docs - docs_ok
+            budget_hit = docs_room <= 0
+            todo = _candidates(conn, limit=max(docs_room, 0))
             n = len(todo)
             cb("indexing", 0, n, f"已索引 {docs_ok} 篇")
             batch = 0
@@ -278,6 +287,10 @@ def _run(cb):
                     _prog.update({"ok": ok, "failed": failed, "body_bytes": body_bytes})
                     cb("indexing", done, n, os.path.basename(path))
             conn.commit()
+            # 候选已按预算截断，循环里那次判断再也撞不上；这里按实际条件补一次，
+            # 否则「已达预算上限」的提示会丢
+            if not _stop.is_set() and (docs_ok >= max_docs or body_bytes >= max_bytes):
+                budget_hit = True
         finally:
             conn.close()
     except Exception as e:
