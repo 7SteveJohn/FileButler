@@ -20,9 +20,13 @@ export const THEMES = {
     caption: { bg: '#f4f6f4', fg: '#1f2a25' },
     naive: {
       common: {
-        primaryColor: '#0e9f6e', primaryColorHover: '#31b488',
-        primaryColorPressed: '#057a55', primaryColorSuppl: '#0e9f6e',
-        successColor: '#0e9f6e', borderRadius: '8px', borderRadiusSmall: '6px',
+        /* #0e9f6e 撑不起白字（3.35:1）也不够深到能印在自己的淡底上；
+           同色相调深一档，四个不达标项一起解决，装饰用的 accent-2/渐变保持明亮。
+           hover/pressed 只能往深走——再亮就掉出 AA（#0b8a5c 实测 4.37），
+           所以这里是一整套"越交互越深"的色阶，而不是常规的 hover 变亮 */
+        primaryColor: '#0a7d54', primaryColorHover: '#096e49',
+        primaryColorPressed: '#075c40', primaryColorSuppl: '#0a7d54',
+        successColor: '#0a7d54', borderRadius: '8px', borderRadiusSmall: '6px',
         fontFamily: FONT, bodyColor: '#f4f6f4', cardColor: '#ffffff',
         borderColor: 'rgba(17,24,39,.07)',
         textColor1: '#101826', textColor2: '#3d4a56', textColor3: '#5f6b78',
@@ -41,7 +45,7 @@ export const THEMES = {
       DataTable: { fontWeightStrong: '600' },
     },
     vars: {
-      '--fb-accent': '#0e9f6e',
+      '--fb-accent': '#0a7d54',
       '--fb-accent-2': '#34d399',
       '--fb-grad': 'linear-gradient(135deg,#10b981 0%,#059669 100%)',
       '--fb-logo-shadow': 'rgba(5,150,105,.30)',
@@ -62,7 +66,7 @@ export const THEMES = {
       '--fb-card-hover-shadow': '0 4px 6px rgba(16,24,40,.04), 0 10px 22px rgba(16,24,40,.08)',
       '--fb-hero-text': '#ffffff',
       '--fb-chip-bg': '#eef3f0',
-      '--fb-chip-active': '#0e9f6e',
+      '--fb-chip-active': '#0a7d54',
       '--fb-thumb-bg': '#f3f5f4',
     },
   },

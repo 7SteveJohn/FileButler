@@ -28,7 +28,7 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=installer
-OutputBaseFilename=FileButler-Setup-{#MyAppVersion}
+OutputBaseFilename=FileButler-Setup-{#MyAppVersion}-en
 PrivilegesRequired=lowest
 
 [Tasks]
