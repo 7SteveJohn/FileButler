@@ -44,8 +44,10 @@ html, body {
   display: flex;
   align-items: center;
   padding: 0 8px;
-  /* 两段式窗口 chrome：让侧栏底色向上延续穿过标题栏。
-     否则浅色标题栏直接压在深色侧栏上方，接缝生硬（indigo 主题最明显）*/
+  /* 两段式窗口 chrome：侧栏底色向上延续穿过标题栏左段。
+     jade 用得上（白侧栏 vs 浅灰标题栏）；indigo 现在整条都是深色，
+     两段同色即退化成一条纯色带——因为系统 caption 带压在窗口最上沿，
+     只要它跟标题栏不同色，就会在深色侧栏顶上切出一条浅色缝。 */
   background: linear-gradient(90deg,
     var(--fb-sidebar-bg, #f4f6f4) 0 var(--fb-side-w, 200px),
     var(--fb-titlebar-bg, #f4f6f4) var(--fb-side-w, 200px) 100%);

@@ -79,7 +79,7 @@ export const THEMES = {
     dark: false,
     swatch: 'linear-gradient(135deg,#4f46e5,#818cf8)',
     menuInverted: true,
-    caption: { bg: '#f3f5fa', fg: '#252b3b' },
+    caption: { bg: '#151b2c', fg: '#e5e9f5' },
     naive: {
       common: {
         primaryColor: '#4f46e5', primaryColorHover: '#6366f1',
@@ -107,8 +107,8 @@ export const THEMES = {
       '--fb-accent-2': '#818cf8',
       '--fb-grad': 'linear-gradient(135deg,#6366f1 0%,#4f46e5 100%)',
       '--fb-logo-shadow': 'rgba(79,70,229,.35)',
-      '--fb-titlebar-bg': '#f3f5fa',
-      '--fb-titlebar-fg': '#3d4459',
+      '--fb-titlebar-bg': '#151b2c',
+      '--fb-titlebar-fg': '#e5e9f5',
       '--fb-sidebar-bg': '#151b2c',
       '--fb-sidebar-border': 'rgba(255,255,255,.06)',
       '--fb-side-text': '#e5e9f5',

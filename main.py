@@ -486,26 +486,54 @@ def main():
     # ---- 托盘 ----
     tray = {}
 
+    def _release_single_lock():
+        """关掉单实例锁 socket。退出路径上只有这一步不能省：
+        不关它，端口在 TIME_WAIT 期间 bind 不上，用户下次启动会走
+        「二次实例」分支静默退出（表现为"退出后再也打不开"）。"""
+        global _single_sock
+        try:
+            if _single_sock is not None:
+                _single_sock.close()
+                _single_sock = None
+        except Exception:
+            pass
+
     def quit_app(icon=None, item=None):
+        """托盘「退出」：必须瞬时完成。
+
+        优雅收尾在退出路径上是纯负担——watcher.stop() 里两个 join(timeout=5)、
+        httpd.shutdown()、以及从托盘菜单回调线程里调 icon.stop()（它等的是自己
+        那个事件循环）加起来能拖十几秒，就是"右键退出要等好久"。进程一死，这些
+        线程和句柄都由系统回收；SQLite 是 WAL，未提交事务下次打开自动回滚。
+        所以慢活全部丢后台，主线程只做"释放锁 + 立刻退"。
+        """
         _exiting.set()
-        # 每日自动备份不再阻塞退出：838MB 级的库备份要几十秒（机械盘更久），
-        # 就是「退出应用退半天」的根源。改为记 pending 标记，下次启动后
-        # 台补做（备份本身先写 .tmp 再改名，中断不会留下半截正式备份）。
-        try:
-            from backend import db
-            import time as _t
-            last = float(db.get_setting("last_backup_at", "0") or 0)
-            if _t.time() - last > 20 * 3600:
-                db.set_setting("backup_pending", "1")
-        except Exception:
-            pass
-        _teardown()
-        try:
-            window.destroy()
-        except Exception:
-            pass
-        # 强制退出：window.destroy 不会让 webview.start() 主线程立即返回
-        # 进程残留导致用户"从托盘退出"无效，必须 os._exit 收尾
+        # 每日自动备份不阻塞退出：记 pending 标记，下次启动后台补做。
+        # 这一步要写库，可能正被扫描线程占着写锁（busy_timeout 5s），
+        # 所以只等 0.4s——写不上也无所谓，下次启动同样会因为超期而补备份。
+        def _mark_backup_pending():
+            try:
+                from backend import db
+                last = float(db.get_setting("last_backup_at", "0") or 0)
+                if time.time() - last > 20 * 3600:
+                    db.set_setting("backup_pending", "1")
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_mark_backup_pending, daemon=True)
+        t.start()
+        t.join(0.4)
+        _release_single_lock()
+
+        def _cleanup():
+            _teardown()
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
+        threading.Thread(target=_cleanup, daemon=True).start()
+        time.sleep(0.12)  # 给托盘图标一点时间从通知区消失
         os._exit(0)
 
     def show_window(icon=None, item=None):
