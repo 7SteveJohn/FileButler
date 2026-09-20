@@ -12,7 +12,7 @@
 ; 版本号需与 backend/__init__.py 的 __version__ 手工同步（英文变体在 FileButler-en.iss）
 
 #define MyAppName "FileButler"
-#define MyAppVersion "1.1.5"
+#define MyAppVersion "1.1.6"
 #define MyAppExeName "FileButler.exe"
 
 [Setup]
