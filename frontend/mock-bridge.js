@@ -120,6 +120,8 @@
     pick_folder: () => null,
     open_path: () => ({ ok: true }),
     open_url: () => ({ ok: true }),
+    thumb_base: () => ({ base: null }),
+    set_titlebar_theme: () => ({ ok: true }),
     search: () => ({ mode: 'vector', results: [
       { id: 1, seq: 0, text: '报销制度第六条：住宿标准一线城市 500 元/晚',
         file_path: 'C:\\Users\\SevenJohn\\Documents\\工作\\报销制度.docx', score: 0.7 }], images: [] }),
@@ -127,6 +129,9 @@
   window.pywebview = {
     api: new Proxy({}, {
       get(t, prop) {
+        // 关键：'then' 必须返回 undefined，否则 api Proxy 被当成 thenable，
+        // Promise 链永远挂起（桥看似就绪但所有 await 卡死）
+        if (prop === 'then' || prop === 'catch' || prop === 'finally') return undefined
         const m = MOCK[prop]
         return (...a) => Promise.resolve(typeof m === 'function' ? m(...a) : { ok: true })
       },

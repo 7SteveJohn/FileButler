@@ -36,10 +36,13 @@ def execute(plan_rows, batch_id=None):
 
 
 def undo(batch_id):
-    """按日志逆序撤销一个批次的全部移动。"""
+    """按日志逆序撤销一个批次的全部移动。
+    只回滚 move 操作：copy/其他操作跳过（撤销副本等于删副本，不做）。"""
     ops = db.list_operations(batch_id)
     undone, failed = 0, 0
     for op in reversed(ops):
+        if op["action"] != "move":
+            continue
         src, dst = op["src"], op["dst"]
         try:
             if not os.path.exists(dst):
@@ -66,12 +69,14 @@ def redo(batch_id):
     conn = db.get_conn()
     try:
         ops = conn.execute(
-            "SELECT src, dst FROM operations WHERE batch_id=? AND undone=1 "
+            "SELECT src, dst, action FROM operations WHERE batch_id=? AND undone=1 "
             "ORDER BY id", (batch_id,)).fetchall()
     finally:
         conn.close()
     redone, failed = 0, 0
     for op in ops:
+        if op["action"] != "move":
+            continue  # copy/其他操作不参与撤销重做
         src, dst = op["src"], op["dst"]
         try:
             if not os.path.exists(src):

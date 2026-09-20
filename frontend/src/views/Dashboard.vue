@@ -2,8 +2,9 @@
 import { ref, computed, onMounted } from 'vue'
 import {
   NCard, NGrid, NGi, NStatistic, NTag, NSpace, NButton, NText, NSpin, NAlert,
-  NList, NListItem, NResult,
+  NList, NListItem, NResult, NIcon,
 } from 'naive-ui'
+import { FolderOpenOutline } from '@vicons/ionicons5'
 import { api, resetBridge } from '../lib/bridge'
 import { useMessage } from 'naive-ui'
 
@@ -13,6 +14,10 @@ const loading = ref(true)
 const report = ref(null)
 const space = ref(null)
 const savingReport = ref(false)
+// 渐进加载：三块数据各自独立到位，首屏壳不等于最慢的接口
+const loadingStatus = ref(true)
+const loadingReport = ref(true)
+const loadingSpace = ref(true)
 
 async function saveReport() {
   savingReport.value = true
@@ -28,26 +33,20 @@ async function saveReport() {
 
 async function refresh() {
   loading.value = true
-  // 加载超过 6 秒仍未完成 → 提示用户（避免"假白屏"：loading 无限转）
-  const slowTimer = setTimeout(() => {
-    if (loading.value) message.warning('首屏加载较慢，请稍候…（后台在启动）')
-  }, 6000)
-  try {
-    // 三个请求并行：串行时总耗时 = 各接口之和（Ollama 探测可能要 2s）
-    const [st, rep, sp] = await Promise.all([
-      api('get_status'),
-      api('weekly_report'),
-      api('space_analysis'),
-    ])
-    status.value = st
-    report.value = rep
-    space.value = sp
-  } catch (e) {
-    status.value = { error: String(e) }
-  } finally {
-    clearTimeout(slowTimer)
-    loading.value = false
-  }
+  loadingStatus.value = loadingReport.value = loadingSpace.value = true
+  // 三块并行、各自填充：首屏壳立即可见，慢的（空间分析/周报）局部转圈
+  api('get_status')
+    .then((r) => { status.value = r })
+    .catch((e) => { status.value = { error: String(e) } })
+    .finally(() => { loadingStatus.value = false; loading.value = false })
+  api('weekly_report')
+    .then((r) => { report.value = r })
+    .catch(() => { report.value = null })
+    .finally(() => { loadingReport.value = false })
+  api('space_analysis')
+    .then((r) => { space.value = r })
+    .catch(() => { space.value = null })
+    .finally(() => { loadingSpace.value = false })
 }
 async function retry() {
   resetBridge()      // 强制重连后端
@@ -77,6 +76,13 @@ function fmtSize(n) {
   return n.toFixed(1) + ' ' + units[i]
 }
 
+// 大数字缩写：854614 → 85 万（成熟产品的仪表盘读法，避免一长串数字）
+function fmtCount(n) {
+  if (n == null) return '—'
+  if (n >= 10000) return (n / 10000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '') + ' 万'
+  return String(n)
+}
+
 function goto(k) { window.dispatchEvent(new CustomEvent('fb-goto', { detail: k })) }
 function pct(n) {
   if (!space.value || !space.value.total) return 0
@@ -85,29 +91,39 @@ function pct(n) {
 </script>
 
 <template>
+  <!-- 单根包装：页面切换过渡动画要求唯一根节点 -->
+  <div class="fb-dash-root">
   <div class="fb-page" v-if="status && !status.error">
     <n-spin :show="loading">
-      <!-- Hero 横幅 -->
-      <div class="fb-hero">
-        <h2 class="fb-hero-title">{{ greeting }}{{ status.llm?.mode === 'api' ? '，云端已就绪' : '，一切尽在本地' }} 👋</h2>
-        <div class="fb-hero-sub">
-          {{ dateStr }} ·
-          {{ status.llm?.mode === 'api'
-            ? '云端 API 出答案 · 你的文件始终留在本机'
-            : '本地模式：无需 API Key，数据零上传（可在设置切换云端 API）' }}
-        </div>
-        <div class="fb-hero-stats">
-          <div class="fb-hero-stat">
-            <b>{{ status.library.files }}</b><span>已编目文件</span>
+      <!-- 问候头：紧凑单卡，成熟产品风格（不铺大渐变） -->
+      <div class="fb-hello">
+        <div class="fb-hello-main">
+          <h2 class="fb-hello-title">
+            {{ greeting }}，一切尽在本地
+            <span class="fb-hello-badge" v-if="status.llm?.mode === 'api'">云端 API</span>
+            <span class="fb-hello-badge" v-else>本地模式</span>
+          </h2>
+          <div class="fb-hello-sub">
+            {{ dateStr }} ·
+            {{ status.llm?.mode === 'api'
+              ? '云端 API 出答案 · 你的文件始终留在本机'
+              : '无需 API Key，数据零上传（可在设置切换云端 API）' }}
           </div>
-          <div class="fb-hero-stat">
+        </div>
+        <div class="fb-hello-stats">
+          <div class="fb-hello-stat">
+            <b>{{ fmtCount(status.library.files) }}</b><span>已编目文件</span>
+          </div>
+          <div class="fb-hello-stat">
             <b>{{ report?.data?.new_count ?? '—' }}</b><span>本周新增</span>
           </div>
-          <div class="fb-hero-stat">
-            <b>{{ status.kb.chunks }}</b><span>知识库分块</span>
+          <div class="fb-hello-stat">
+            <b>{{ fmtCount(status.kb.chunks) }}</b><span>知识库分块</span>
           </div>
-          <div class="fb-hero-stat">
-            <b>{{ status.llm?.chat?.ok ? '在线' : '离线' }}</b><span>AI 模型</span>
+          <div class="fb-hello-stat">
+            <b :class="status.llm?.chat?.ok ? 'fb-hello-online' : 'fb-hello-offline'">
+              {{ status.llm?.chat?.ok ? '在线' : '离线' }}
+            </b><span>AI 模型</span>
           </div>
         </div>
       </div>
@@ -154,7 +170,9 @@ function pct(n) {
           <n-card class="fb-hoverable" title="本地文件库（自动扫描）" size="medium">
             <n-space vertical size="large">
               <n-space size="large">
-                <div class="fb-stat-ico">🗂</div>
+                <div class="fb-stat-ico">
+                  <n-icon :component="FolderOpenOutline" size="19" style="color:var(--fb-accent)" />
+                </div>
                 <n-space vertical :size="2">
                   <n-text strong style="font-size:17px">{{ status.library.files }} 个文件</n-text>
                   <n-text depth="3" style="font-size:12.5px">
@@ -177,16 +195,20 @@ function pct(n) {
 
         <!-- 周报 -->
         <n-gi :span="2">
-          <n-card class="fb-hoverable" title="本周文件动态" size="medium"
-            v-if="report && report.data">
+          <n-card class="fb-hoverable" title="本周文件动态" size="medium">
             <template #header-extra>
               <n-space size="small" align="center">
-                <n-text depth="3" style="font-size:12px">周起始 {{ report.week_start }}</n-text>
-                <n-button size="tiny" type="primary" ghost :loading="savingReport" @click="saveReport">
+                <n-text v-if="report && report.data" depth="3" style="font-size:12px">周起始 {{ report.week_start }}</n-text>
+                <n-button v-if="report && report.data" size="tiny" type="primary" ghost :loading="savingReport" @click="saveReport">
                   保存 HTML
                 </n-button>
               </n-space>
             </template>
+            <n-spin v-if="loadingReport" :show="true" size="small">
+              <div style="height:64px"></div>
+            </n-spin>
+            <n-text v-else-if="!report || !report.data" depth="3">周报生成中，稍后自动显示</n-text>
+            <template v-else>
             <n-grid :cols="4" :x-gap="12">
               <n-gi><n-statistic label="本周新增/变更" :value="report.data.new_count" /></n-gi>
               <n-gi><n-statistic label="新增体积" :value="fmtSize(report.data.new_size)" /></n-gi>
@@ -226,16 +248,21 @@ function pct(n) {
                 </n-list-item>
               </n-list>
             </template>
+            </template>
           </n-card>
         </n-gi>
 
         <!-- 空间占用 -->
         <n-gi :span="2">
-          <n-card class="fb-hoverable" title="空间占用" size="medium" v-if="space">
+          <n-card class="fb-hoverable" title="空间占用" size="medium">
             <template #header-extra>
-              <n-text depth="3" style="font-size:12px">共 {{ fmtSize(space.total) }}</n-text>
+              <n-text v-if="space && space.total" depth="3" style="font-size:12px">共 {{ fmtSize(space.total) }}</n-text>
             </template>
-            <n-space vertical size="large">
+            <n-spin v-if="loadingSpace" :show="true" size="small">
+              <div style="height:64px"></div>
+            </n-spin>
+            <n-text v-else-if="!space" depth="3">空间统计中，稍后自动显示</n-text>
+            <n-space v-else vertical size="large">
               <div v-if="space.by_category && space.by_category.length">
                 <div class="fb-sub-title">按类别</div>
                 <div v-for="c in space.by_category" :key="c.category" class="fb-space-row">
@@ -287,5 +314,6 @@ function pct(n) {
         </n-space>
       </template>
     </n-result>
+  </div>
   </div>
 </template>

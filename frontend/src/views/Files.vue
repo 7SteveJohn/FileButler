@@ -3,9 +3,11 @@ import { ref, computed, onUnmounted, h, onMounted } from 'vue'
 import {
   NCard, NButton, NSpace, NInput, NTag, NDataTable, NEmpty, NSpin, NAlert,
   NRadioGroup, NRadioButton, NPagination, NModal, NTooltip, useMessage, NProgress, NSelect,
-  NPopover,
+  NPopover, NIcon, NDropdown,
 } from 'naive-ui'
+import { SearchOutline } from '@vicons/ionicons5'
 import { api, on } from '../lib/bridge'
+import { CATEGORY_HUES } from '../lib/theme'
 
 const message = useMessage()
 
@@ -15,6 +17,7 @@ const category = ref(null)
 const loading = ref(false)
 const items = ref([])
 const total = ref(0)
+const totalCapped = ref(false)   // FTS 命中超过 5000：计数封顶，显示 5000+
 const page = ref(1)
 const pageSize = 120
 const thumbBase = ref(null)
@@ -42,8 +45,29 @@ const tagSel = ref({})          // path -> [tag_ids]（行内编辑暂存）
 async function loadTags() {
   try {
     const r = await api('list_tags')
+    tagList.value = r.tags || []
     tagOptions.value = (r.tags || []).map((t) => ({ label: t.name, value: t.id }))
   } catch (e) { /* 忽略 */ }
+}
+
+// ---------- 标签管理（重命名/删除，后端 API 现成） ----------
+const showTagMgr = ref(false)
+const tagList = ref([])         // {id, name, c}
+
+async function deleteTag(t) {
+  if (!window.confirm(`删除标签「${t.name}」？\n将从所有文件上移除（文件本身不受影响）。`)) return
+  await api('delete_tag', t.id)
+  tagList.value = tagList.value.filter((x) => x.id !== t.id)
+  tagOptions.value = tagOptions.value.filter((o) => o.value !== t.id)
+  message.success('标签已删除')
+}
+
+async function renameTag(t) {
+  const name = window.prompt('新的标签名：', t.name)
+  if (!name || !name.trim() || name.trim() === t.name) return
+  await api('rename_tag', t.id, name.trim())
+  loadTags()
+  message.success('标签已重命名')
 }
 
 async function saveTags(r) {
@@ -65,6 +89,76 @@ async function createTag(label) {
   return r.id
 }
 
+// ---------- 保存的智能筛选 ----------
+const savedSearches = ref([])
+const showSaveSearch = ref(false)
+const saveSearchName = ref('')
+
+async function loadSavedSearches() {
+  try { savedSearches.value = (await api('list_saved_searches')).items } catch (e) { /* 忽略 */ }
+}
+
+async function saveCurrentSearch() {
+  const q = query.value.trim()
+  if (!q) return message.warning('先在搜索框输入筛选条件（支持 size:>100mb 等语法）')
+  const name = saveSearchName.value.trim()
+  if (!name) return message.warning('请给筛选起个名字')
+  const r = await api('save_search', name, q)
+  if (r.ok) {
+    message.success('筛选已保存')
+    showSaveSearch.value = false
+    saveSearchName.value = ''
+    loadSavedSearches()
+  } else {
+    message.error(r.error || '保存失败')
+  }
+}
+
+function applySaved(s) {
+  query.value = s.query
+  currentDir.value = null
+  refresh()
+  searchContent()
+}
+
+async function removeSaved(s) {
+  await api('delete_saved_search', s.name)
+  loadSavedSearches()
+}
+
+// ---------- 收藏夹（后端 API 现成，这里接线） ----------
+const favSet = ref(new Set())
+const favList = ref([])
+
+async function loadFavs() {
+  try {
+    favList.value = (await api('list_favorites')).items
+    favSet.value = new Set(favList.value.map((x) => x.path))
+  } catch (e) { /* 忽略 */ }
+}
+
+async function toggleFav(row) {
+  if (favSet.value.has(row.path)) {
+    await api('remove_favorite', row.path)
+    favSet.value = new Set([...favSet.value].filter((p) => p !== row.path))
+    favList.value = favList.value.filter((x) => x.path !== row.path)
+    message.info('已取消收藏')
+  } else {
+    await api('add_favorite', row.path)
+    favSet.value = new Set([...favSet.value, row.path])
+    favList.value = [...favList.value, { path: row.path, note: '' }]
+    message.success('已收藏')
+  }
+}
+
+function openFav(p) { api('open_path', p) }
+
+async function removeFav(p) {
+  await api('remove_favorite', p)
+  favList.value = favList.value.filter((x) => x.path !== p)
+  favSet.value = new Set([...favSet.value].filter((x) => x !== p))
+}
+
 // ---------- 批量操作（重命名 / 删除到回收站 / 复制路径） ----------
 const checkedRows = ref([])
 const renameModal = ref(false)
@@ -78,26 +172,18 @@ const renameLoading = ref(false)
 
 const baseName = (p) => p.split(/[\\/]/).pop()
 
-function genRenameRows() {
-  const sel = checkedRows.value
-  if (renameMode.value === 'seq') {
-    renameRows.value = sel.map((it, i) => ({
-      src: it.path,
-      new_name: renamePrefix.value + (renameStart.value + i) + '.' + it.ext,
-    }))
-  } else {
-    renameRows.value = sel.map((it) => ({
-      src: it.path,
-      new_name: it.name.replaceAll(renameFind.value || '', renameReplace.value),
-    }))
-  }
+// checkedRows 绑定的是 row-key（路径字符串），不是行对象——
+// 需要行对象（name/ext/category）时从这里取回
+function checkedRowObjs() {
+  return checkedRows.value.map((p) =>
+    items.value.find((x) => x.path === p) || { path: p, name: baseName(p) })
 }
 
 async function aiSuggest() {
   if (!checkedRows.value.length) return
   renameLoading.value = true
   try {
-    const r = await api('ai_rename', JSON.parse(JSON.stringify(checkedRows.value)))
+    const r = await api('ai_rename', JSON.parse(JSON.stringify(checkedRowObjs())))
     if (r.suggestions.length) {
       renameRows.value = r.suggestions
       message.success(`AI 已生成 ${r.suggestions.length} 个建议名，可手动修改`)
@@ -114,6 +200,29 @@ function openRename() {
   renameModal.value = true
 }
 
+// 单文件重命名（右键/F2）：传入路径字符串，预填原名
+function startSingleRename(path) {
+  renameMode.value = 'single'
+  renameRows.value = [{ src: path, new_name: baseName(path) }]
+  renameModal.value = true
+}
+
+function genRenameRows() {
+  if (renameMode.value === 'single') return  // 单文件：保持预填行，用户在输入框里改
+  const sel = checkedRowObjs()
+  if (renameMode.value === 'seq') {
+    renameRows.value = sel.map((it, i) => ({
+      src: it.path,
+      new_name: renamePrefix.value + (renameStart.value + i) + '.' + it.ext,
+    }))
+  } else {
+    renameRows.value = sel.map((it) => ({
+      src: it.path,
+      new_name: it.name.replaceAll(renameFind.value || '', renameReplace.value),
+    }))
+  }
+}
+
 async function doRename() {
   const rows = renameRows.value
     .filter((r) => r.new_name && r.new_name.trim() && r.new_name.trim() !== baseName(r.src))
@@ -127,22 +236,146 @@ async function doRename() {
   refresh()
 }
 
-async function trashSelected() {
-  const paths = checkedRows.value.map((it) => it.path)
+async function trashSelected(paths = null) {
+  const fromChecked = !paths
+  paths = paths || [...checkedRows.value]  // checkedRows 存的就是路径
+  if (!paths.length) return
   const ok = window.confirm(`将 ${paths.length} 个文件/文件夹移入系统回收站（可随时恢复）？`)
   if (!ok) return
   const r = await api('trash_files', JSON.parse(JSON.stringify(paths)))
   const okN = r.results.filter((x) => x.ok).length
   message.success(`已移入回收站 ${okN}/${paths.length}`)
-  checkedRows.value = []
+  if (fromChecked) checkedRows.value = []
   refresh()
 }
 
+// ---------- 移动到 / 复制到（paths 省略时作用于勾选行；右键菜单会显式传入） ----------
+const transferring = ref(false)
+async function transferFiles(mode, paths = null) {
+  const fromChecked = !paths
+  paths = paths || [...checkedRows.value]  // checkedRows 存的就是路径
+  if (!paths.length) return
+  const dest = await api('pick_folder')
+  if (!dest) return
+  transferring.value = true
+  try {
+    const r = await api('transfer_files', JSON.parse(JSON.stringify(paths)), dest, mode)
+    const ok = r.results.filter((x) => x.ok).length
+    const fail = r.results.length - ok
+    if (fail === 0) {
+      const tip = mode === 'move' ? '（可在「文件整理 → 操作历史」一键撤销）' : ''
+      message.success(`${mode === 'move' ? '已移动' : '已复制'} ${ok} 个文件${tip}`)
+    } else {
+      message.warning(`${mode === 'move' ? '移动' : '复制'} ${ok} 个成功 / ${fail} 个失败`)
+    }
+    if (fromChecked) checkedRows.value = []
+    refresh()
+  } catch (e) { message.error(String(e)) }
+  transferring.value = false
+}
+
 async function copyPaths() {
-  const text = checkedRows.value.map((it) => it.path).join('\n')
+  const text = [...checkedRows.value].join('\n')  // checkedRows 存的就是路径
   try {
     await navigator.clipboard.writeText(text)
     message.success('已复制路径')
+  } catch (e) { message.error('复制失败') }
+}
+
+// ---------- 右键菜单（右键行在勾选集合内 = 作用于全部勾选，否则作用于该行） ----------
+const menuShow = ref(false)
+const menuX = ref(0)
+const menuY = ref(0)
+const menuRow = ref(null)
+
+const menuOptions = computed(() => {
+  const row = menuRow.value
+  if (!row) return []
+  const many = checkedRows.value.includes(row.path) && checkedRows.value.length > 1
+  const n = `（${checkedRows.value.length}）`
+  const tools = []
+  if (isImg(row)) tools.push({ label: 'OCR 取字', key: 'ocr' })
+  tools.push({ label: '哈希校验 (SHA-256)', key: 'hash' })
+  return [
+    ...(many ? [] : [
+      { label: '打开', key: 'open' },
+      { label: '快速预览', key: 'preview' },
+      { label: '在所在位置显示', key: 'location' },
+      { type: 'divider', key: 'd1' },
+    ]),
+    { label: favSet.value.has(row.path) ? '取消收藏' : '收藏', key: 'fav' },
+    { label: '复制路径' + (many ? n : ''), key: 'copypath' },
+    { label: '移动到…' + (many ? n : ''), key: 'move' },
+    { label: '复制到…' + (many ? n : ''), key: 'copy' },
+    { type: 'divider', key: 'd2' },
+    ...(many ? [] : [{ label: '重命名', key: 'rename' },
+      { label: '工具', key: 'tools', children: tools }]),
+    { label: '删除到回收站' + (many ? n : ''), key: 'trash' },
+  ]
+})
+
+function openMenu(e, row) {
+  e.preventDefault()
+  menuRow.value = row
+  menuX.value = e.clientX
+  menuY.value = e.clientY
+  menuShow.value = true
+}
+
+function menuPaths() {
+  const row = menuRow.value
+  if (row && checkedRows.value.includes(row.path) && checkedRows.value.length > 1) {
+    return checkedRows.value.map((x) => x.path)
+  }
+  return [row.path]
+}
+
+async function onMenuSelect(key) {
+  menuShow.value = false
+  const row = menuRow.value
+  if (!row) return
+  const paths = menuPaths()
+  if (key === 'open') openItem(row)
+  else if (key === 'preview') isImg(row) ? openPreview(row) : previewFile(row)
+  else if (key === 'location') api('open_location', row.path)
+  else if (key === 'fav') toggleFav(row)
+  else if (key === 'copypath') {
+    try {
+      await navigator.clipboard.writeText(paths.join('\n'))
+      message.success('已复制路径')
+    } catch (e) { message.error('复制失败') }
+  }
+  else if (key === 'move') transferFiles('move', paths)
+  else if (key === 'copy') transferFiles('copy', paths)
+  else if (key === 'rename') startSingleRename(row.path)
+  else if (key === 'ocr' || key === 'hash') openTool(key, row.path)
+  else if (key === 'trash') trashSelected(paths)
+}
+
+// ---------- 工具结果弹窗（OCR / 哈希） ----------
+const toolModal = ref(null)   // {title, loading, text}
+
+function openTool(kind, path) {
+  toolModal.value = {
+    title: kind === 'ocr' ? 'OCR 取字' : '哈希校验 (SHA-256)',
+    loading: true, text: '',
+  }
+  const call = kind === 'ocr' ? api('ocr_extract', path) : api('file_hash', path, 'sha256')
+  call.then((r) => {
+    toolModal.value = {
+      ...toolModal.value, loading: false,
+      text: r.ok ? (kind === 'ocr' ? (r.text || '（未识别到文字）')
+        : `${r.algo.toUpperCase()}: ${r.hash}`) : ('失败：' + r.error),
+    }
+  }).catch((e) => {
+    toolModal.value = { ...toolModal.value, loading: false, text: '失败：' + String(e) }
+  })
+}
+
+async function copyToolText() {
+  try {
+    await navigator.clipboard.writeText(toolModal.value.text)
+    message.success('已复制')
   } catch (e) { message.error('复制失败') }
 }
 
@@ -212,11 +445,33 @@ function onQueryInput() {
     contentResults.value = null
   }
   clearTimeout(searchTimer)
+  // 120ms：Everything 式「输入即结果」——防抖过长会打断打字节奏
   searchTimer = setTimeout(() => {
     refresh()
-    searchContent()   // 融合搜索：文件名 + 内容 + 图片语义 同时出
-  }, 250)
+  }, 120)
 }
+
+// 回车即走：Enter 打开第一项结果；Shift+Enter 搜内容（RAG 较慢，不混在打字流里）
+function onSearchEnter(e) {
+  saveHistory()
+  if (e.shiftKey) {
+    searchContent()
+    return
+  }
+  if (!checkedRows.value.length && items.value.length) {
+    api('open_path', items.value[0].path)
+  }
+}
+
+// ---------- 视图模式（列表 / 网格，偏好存后端） ----------
+const viewMode = ref('list')
+function setViewMode(m) {
+  viewMode.value = m
+  api('set_ui_state', 'view_mode', m).catch(() => {})
+}
+
+// ---------- 键盘速查 ----------
+const showKeys = ref(false)
 
 async function exportCsv() {
   exporting.value = true
@@ -239,14 +494,17 @@ async function refresh() {
   loading.value = true
   try {
     if (!thumbBase.value) {
-      const st = await api('get_status')
-      thumbBase.value = st.thumb_base
+      // 只要缩略图服务地址——get_status 里 Ollama 探测 + 83 万行统计太重，
+      // 不能作为列表页每次进入的前置依赖
+      const tb = await api('thumb_base')
+      thumbBase.value = tb.base
     }
     const r = await api('browse_files', query.value || null, category.value, null,
       (page.value - 1) * pageSize, pageSize, sortBy.value, sortOrder.value,
       tagFilter.value.length ? tagFilter.value : null)
     items.value = r.items
     total.value = r.total
+    totalCapped.value = !!r.total_capped
   } catch (e) {
     // SQLite 错误（IntegrityError 等）通常是临时状态，只 console 不打扰用户
     console.error('refresh failed:', e)
@@ -272,16 +530,6 @@ function openItem(it) { api('open_path', it.path) }
 
 // 灯箱翻页：只在本页图片列表中循环（←/→ 或按钮）
 const imgItems = computed(() => items.value.filter(isImg))
-const _extIcon = (ext) => ({
-  pdf: '📕', doc: '📘', docx: '📘',
-  xls: '📗', xlsx: '📗', csv: '📗',
-  ppt: '📙', pptx: '📙',
-  txt: '📄', md: '📄',
-  zip: '🗜', rar: '🗜', '7z': '🗜',
-  mp3: '🎵', wav: '🎵', flac: '🎵',
-  mp4: '🎬', mkv: '🎬', mov: '🎬',
-  exe: '⚙', msi: '⚙',
-}[ext?.toLowerCase()] || '📄')
 function openPreview(it) {
   const idx = imgItems.value.findIndex(x => x.path === it.path)
   preview.value = { path: it.path, url: previewUrl(it), index: Math.max(0, idx) }
@@ -369,29 +617,118 @@ function onKeydown(e) {
   const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
     e.preventDefault()
+    e.stopPropagation()
     searchInput.value?.focus()
+    try { searchInput.value?.select?.() } catch (e2) { /* 部分版本无 select */ }
+    return
   }
-  if (e.key === 'Escape' && preview.value) {
-    preview.value = null
-  }
-  if (preview.value && !inInput && e.key === 'ArrowLeft') {
+  if (inInput) return
+  // Space：拦掉默认行为（滚动 / 复选框在 keyup 上的激活），
+  // 实际开关逻辑在 onKeyUp（浏览器对空格的激活行为发生在 keyup）
+  if (e.key === ' ' &&
+      (preview.value || filePreview.value || checkedRows.value.length)) {
     e.preventDefault()
-    stepPreview(-1)
+    e.stopPropagation()
+    return
   }
-  if (preview.value && !inInput && e.key === 'ArrowRight') {
+  // 灯箱：Esc 关闭，←/→ 翻页
+  if (preview.value) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      preview.value = null
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      e.stopPropagation()
+      stepPreview(-1)
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      e.stopPropagation()
+      stepPreview(1)
+    }
+    return
+  }
+  // 文件预览弹窗：Esc 关闭
+  if (filePreview.value) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      filePreview.value = null
+      summaryText.value = null
+    }
+    return
+  }
+  if (renameModal.value) return  // 重命名弹窗打开时不响应列表快捷键
+  if (e.key === '?') {
     e.preventDefault()
-    stepPreview(1)
+    e.stopPropagation()
+    showKeys.value = true
+    return
+  }
+  if (!checkedRows.value.length) return  // 未选中时不劫持任何按键
+  // 以下快捷键在捕获阶段处理后阻断传播：鼠标点完勾选框后焦点停在
+  // 复选框上，Enter 会被它当成「切换勾选」，必须拦在前面
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    e.stopPropagation()
+    api('open_path', checkedRows.value[0])  // checkedRows 存路径
+  } else if (e.key === 'F2') {
+    e.preventDefault()
+    e.stopPropagation()
+    checkedRows.value.length === 1 ? startSingleRename(checkedRows.value[0]) : openRename()
+  } else if (e.key === 'Delete') {
+    e.preventDefault()
+    e.stopPropagation()
+    trashSelected()
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    e.preventDefault()
+    e.stopPropagation()
+    checkedRows.value = [...items.value]
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+    e.preventDefault()
+    e.stopPropagation()
+    copyPaths()
   }
 }
+
+// Space 的开/关都在 keyup 处理：keydown 阶段复选框尚未消费空格，
+// 此时切状态会被 keyup 的默认激活行为立刻翻回去
+function onKeyUp(e) {
+  if (e.key !== ' ') return
+  const tag = e.target?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return
+  if (preview.value || filePreview.value) {
+    e.preventDefault()
+    e.stopPropagation()
+    preview.value = null
+    filePreview.value = null
+    summaryText.value = null
+    return
+  }
+  if (renameModal.value || !checkedRows.value.length) return
+  e.preventDefault()
+  e.stopPropagation()
+  const p = checkedRows.value[0]                     // 路径字符串
+  const row = items.value.find((x) => x.path === p) || { path: p }
+  isImg(row) ? openPreview(row) : previewFile(row)
+}
 onMounted(() => {
-  window.addEventListener('keydown', onKeydown)
+  // 捕获阶段：赶在聚焦的复选框等控件消费按键之前处理列表快捷键
+  window.addEventListener('keydown', onKeydown, true)
+  window.addEventListener('keyup', onKeyUp, true)
   window.addEventListener('fb-toast', onToast)
   loadTags()
   loadSearchHistory()
   loadDirTree()
+  loadFavs()
+  loadSavedSearches()
+  api('get_ui_state').then(({ state }) => {
+    if (state && state.view_mode === 'grid') viewMode.value = 'grid'
+  }).catch(() => {})
 })
 onUnmounted(() => {
-  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keydown', onKeydown, true)
+  window.removeEventListener('keyup', onKeyUp, true)
   window.removeEventListener('fb-toast', onToast)
 })
 
@@ -404,9 +741,10 @@ function onToast(e) {
   else message.info(d.text)
 }
 
-// 双击打开
+// 双击打开；右键呼出菜单
 const rowProps = (row) => ({
   onDblclick: () => openItem(row),
+  onContextmenu: (e) => openMenu(e, row),
 })
 
 // 内容搜索（知识库文档 + 图片语义描述）
@@ -429,24 +767,33 @@ function isContentImg(r) {
   return r.type === 'image' || /\.(jpe?g|png|gif|bmp|webp)$/i.test(r.file_path || '')
 }
 const contentThumb = (r) => thumbBase.value ? `${thumbBase.value}/thumb?p=${encodeURIComponent(r.file_path)}` : ''
-const fileIconUrl = (ext) => thumbBase.value ? `${thumbBase.value}/icon?ext=${encodeURIComponent(ext || 'bin')}` : ''
 function openPreviewByPath(p) {
   const idx = imgItems.value.findIndex(x => x.path === p)
   preview.value = { path: p, url: `${thumbBase.value}/preview?p=${encodeURIComponent(p)}`, index: Math.max(0, idx) }
 }
 
+// 类别 → 徽章色相（共享设计令牌，见 lib/theme.js）
+const _HUES = CATEGORY_HUES
+
 // 列表列
 const columns = [
   { title: ' ', key: 'thumb', width: 56,
-    render: (r) => h('div', { class: 'fb-row-thumb' + (isImg(r) ? '' : ' is-doc') },
-      isImg(r)
-        ? h('img', { src: thumbUrl(r), loading: 'lazy', alt: r.name })
-        : [
-            h('span', { class: 'fb-thumb-emoji' }, _extIcon(r.ext)),
-            h('img', { src: fileIconUrl(r.ext), loading: 'lazy', alt: r.ext || '',
-              onError: (e) => { e.target.style.opacity = '0' } }),
-          ])
-    },
+    render: (r) => isImg(r)
+      ? h('div', { class: 'fb-row-thumb' },
+          h('img', { src: thumbUrl(r), loading: 'lazy', alt: r.name }))
+      : h('div', {
+          class: 'fb-ext-badge',
+          style: { '--h': String(_HUES[r.category] || 220) },
+          title: '.' + (r.ext || ''),
+        }, (r.ext || 'file').slice(0, 4).toUpperCase()) },
+  { title: '', key: 'fav', width: 40,
+    render: (r) => h('span', {
+      style: 'cursor:pointer;font-size:15px;color:' +
+        (favSet.value.has(r.path) ? '#f0a020' : 'rgba(127,127,127,.35)'),
+      title: favSet.value.has(r.path) ? '取消收藏' : '收藏',
+      onClick: (e) => { e.stopPropagation(); toggleFav(r) },
+      onDblclick: (e) => e.stopPropagation(),
+    }, favSet.value.has(r.path) ? '★' : '☆') },
   { title: '文件名', key: 'name', ellipsis: { tooltip: true },
     render: (r) => h('span', { style: 'cursor:pointer', onClick: () => previewFile(r),
       title: '单击预览 · 双击打开所在位置' }, r.name) },
@@ -496,10 +843,13 @@ refresh()
         <!-- 搜索栏 -->
         <n-space :wrap="false" align="center" class="fb-search">
           <n-auto-complete v-model:value="query" :options="historyOptions" size="large"
-            :style="{ flex: 1 }" clearable round placeholder="搜索文件名和内容… 支持 ext:pdf size:>100mb dm:本周 path:桌面 cat:图片（Ctrl+F 聚焦）"
+            :style="{ flex: 1 }" clearable round
+            placeholder="搜索文件… Enter 打开第一项 · Shift+Enter 搜内容 · 支持 ext:pdf size:>100mb dm:week（Ctrl+F 聚焦）"
             @select="pickHistory" @update:value="onQueryInput"
-            @keyup.enter="saveHistory">
-            <template #prefix>🔍</template>
+            @keydown.enter="onSearchEnter">
+            <template #prefix>
+              <n-icon :component="SearchOutline" size="15" style="opacity:.45" />
+            </template>
           </n-auto-complete>
           <n-select v-model:value="sortBy" :options="sortOptions" size="small" style="width:112px"
             @update:value="() => { page = 1; refresh() }" />
@@ -508,13 +858,49 @@ refresh()
           <n-select v-model:value="tagFilter" :options="tagOptions" multiple size="small"
             style="width:150px" placeholder="按标签筛选" clearable
             @update:value="() => { page = 1; refresh() }" />
+          <n-popover trigger="click" placement="bottom" :width="300" v-model:show="showTagMgr">
+            <template #trigger>
+              <n-button size="small" secondary>🏷</n-button>
+            </template>
+            <div v-if="tagList.length" style="max-height:300px;overflow:auto">
+              <div v-for="t in tagList" :key="t.id"
+                style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed rgba(127,127,127,.2)">
+                <span style="flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                  {{ t.name }}<n-text depth="3" style="font-size:11px">（{{ t.c }}）</n-text>
+                </span>
+                <n-button size="tiny" quaternary @click="renameTag(t)">改名</n-button>
+                <n-button size="tiny" quaternary type="error" @click="deleteTag(t)">删除</n-button>
+              </div>
+            </div>
+            <n-empty v-else size="small" description="暂无标签" style="padding:14px 0" />
+          </n-popover>
+          <n-popover trigger="click" placement="bottom-end" :width="460">
+            <template #trigger>
+              <n-button size="small" secondary>
+                ★ 收藏{{ favList.length ? ' ' + favList.length : '' }}
+              </n-button>
+            </template>
+            <div v-if="favList.length" style="max-height:320px;overflow:auto">
+              <div v-for="f in favList" :key="f.path"
+                style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed rgba(127,127,127,.2)">
+                <span class="mono" style="flex:1;cursor:pointer;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                  :title="'打开 ' + f.path" @click="openFav(f.path)">{{ f.path }}</span>
+                <n-button size="tiny" quaternary @click="removeFav(f.path)">移除</n-button>
+              </div>
+            </div>
+            <n-empty v-else size="small" description="暂无收藏——在文件列表点 ☆ 收藏常用文件" style="padding:18px 0" />
+          </n-popover>
           <n-button size="small" secondary :loading="exporting" @click="exportCsv">
             导出 CSV
           </n-button>
+          <n-radio-group :value="viewMode" size="small" @update:value="setViewMode">
+            <n-radio-button value="list">列表</n-radio-button>
+            <n-radio-button value="grid">网格</n-radio-button>
+          </n-radio-group>
         </n-space>
 
         <!-- 扫描进度 -->
-        <n-alert v-if="scanning" type="info" :bordered="false">
+        <n-alert v-if="scanning" type="info" :bordered="false" class="fb-scanalert">
           <n-progress :percentage="scanning.n ? Math.round(scanning.i / scanning.n * 100) : 0"
             indicator-placement="inside" processing />
           <n-text class="mono" style="font-size:12px">
@@ -522,6 +908,26 @@ refresh()
             {{ scanning.i }}/{{ scanning.n }} {{ scanning.detail }}
           </n-text>
         </n-alert>
+
+        <!-- 保存的智能筛选 -->
+        <div class="fb-saved" v-if="savedSearches.length || query.trim()">
+          <n-tag v-for="s in savedSearches" :key="s.name" size="small" round closable
+            :bordered="false" :title="s.query" @click="applySaved(s)" @close="removeSaved(s)">
+            {{ s.name }}
+          </n-tag>
+          <n-popover trigger="click" :width="300" v-model:show="showSaveSearch">
+            <template #trigger>
+              <n-tag size="small" round :bordered="false" style="cursor:pointer">＋ 保存当前筛选</n-tag>
+            </template>
+            <n-space vertical size="small">
+              <n-input v-model:value="saveSearchName" size="small" placeholder="筛选名称，如：本周改的 PDF"
+                @keyup.enter="saveCurrentSearch" />
+              <n-button size="tiny" type="primary" block @click="saveCurrentSearch">
+                保存当前搜索
+              </n-button>
+            </n-space>
+          </n-popover>
+        </div>
 
         <!-- 类别筛选 -->
         <n-space class="fb-chips">
@@ -531,7 +937,7 @@ refresh()
           <n-tag size="medium" round :type="!category && !currentDir ? 'primary' : 'default'"
             style="cursor:pointer" @click="pickCategory(null); pickDir(null)">全部</n-tag>
           <n-text depth="3" style="align-self:center">
-            共 {{ total }} 个文件{{ category ? ' · ' + category : '' }}{{ currentDir ? ' · ' + currentDir : '' }}
+            共 {{ total }}{{ totalCapped ? '+' : '' }} 个文件{{ category ? ' · ' + category : '' }}{{ currentDir ? ' · ' + currentDir : '' }}
             <template v-if="lastEvent"> · 最近动态：{{ lastEvent.kind === 'added' ? '新增' : '移除' }} {{ lastEvent.path.split(/[\\/]/).pop() }}</template>
           </n-text>
         </n-space>
@@ -554,17 +960,41 @@ refresh()
           </n-space>
         </div>
 
-        <!-- 批量操作栏（列表视图多选后出现） -->
-        <n-space v-if="view === 'list' && checkedRows.length" align="center" class="fb-batchbar">
+        <!-- 批量操作栏（列表多选后出现）。此前写作 view === 'list'，
+             但 view 并非本组件的变量（永远 undefined），批量栏从未显示过 -->
+        <n-space v-if="viewMode === 'list' && checkedRows.length" align="center" class="fb-batchbar">
           <n-text>已选 <b>{{ checkedRows.length }}</b> 个</n-text>
+          <n-button size="small" type="primary" ghost :loading="transferring" @click="transferFiles('move')">移动到…</n-button>
+          <n-button size="small" type="primary" ghost :loading="transferring" @click="transferFiles('copy')">复制到…</n-button>
           <n-button size="small" type="primary" ghost @click="openRename">重命名</n-button>
           <n-button size="small" type="error" ghost @click="trashSelected">删除到回收站</n-button>
           <n-button size="small" @click="copyPaths">复制路径</n-button>
           <n-button size="small" quaternary @click="checkedRows = []">清空选择</n-button>
+          <n-text depth="3" style="font-size:11.5px">快捷键：Ctrl+A 全选 · Space 预览 · F2 重命名 · Delete 删除 · Enter 打开 · Ctrl+K 全局搜索</n-text>
         </n-space>
 
+        <!-- 网格视图：图片/普通浏览两相宜（批量操作请切回列表） -->
+        <n-spin v-if="viewMode === 'grid'" :show="loading">
+          <div class="thumb-grid" style="min-height:220px">
+          <div v-for="r in items" :key="r.path" class="thumb-card" :title="r.path"
+            @click="(e) => { if (e.detail === 1) isImg(r) ? openPreview(r) : previewFile(r) }"
+            @dblclick="openItem(r)">
+            <img v-if="isImg(r)" :src="thumbUrl(r)" loading="lazy" alt="" />
+            <div v-else class="fb-ext-badge fb-grid-badge"
+              :style="{ '--h': String(_HUES[r.category] || 220) }">
+              {{ (r.ext || 'file').slice(0, 4).toUpperCase() }}
+            </div>
+            <div class="thumb-name" style="display:flex;justify-content:space-between;gap:6px">
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.name }}</span>
+              <span class="mono" style="opacity:.55;flex-shrink:0">{{ fmtSize(r.size) }}</span>
+            </div>
+          </div>
+          <n-empty v-if="!items.length" description="没有匹配的文件" style="grid-column:1/-1;padding:40px 0" />
+          </div>
+        </n-spin>
+
         <!-- 统一列表（第一列缩略图，图片显示缩略图、其他显示类型图标） -->
-        <n-data-table :columns="batchColumns" :data="items" :loading="loading"
+        <n-data-table v-else :columns="batchColumns" :data="items" :loading="loading"
           :max-height="520" size="small" :row-key="(r) => r.path" :row-props="rowProps"
           v-model:checked-row-keys="checkedRows" />
 
@@ -605,6 +1035,42 @@ refresh()
       </n-space>
     </n-card>
 
+    <!-- 键盘速查 -->
+    <n-modal v-model:show="showKeys" preset="card" title="键盘快捷键" style="width:440px">
+        <div class="fb-keys">
+        <div class="fb-key-row"><span class="mono">Ctrl+K</span><span>全局快速唤起（搜文件 / 跳页面 / 切主题）</span></div>
+        <div class="fb-key-row"><span class="mono">Ctrl+F</span><span>聚焦搜索框</span></div>
+        <div class="fb-key-row"><span class="mono">Enter</span><span>搜索后打开第一项结果</span></div>
+        <div class="fb-key-row"><span class="mono">Shift+Enter</span><span>搜索文件内容（知识库/语义）</span></div>
+        <div class="fb-key-row"><span class="mono">Ctrl+A</span><span>全选本页文件</span></div>
+        <div class="fb-key-row"><span class="mono">Space</span><span>快速预览选中文件 / 再按关闭</span></div>
+        <div class="fb-key-row"><span class="mono">Enter</span><span>打开选中的文件</span></div>
+        <div class="fb-key-row"><span class="mono">F2</span><span>重命名（单个就地改 / 多个进批量）</span></div>
+        <div class="fb-key-row"><span class="mono">Delete</span><span>删除到回收站</span></div>
+        <div class="fb-key-row"><span class="mono">Ctrl+C</span><span>复制路径</span></div>
+        <div class="fb-key-row"><span class="mono">← →</span><span>灯箱内翻页</span></div>
+        <div class="fb-key-row"><span class="mono">Esc</span><span>关闭预览 / 弹窗</span></div>
+      </div>
+    </n-modal>
+
+    <!-- 工具结果弹窗（OCR 取字 / 哈希校验） -->
+    <n-modal :show="!!toolModal" preset="card" :title="toolModal?.title" style="width:560px"
+      @update:show="(v) => { if (!v) toolModal = null }">
+      <n-spin :show="!!toolModal?.loading">
+        <pre class="mono" style="white-space:pre-wrap;word-break:break-all;min-height:80px;max-height:50vh;overflow:auto;margin:0">{{ toolModal?.text || '处理中…' }}</pre>
+      </n-spin>
+      <template #footer>
+        <n-space justify="end">
+          <n-button size="small" type="primary" :disabled="toolModal?.loading || !toolModal?.text" @click="copyToolText">复制</n-button>
+          <n-button size="small" @click="toolModal = null">关闭</n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
+    <!-- 右键菜单 -->
+    <n-dropdown trigger="manual" :show="menuShow" :x="menuX" :y="menuY" placement="bottom-start"
+      :options="menuOptions" @select="onMenuSelect" @clickoutside="menuShow = false" />
+
     <!-- 大图预览灯箱：点空白处/ESC 关闭，右上角关闭钮，底部悬浮操作条 -->
     <teleport to="body">
       <transition name="fade">
@@ -637,6 +1103,7 @@ refresh()
           <n-radio-button value="seq">序列编号</n-radio-button>
           <n-radio-button value="replace">查找替换</n-radio-button>
           <n-radio-button value="ai">AI 建议</n-radio-button>
+          <n-radio-button v-if="renameMode === 'single'" value="single">单个</n-radio-button>
         </n-radio-group>
 
         <n-space v-if="renameMode === 'seq'" align="center">
@@ -651,12 +1118,15 @@ refresh()
           <n-button size="small" @click="genRenameRows">生成</n-button>
         </n-space>
 
-        <n-space v-else align="center">
+        <n-space v-else-if="renameMode === 'ai'" align="center">
           <n-text depth="3">用本地模型按内容/名称理解批量起名</n-text>
           <n-button size="small" type="primary" ghost :loading="renameLoading" @click="aiSuggest">
             AI 一键起名
           </n-button>
         </n-space>
+        <n-text v-else-if="renameMode === 'single'" depth="3" style="font-size:12px">
+          在下方表格里直接修改新文件名，确认后执行
+        </n-text>
 
         <n-data-table v-if="renameRows.length" :columns="[
           { title: '原文件名', key: 'src', ellipsis: { tooltip: true },
@@ -699,6 +1169,8 @@ refresh()
           style="white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.6">{{ filePreview.content }}</pre>
         <iframe v-else-if="filePreview?.type === 'pdf'" :src="filePreview.url"
           style="width:100%;height:70vh;border:0;border-radius:6px"></iframe>
+        <video v-else-if="filePreview?.type === 'video'" :src="filePreview.url"
+          controls autoplay style="width:100%;max-height:68vh;border-radius:8px;background:#000"></video>
         <div v-else-if="filePreview?.type === 'image'" class="fb-modal-image">
           <img :src="filePreview.url" :alt="filePreview.name" />
         </div>

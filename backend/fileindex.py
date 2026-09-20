@@ -117,6 +117,9 @@ def ensure_default_roots():
     conn = db.get_conn()
     try:
         conn.executescript(SCHEMA_EXTRA)
+        # file_index 表此刻才存在：全新安装时 init_db 里的 FTS 建表
+        # 因表缺失被整体跳过，这里补建（老库幂等无副作用）
+        db.ensure_fts()
         n = conn.execute("SELECT COUNT(*) c FROM watch_roots").fetchone()["c"]
         now = time.time()
         added = False
@@ -337,8 +340,9 @@ def remove_under(dir_path):
 
 def full_scan(progress_cb=None):
     """全量扫描所有启用根目录。增量：mtime/size 未变的跳过。
-    流式处理：边扫边批量写库，不再把全部文件攒进内存（65 万文件时
-    旧实现内存峰值 >300MB 且扫描期间无法落库）。
+    流式处理：边扫边批量写库，不把全部文件攒进内存。
+    差异对比放 SQLite 临时表做（scan_old 里被扫到的行当场删掉，剩的即
+    已删除文件）——旧实现把 83 万条已知文件装进 Python dict，峰值 ~200MB。
     progress_cb(stage, i, n, detail)。返回统计。"""
     rules = rules_mod.load_user_rules()
     roots = list_roots()
@@ -346,20 +350,36 @@ def full_scan(progress_cb=None):
 
     conn = db.get_conn()
     try:
-        known = {r["path"]: (r["size"], r["mtime"], r["category"]) for r in
-                 conn.execute("SELECT path, size, mtime, category FROM file_index")}
+        conn.execute("DROP TABLE IF EXISTS temp.scan_old")
+        conn.execute("CREATE TEMP TABLE scan_old("
+                     "path TEXT PRIMARY KEY, size INTEGER, mtime REAL, category TEXT)")
+        conn.execute("INSERT INTO scan_old(path,size,mtime,category) "
+                     "SELECT path,size,mtime,category FROM file_index")
+        conn.commit()
     finally:
         conn.close()
 
     root_map = [(r["id"], r["path"], os.path.normcase(r["path"])) for r in roots]
-    seen = set()
     batch = []
-    n_estimate = len(known)
+    seen_del = []  # scan_old 中已确认仍存在的行，批量删
+    n_estimate = 0
+    try:
+        conn = db.get_conn()
+        n_estimate = conn.execute("SELECT COUNT(*) c FROM scan_old").fetchone()["c"]
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     def _flush():
         if batch:
             _write_batch(batch)
             batch.clear()
+        _purge_seen(seen_del)
+        seen_del.clear()
 
     for r in roots:
         if progress_cb:
@@ -367,16 +387,31 @@ def full_scan(progress_cb=None):
         for fi in scanner.iter_scan_folder(r["path"], max_files=1_000_000):
             if is_temp_file(fi["path"]):
                 continue
-            seen.add(fi["path"])
             stats["total"] += 1
-            old = known.get(fi["path"])
             cat = _classify(fi, rules)
-            changed = (old is None
-                       or abs(old[1] - fi["mtime"]) >= 1
-                       or old[0] != fi["size"]
-                       or old[2] != cat)  # 规则改了也要刷新类别
+            changed = True
+            old = None
+            try:
+                conn = db.get_conn()
+                old = conn.execute(
+                    "SELECT size, mtime, category FROM scan_old WHERE path=?",
+                    (fi["path"],)).fetchone()
+            finally:
+                conn.close()
+            if old is not None:
+                seen_del.append((fi["path"],))
+                try:
+                    same = (abs((old["mtime"] or 0) - fi["mtime"]) < 1
+                            and old["size"] == fi["size"] and old["category"] == cat)
+                except (TypeError, ValueError):
+                    same = False  # 脏数据：按已变更处理，重写该行自愈
+                if same:
+                    changed = False
+                if len(seen_del) >= 2000:  # 未变更文件居多，独立批量清理防积压
+                    _purge_seen(seen_del)
+                    seen_del.clear()
             if changed:
-                batch.append(( _root_id_of(fi["path"], root_map), fi["path"],
+                batch.append((_root_id_of(fi["path"], root_map), fi["path"],
                               fi["name"], fi["ext"], cat, fi["size"], fi["mtime"]))
                 stats["added" if old is None else "updated"] += 1
                 if len(batch) >= 2000:
@@ -384,27 +419,62 @@ def full_scan(progress_cb=None):
                         progress_cb("index", stats["total"], max(n_estimate, stats["total"]),
                                     fi["name"])
                     _flush()
+                    _purge_seen(seen_del)
+                    seen_del.clear()
 
     _flush()
+    _purge_seen(seen_del)
+    seen_del.clear()
 
-    # 已删除的文件清理（批量删除，避免逐条 commit）
-    dead = [p for p in known if p not in seen]
+    # scan_old 里剩下的 = 本次扫描没见到的 = 已删除文件（批量删除）
+    dead_total = 0
+    try:
+        conn = db.get_conn()
+        dead_total = conn.execute("SELECT COUNT(*) c FROM scan_old").fetchone()["c"]
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
     if progress_cb:
-        progress_cb("clean", 0, len(dead), "")
-    stats["removed"] = len(dead)
-    for i in range(0, len(dead), 2000):
-        chunk = dead[i:i + 2000]
+        progress_cb("clean", 0, dead_total, "")
+    dead = 0
+    while True:
         conn = db.get_conn()
         try:
+            rows = conn.execute("SELECT path FROM scan_old LIMIT 2000").fetchall()
+            if not rows:
+                break
             conn.executemany("DELETE FROM file_index WHERE path=?",
-                             [(p,) for p in chunk])
+                             [(r["path"],) for r in rows])
+            conn.executemany("DELETE FROM scan_old WHERE path=?",
+                             [(r["path"],) for r in rows])
             conn.commit()
+            dead += len(rows)
+            if progress_cb:
+                progress_cb("clean", dead, dead_total, "")
         finally:
             conn.close()
+    stats["removed"] = dead
 
     if progress_cb:
         progress_cb("done", stats["total"], stats["total"], "")
     return stats
+
+
+def _purge_seen(rows):
+    """scan_old 批量删除已见过的行（分批，避免单事务过大）。"""
+    if not rows:
+        return
+    for i in range(0, len(rows), 2000):
+        conn = db.get_conn()
+        try:
+            conn.executemany("DELETE FROM scan_old WHERE path=?", rows[i:i + 2000])
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def _write_batch(batch):
@@ -526,12 +596,34 @@ def search(query=None, category=None, ext=None, min_size=None, is_image=None,
 
     join_fts = ""
     if text:
-        # ≥3 字符（trigram 最小粒度）走 FTS5 全文；否则 LIKE
-        if len(text) >= 3 and _fts_available():
-            q = '"' + text.replace('"', '""') + '"'
+        # 准度：多词 = AND 语义（「设置 教程」→ 两个词都出现才命中），
+        # 而不是把整串当连续短语（旧逻辑搜「设置 教程」永远 0 结果）
+        toks = [t for t in text.split() if t]
+        if len(text) >= 3 and _fts_available() and all(len(t) >= 3 for t in toks):
+            # 全部词 ≥3 字符：FTS 多短语 AND（trigram 子串匹配）
+            phrases = ['"' + t.replace('"', '""') + '"' for t in toks]
             join_fts = " JOIN file_fts ON file_fts.rowid = file_index.id AND file_fts MATCH ?"
-            fts_params = [q]
+            fts_params = [" AND ".join(phrases)]
+        elif len(text) >= 3 and _fts_available():
+            # 混合：长词走 FTS，短词（trigram 粒度以下）降级为 name LIKE
+            fts_phrases, like_toks = [], []
+            for t in toks:
+                if len(t) >= 3:
+                    fts_phrases.append('"' + t.replace('"', '""') + '"')
+                else:
+                    like_toks.append(t.lower())
+            if fts_phrases:
+                join_fts = " JOIN file_fts ON file_fts.rowid = file_index.id AND file_fts MATCH ?"
+                fts_params = [" AND ".join(fts_phrases)]
+            else:
+                conds.append("lower(file_index.name) LIKE ?")
+                fts_params = []
+                params.append(f"%{text.lower()}%")
+            for t in like_toks:
+                conds.append("lower(file_index.name) LIKE ?")
+                params.append(f"%{t}%")
         else:
+            # 整串 <3 字符：LIKE
             conds.append("lower(name) LIKE ?")
             fts_params = []
             params.append(f"%{text.lower()}%")
@@ -559,24 +651,47 @@ def search(query=None, category=None, ext=None, min_size=None, is_image=None,
         conn.close()
 
 
+_stats_cache = {"t": 0.0, "index": None, "category": None}
+_STATS_TTL = 15.0  # 83 万行 COUNT/SUM/GROUP BY 每次都算要 0.5-2s（机械盘）
+
+
+def invalidate_stats_cache():
+    """全量扫描/批量写入后调用，让统计缓存立即失效。"""
+    _stats_cache["t"] = 0.0
+    _stats_cache["index"] = None
+    _stats_cache["category"] = None
+
+
 def category_stats():
-    """按类别统计文件数和体积。"""
+    """按类别统计文件数和体积（15s TTL 缓存，扫描完成时主动失效）。"""
+    now = time.time()
+    if _stats_cache["category"] is not None and now - _stats_cache["t"] < _STATS_TTL:
+        return _stats_cache["category"]
     conn = db.get_conn()
     try:
         rows = conn.execute(
             "SELECT category, COUNT(*) n, SUM(size) s FROM file_index "
             "GROUP BY category ORDER BY n DESC").fetchall()
-        return [dict(r) for r in rows]
+        result = [dict(r) for r in rows]
     finally:
         conn.close()
+    _stats_cache["t"] = now
+    _stats_cache["category"] = result
+    return result
 
 
 def index_stats():
+    now = time.time()
+    if _stats_cache["index"] is not None and now - _stats_cache["t"] < _STATS_TTL:
+        return _stats_cache["index"]
     conn = db.get_conn()
     try:
         n = conn.execute("SELECT COUNT(*) c FROM file_index").fetchone()["c"]
         size = conn.execute("SELECT COALESCE(SUM(size),0) s FROM file_index").fetchone()["s"]
         last = conn.execute("SELECT COALESCE(MAX(mtime),0) m FROM file_index").fetchone()["m"]
-        return {"files": n, "total_size": size, "newest_mtime": last}
+        result = {"files": n, "total_size": size, "newest_mtime": last}
     finally:
         conn.close()
+    _stats_cache["t"] = now
+    _stats_cache["index"] = result
+    return result

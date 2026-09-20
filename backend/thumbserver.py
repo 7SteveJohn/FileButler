@@ -227,6 +227,8 @@ class _Handler(BaseHTTPRequestHandler):
             "gif": "image/gif", "bmp": "image/bmp", "webp": "image/webp",
             "svg": "image/svg+xml", "ico": "image/x-icon",
             "pdf": "application/pdf",  # 内置预览用（WebView2 原生渲染）
+            "mp4": "video/mp4", "m4v": "video/mp4",
+            "webm": "video/webm", "mov": "video/quicktime",
         }.get(ext)
         if not ctype:
             self.send_error(403)

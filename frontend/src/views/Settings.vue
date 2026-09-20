@@ -6,7 +6,7 @@ import {
   NPopconfirm, NList, NListItem,
 } from 'naive-ui'
 import { api, on } from '../lib/bridge'
-import { THEMES, loadThemeKey, saveThemeKey } from '../lib/theme'
+import { THEMES, AUTO_KEY, loadThemeKey, saveThemeKey } from '../lib/theme'
 
 const message = useMessage()
 
@@ -19,7 +19,6 @@ function pickTheme(k) {
   saveThemeKey(k)
   window.dispatchEvent(new CustomEvent('fb-theme', { detail: k }))
 }
-
 // ---------- Ollama ----------
 const status = ref(null)
 const host = ref('')
@@ -135,6 +134,7 @@ const dataDir = ref(null)
 const switching = ref(false)
 const switchStatus = ref(null)
 const pendingDir = ref(null)
+const moveMode = ref('copy')   // copy=保留原目录作为备份；move=重启后删除原目录
 
 let dirOffs = []
 dirOffs.push(on('data_switch_status', (m) => { switchStatus.value = m }))
@@ -183,10 +183,12 @@ async function doSwitch(overwrite = false) {
   if (!pendingDir.value) return
   switching.value = true
   switchStatus.value = '准备搬迁…'
-  const r = await api('switch_data_dir', pendingDir.value, overwrite)
+  const r = await api('switch_data_dir', pendingDir.value, overwrite, moveMode.value)
   switching.value = false
   if (r.ok) {
-    message.success('搬迁完成，重启应用后生效')
+    message.success(moveMode.value === 'move'
+      ? '搬迁完成，重启后生效（旧目录将在重启后自动删除）'
+      : '搬迁完成，重启应用后生效（旧目录保留为备份）')
     restartPending.value = true
     loadDataDir()
   } else if (r.error && r.error.includes('覆盖')) {
@@ -645,6 +647,26 @@ onMounted(() => {
       <!-- ============ 外观主题 ============ -->
       <n-card title="外观主题">
         <n-space :size="14">
+          <!-- 跟随系统（auto）：亮暗各半预览 -->
+          <div class="theme-card" :class="{ active: themeKey === AUTO_KEY }" @click="pickTheme(AUTO_KEY)">
+            <div class="theme-preview" style="background:#f4f6f4">
+              <div class="tp-side" style="background:#1c2333">
+                <div class="tp-logo" style="background:linear-gradient(135deg,#34d399,#818cf8)"></div>
+                <div class="tp-menu"></div>
+                <div class="tp-menu"></div>
+              </div>
+              <div class="tp-main">
+                <div class="tp-hero" style="background:linear-gradient(135deg,#94a3b8,#334155)"></div>
+                <div class="tp-line"></div>
+              </div>
+            </div>
+            <div class="theme-card-body">
+              <b>跟随系统</b>
+              <span>亮暗随 Windows 自动切换</span>
+              <n-tag v-if="themeKey === AUTO_KEY" size="tiny" round type="primary"
+                style="margin-top:4px; width: fit-content;">当前使用</n-tag>
+            </div>
+          </div>
           <div v-for="t in themeList" :key="t.key" class="theme-card"
             :class="{ active: themeKey === t.key }" @click="pickTheme(t.key)">
             <div class="theme-preview" :style="{ background: t.naive.common.bodyColor }">
@@ -682,7 +704,7 @@ onMounted(() => {
           </div>
           <n-text depth="3" style="font-size:12.5px">
             数据库 + 缩略图缓存共 {{ (dataDir.total_size / 1e6).toFixed(1) }} MB。
-            搬迁后旧目录数据保留作为备份。切换到同步盘/其他盘后，备份时只需拷贝该目录。
+            切换到同步盘/其他盘后，备份时只需拷贝该目录。
           </n-text>
           <n-space>
             <n-button size="small" round @click="api('open_data_dir')">打开数据目录</n-button>
@@ -694,6 +716,10 @@ onMounted(() => {
             <code class="fb-path" style="border-style: solid;">{{ pendingDir }}</code>
             <n-button size="small" round type="primary" :loading="switching" @click="doSwitch(false)">开始搬迁</n-button>
             <n-button size="small" round quaternary @click="pendingDir = null">取消</n-button>
+            <n-radio-group v-model:value="moveMode" size="small" style="margin-left:8px">
+              <n-radio value="copy">复制（原目录保留为备份）</n-radio>
+              <n-radio value="move">迁移（重启后删除原目录，不占双份空间）</n-radio>
+            </n-radio-group>
           </div>
           <n-alert v-if="restartPending" type="warning" :bordered="false">
             数据目录已切换，重启应用后完全生效。
@@ -797,7 +823,7 @@ onMounted(() => {
           <n-space>
             <n-button type="primary" ghost size="small" :loading="backingUp" @click="backupNow">立即备份</n-button>
             <n-text depth="3" style="font-size:12px;align-self:center">
-              退出应用时每日自动备份一次，保留最近 5 份，存于数据目录 backups\ 下
+              应用运行期间每日自动备份一次（后台进行，不阻塞退出），保留最近 5 份，存于数据目录 backups\ 下
             </n-text>
           </n-space>
           <n-list v-if="backups.length" bordered size="small">
@@ -814,6 +840,22 @@ onMounted(() => {
             </n-list-item>
           </n-list>
           <n-text v-else depth="3">暂无备份</n-text>
+        </n-space>
+      </n-card>
+
+      <!-- ============ 配置导出 / 导入 ============ -->
+      <n-card title="配置导出 / 导入">
+        <n-space vertical size="medium">
+          <n-space align="center">
+            <n-button size="small" round type="primary" ghost @click="exportConfig">导出配置</n-button>
+            <n-button size="small" round @click="triggerImport">导入配置</n-button>
+            <input ref="importFileEl" type="file" accept=".json,application/json"
+              style="display:none" @change="onImportFile" />
+          </n-space>
+          <n-text depth="3" style="font-size:12px">
+            导出内容：自定义分类规则、整理模板、标签、收藏、排除目录、保存的筛选。
+            换机或重装后导入即可恢复（合并式导入，不覆盖已有数据，绝不删除）。
+          </n-text>
         </n-space>
       </n-card>
 

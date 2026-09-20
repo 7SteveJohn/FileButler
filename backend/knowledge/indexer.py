@@ -3,16 +3,17 @@ import os
 import sqlite3
 import struct
 
-import numpy as np
-
 from backend import db
 from backend.core import scanner
 from backend.knowledge import chunker, parsers
 from backend import llm
 from backend.ollama_client import OllamaNotRunning
 
+# numpy 惰性导入：仅在真正向量化时加载（省纯搜索用户的常驻内存）
+
 
 def _vec_to_blob(vec):
+    import numpy as np
     return np.asarray(vec, dtype=np.float32).tobytes()
 
 

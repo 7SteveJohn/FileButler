@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 
-import numpy as np
+# numpy 惰性导入：仅向量检索/写入时加载（纯文件名搜索用户省 30-40MB 常驻内存）
 
 DEFAULT_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "FileButler")
 MARKER_FILE = os.path.join(DEFAULT_DIR, "datadir.txt")
@@ -172,6 +172,10 @@ def _connect():
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA synchronous=NORMAL")  # WAL 模式下折中（FULL=安全，NORMAL=性能+安全平衡）
+    # 读性能调优（速度）：mmap 让 FTS/大表查询免掉页拷贝（文件页由 OS 缓存共享，
+    # 不额外占私有内存）；页缓存 4MB/连接——多线程各持连接，过大内存会翻倍
+    conn.execute("PRAGMA mmap_size=268435456")
+    conn.execute("PRAGMA cache_size=-4000")
     return conn
 
 
@@ -244,10 +248,38 @@ def get_conn():
     return proxy
 
 
-def switch_data_dir(new_dir, overwrite=False, on_status=None):
+_UNSAFE_DIR_PARTS = {"windows", "program files", "program files (x86)", "programdata"}
+
+
+def _validate_data_dir(path):
+    """迁移目标目录安全校验：拒绝空路径 / 相对路径 / .. / 盘根 / 系统目录。
+    返回 (规范化绝对路径, None) 或 (None, 错误信息)。"""
+    raw = (path or "").strip()
+    if not raw:
+        return None, "目录不能为空"
+    if ".." in raw.replace("/", "\\").split("\\"):
+        return None, "目录路径不能包含 .."
+    p = os.path.abspath(os.path.normpath(raw))
+    drive, tail = os.path.splitdrive(p)
+    parts = [x for x in tail.replace("/", "\\").split("\\") if x]
+    if not parts:
+        return None, "不能使用盘根（如 D:\\）作为数据目录"
+    if parts[0].lower() in _UNSAFE_DIR_PARTS:
+        return None, "不能使用系统目录作为数据目录"
+    return p, None
+
+
+def switch_data_dir(new_dir, overwrite=False, mode="copy", on_status=None):
     """安全搬迁数据目录：checkpoint WAL → 复制 → 完整性校验 → 更新指针。
-    旧目录数据保留作为天然备份。需调用方先停掉 watcher/索引等写入源。"""
-    new_dir = os.path.abspath(new_dir)
+    mode=copy：旧目录数据保留作为天然备份（默认）。
+    mode=move：把旧目录记入 pending_delete_dir，下次启动后台删除——
+    本进程还握着旧库的连接句柄，当场删必然失败；且删除前新库必须已经
+    真正在用（重启后），否则误删唯一副本。需调用方先停掉 watcher 等写入源。"""
+    new_dir, err = _validate_data_dir(new_dir)
+    if err:
+        return {"ok": False, "error": err}
+    if mode not in ("copy", "move"):
+        return {"ok": False, "error": "无效的搬迁方式"}
     if os.path.normcase(new_dir) == os.path.normcase(APP_DIR):
         return {"ok": False, "error": "新目录与当前目录相同"}
     if os.path.normcase(APP_DIR).startswith(os.path.normcase(new_dir + os.sep)) or \
@@ -273,6 +305,7 @@ def switch_data_dir(new_dir, overwrite=False, on_status=None):
         return {"ok": False,
                 "error": "目标目录已存在 filebutler.db（如确定覆盖请重试并选择覆盖）"}
 
+    old_dir = APP_DIR  # 指针切换前记住旧目录
     with _conn_lock:
         say("合并未落盘数据")
         conn = _connect()
@@ -313,9 +346,54 @@ def switch_data_dir(new_dir, overwrite=False, on_status=None):
         close_all_conns()  # 各线程缓存的连接指向旧库文件，必须失效
         vec_index.invalidate()
         img_vec_index.invalidate()
+        if mode == "move":
+            set_setting("pending_delete_dir", old_dir)
 
     say("完成")
-    return {"ok": True, "new_dir": new_dir}
+    return {"ok": True, "new_dir": new_dir, "mode": mode}
+
+
+def consume_pending_delete_dir():
+    """取出并清除待删除的旧数据目录（迁移模式遗留）。
+    校验：目录存在、不是当前数据目录，才允许删。"""
+    old = get_setting("pending_delete_dir")
+    if not old:
+        return None
+    set_setting("pending_delete_dir", "")
+    old = old.strip()
+    if not old or not os.path.isdir(old):
+        return None
+    if os.path.normcase(os.path.abspath(old)) == os.path.normcase(APP_DIR):
+        return None  # 指针实际又指回去了，绝不能删
+    return old
+
+
+def remove_data_dir_tree(old_dir):
+    """删除迁移后的旧数据目录（仅接受 consume_pending_delete_dir 放行的路径）。
+    盘根/系统目录绝不删；默认位置保留外壳与 datadir.txt（指针永远住默认目录，
+    删了它 get_data_dir 就找不到自定义目录了）。"""
+    old_dir = os.path.abspath(os.path.normpath((old_dir or "").strip()))
+    if not os.path.isdir(old_dir):
+        return
+    drive, tail = os.path.splitdrive(old_dir)
+    parts = [x for x in tail.replace("/", "\\").split("\\") if x]
+    if not parts or parts[0].lower() in _UNSAFE_DIR_PARTS:
+        return  # 盘根或系统目录：拒绝删除
+    is_default = os.path.normcase(old_dir) == os.path.normcase(DEFAULT_DIR)
+    if is_default:
+        for name in os.listdir(old_dir):
+            if name == "datadir.txt":
+                continue
+            p = os.path.join(old_dir, name)
+            try:
+                if os.path.isdir(p):
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    os.remove(p)
+            except OSError:
+                pass
+    else:
+        shutil.rmtree(old_dir, ignore_errors=True)
 
 
 def init_db():
@@ -335,6 +413,18 @@ def init_db():
             conn.commit()
         finally:
             conn.close()
+
+
+def ensure_fts():
+    """file_index 表就绪后补建 FTS（首次全新安装时 init_db 跑在
+    file_index 建表之前，触发器引用的表不存在会整体跳过——
+    由 fileindex.ensure_default_roots 建好表后回调这里）。"""
+    conn = _connect()
+    try:
+        _ensure_fts(conn)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _ensure_fts(conn):
@@ -370,15 +460,26 @@ CREATE TRIGGER IF NOT EXISTS fi_au AFTER UPDATE ON file_index BEGIN
 END;
 """)
         # 一致性检查：数量不一致（进程被杀导致触发器中断等）时后台重建。
-        # 83 万行重建要几十秒，同步做会把每次启动卡在这里——移到后台线程，
-        # 期间搜索可能命中部分旧数据（可接受，好过界面打不开）。下次启动若
-        # 仍不一致会再次触发。
-        n = conn.execute("SELECT COUNT(*) c FROM file_index").fetchone()["c"]
-        f = conn.execute("SELECT COUNT(*) c FROM file_fts").fetchone()["c"]
+        # 83 万行 COUNT 对比本身也要数百 ms～秒级，同步做会拖慢窗口创建——
+        # 连同重建一起移到后台线程。期间搜索可能命中部分旧数据（可接受）。
+        threading.Thread(target=_check_fts_consistency, daemon=True,
+                         name="fb-fts-check").start()
+    except Exception as e:
+        print("FTS5 init skipped:", e)  # FTS 不可用时搜索自动退回 LIKE
+
+
+def _check_fts_consistency():
+    try:
+        conn = _connect()
+        try:
+            n = conn.execute("SELECT COUNT(*) c FROM file_index").fetchone()["c"]
+            f = conn.execute("SELECT COUNT(*) c FROM file_fts").fetchone()["c"]
+        finally:
+            conn.close()
         if n != f:
             _fts_rebuild_async()
     except Exception as e:
-        print("FTS5 init skipped:", e)  # FTS 不可用时搜索自动退回 LIKE
+        print("FTS consistency check skipped:", e)
 
 
 _fts_rebuild_lock = threading.Lock()
@@ -550,26 +651,29 @@ class VectorIndex:
         with self._lock:
             if self._ids is not None:
                 return
+            import numpy as np
             conn = _connect()
             try:
                 rows = conn.execute(self._select_sql).fetchall()
             finally:
                 conn.close()
             if not rows:
-                self._ids, self._matrix = np.array([], dtype=np.int64), np.zeros((0, 1), dtype=np.float32)
+                self._ids = np.array([], dtype=np.int64)
+                self._matrix = np.zeros((0, 1), dtype=np.float16)
                 return
             ids = np.array([r["id"] for r in rows], dtype=np.int64)
             vecs = np.stack([np.frombuffer(r["vec"], dtype=np.float32) for r in rows])
             norms = np.linalg.norm(vecs, axis=1, keepdims=True)
             norms[norms == 0] = 1.0
             self._ids = ids
-            self._matrix = vecs / norms
+            # float16 存储：向量矩阵内存减半（余弦排序精度损失可忽略）
+            self._matrix = (vecs / norms).astype(np.float16)
 
     def search(self, query_vec, k=8):
-        """返回 [(chunk_id, score)]，按相似度降序。"""
+        """返回 [(id, score)]，按相似度降序。分块 float16 点积：内存恒定。"""
+        import numpy as np
         self._ensure_loaded()
         with self._lock:
-            # 防御：invalidate() 可能在 _ensure_loaded 之后、with lock 之前并发执行
             ids = self._ids
             matrix = self._matrix
             if ids is None or matrix is None or len(ids) == 0:
@@ -578,12 +682,18 @@ class VectorIndex:
             n = np.linalg.norm(q)
             if n == 0:
                 return []
-            q = q / n
-            scores = matrix @ q
-            k = min(k, len(scores))
-            top = np.argpartition(-scores, k - 1)[:k]
-            top = top[np.argsort(-scores[top])]
-            return [(int(ids[i]), float(scores[i])) for i in top]
+            q = (q / n).astype(np.float16)
+            k = min(k, len(ids))
+            best = []
+            step = 8192
+            for start in range(0, len(ids), step):
+                scores = matrix[start:start + step] @ q
+                m = len(scores)
+                top = min(k, m)
+                idx = np.argpartition(-scores, top - 1)[:top]
+                best += [(start + int(i), float(scores[i])) for i in idx]
+            best.sort(key=lambda x: -x[1])
+            return [(int(ids[g]), s) for g, s in best[:k]]
 
 
 vec_index = VectorIndex("SELECT id, vec FROM chunks WHERE vec IS NOT NULL")
@@ -673,18 +783,38 @@ def backup_db(only_if_changed=False):
     bdir = backup_dir()
     os.makedirs(bdir, exist_ok=True)
     stamp = _time.strftime("%Y%m%d-%H%M%S")
-    dst = os.path.join(bdir, f"filebutler-{stamp}.db")
     n = 0
-    while os.path.exists(dst):  # 同秒内多次备份：加序号防覆盖
+    while True:
+        suffix = f"-{n}" if n else ""
+        dst = os.path.join(bdir, f"filebutler-{stamp}{suffix}.db")
+        if not os.path.exists(dst):
+            break
         n += 1
-        dst = os.path.join(bdir, f"filebutler-{stamp}-{n}.db")
+    # 先写临时文件再改名：备份可能在退出/关闭时被中断，半截文件
+    # 不能顶着正式名字混进备份列表
+    tmp = dst + ".tmp"
     src = _connect()
-    target = sqlite3.connect(dst)
+    target = sqlite3.connect(tmp)
     try:
         src.backup(target)  # 在线备份：含 WAL 未 checkpoint 的内容，页级一致快照
-    finally:
+    except Exception:
         target.close()
         src.close()
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    finally:
+        try:
+            target.close()
+        except Exception:
+            pass
+        try:
+            src.close()
+        except Exception:
+            pass
+    os.replace(tmp, dst)
     try:
         with open(_backup_sig_file(), "w", encoding="utf-8") as f:
             f.write(_db_change_sig())
@@ -777,6 +907,16 @@ def list_backups():
     bdir = backup_dir()
     if not os.path.isdir(bdir):
         return []
+    # 清理被中断的备份残留（写一半的 .tmp；留 1 小时缓冲防误删正在写的）
+    import time as _tn
+    for f in os.listdir(bdir):
+        if f.endswith(".db.tmp"):
+            p = os.path.join(bdir, f)
+            try:
+                if _tn.time() - os.path.getmtime(p) > 3600:
+                    os.remove(p)
+            except OSError:
+                pass
     import time as _t
     out = []
     for f in sorted(os.listdir(bdir), reverse=True):

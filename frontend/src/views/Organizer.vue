@@ -271,6 +271,97 @@ async function cleanupSimilar() {
   cleaning.value = false
 }
 
+// ---------- 大文件清理（复用 browse_files 的 size 语法，零后端改动） ----------
+const bigFiles = ref(null)
+const bigRunning = ref(false)
+const bigChecked = ref([])
+const bigMinSize = ref('1gb')
+const bigSizeOptions = [
+  { label: '> 1 GB', value: '1gb' },
+  { label: '> 500 MB', value: '500mb' },
+  { label: '> 100 MB', value: '100mb' },
+  { label: '> 10 MB', value: '10mb' },
+  { label: '不限', value: '' },
+]
+
+async function findBigFiles() {
+  bigRunning.value = true
+  bigChecked.value = []
+  try {
+    const q = bigMinSize.value ? `size:>${bigMinSize.value}` : null
+    const r = await api('browse_files', q, null, null, 0, 300, 'size', 'desc')
+    bigFiles.value = r.items
+    if (!r.items.length) message.info('没有超过阈值的大文件')
+  } catch (e) { message.error(String(e)) }
+  bigRunning.value = false
+}
+
+const bigWaste = computed(() =>
+  (bigFiles.value || [])
+    .filter((f) => bigChecked.value.includes(f.path))
+    .reduce((s, f) => s + (f.size || 0), 0))
+
+const bigColumns = [
+  { type: 'selection' },
+  { title: '大小', key: 'size', width: 100, render: (r) => h('b', null, fmtSize(r.size)) },
+  { title: '文件名', key: 'name', ellipsis: { tooltip: true } },
+  { title: '类别', key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
+  { title: '修改时间', key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
+  { title: '路径', key: 'path', ellipsis: { tooltip: true },
+    render: (r) => h('span', { class: 'mono', style: 'cursor:pointer', title: '点击打开所在位置',
+      onClick: () => api('open_path', r.path) }, r.path) },
+]
+
+async function trashBigFiles() {
+  const paths = (bigFiles.value || []).filter((f) => bigChecked.value.includes(f.path)).map((f) => f.path)
+  if (!paths.length) return message.warning('请先勾选要清理的大文件')
+  const ok = window.confirm(`将 ${paths.length} 个大文件（共 ${fmtSize(bigWaste.value)}）移入系统回收站？\n可从回收站恢复。`)
+  if (!ok) return
+  const r = await api('trash_files', JSON.parse(JSON.stringify(paths)))
+  const okN = r.results.filter((x) => x.ok).length
+  message.success(`已移入回收站 ${okN}/${paths.length}`)
+  findBigFiles()
+}
+
+// ---------- 冲突副本（同步冲突 + 编号副本，全索引范围） ----------
+const conflicts = ref(null)
+const conflictsRunning = ref(false)
+const conflictChecked = ref([])
+
+async function findConflicts() {
+  conflictsRunning.value = true
+  conflictChecked.value = []
+  try {
+    conflicts.value = (await api('find_conflict_files')).items
+    if (!conflicts.value.length) message.info('没有发现冲突或编号副本')
+  } catch (e) { message.error(String(e)) }
+  conflictsRunning.value = false
+}
+
+const conflictColumns = [
+  { type: 'selection' },
+  { title: '原因', key: 'reason', width: 100,
+    render: (r) => h(NTag, { size: 'small', type: r.reason === '同步冲突' ? 'error' : 'warning', bordered: false },
+      { default: () => r.reason }) },
+  { title: '文件名', key: 'name', ellipsis: { tooltip: (r) => r.path },
+    render: (r) => r.path.split(/[\\/]/).pop() },
+  { title: '大小', key: 'size', width: 100, render: (r) => fmtSize(r.size) },
+  { title: '修改时间', key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
+  { title: '相关文件', key: 'related', ellipsis: { tooltip: true },
+    render: (r) => r.related ? h('span', { class: 'mono' }, r.related) : h('span', { style: 'opacity:.4' }, '-') },
+]
+
+async function trashConflicts() {
+  const paths = (conflicts.value || []).filter((f) => conflictChecked.value.includes(f.path)).map((f) => f.path)
+  if (!paths.length) return message.warning('请先勾选要清理的文件')
+  const ok = window.confirm(`将 ${paths.length} 个冲突/副本文件移入系统回收站？\n可从回收站恢复。`)
+  if (!ok) return
+  const r = await api('trash_files', JSON.parse(JSON.stringify(paths)))
+  const okN = r.results.filter((x) => x.ok).length
+  message.success(`已移入回收站 ${okN}/${paths.length}`)
+  findConflicts()
+}
+
 // ---------- 整理模板 ----------
 const templates = ref([])
 const showSaveTpl = ref(false)
@@ -525,6 +616,61 @@ loadTemplates()
             </n-list-item>
           </n-list>
           <n-empty v-else description="暂无操作记录" />
+        </n-card>
+      </n-tab-pane>
+
+      <!-- ================= 大文件 ================= -->
+      <n-tab-pane name="bigfiles" tab="大文件清理">
+        <n-card>
+          <n-space vertical size="large">
+            <n-space align="center">
+              <n-select v-model:value="bigMinSize" :options="bigSizeOptions" size="small" style="width:130px" />
+              <n-button type="primary" :loading="bigRunning" @click="findBigFiles">查找大文件</n-button>
+              <n-text depth="3" style="font-size:12px">按总索引排序（无需扫描文件夹），勾选后送系统回收站</n-text>
+            </n-space>
+            <template v-if="bigFiles && bigFiles.length">
+              <n-space align="center">
+                <n-text>已勾选可释放 <b>{{ fmtSize(bigWaste) }}</b></n-text>
+                <n-button size="small" @click="bigChecked = bigFiles.map((f) => f.path)">全选</n-button>
+                <n-button size="small" @click="bigChecked = []">清空</n-button>
+                <n-button size="small" type="error" ghost :disabled="!bigChecked.length" @click="trashBigFiles">
+                  删除到回收站（{{ bigChecked.length }}）
+                </n-button>
+              </n-space>
+              <n-data-table v-model:checked-row-keys="bigChecked" :columns="bigColumns"
+                :data="bigFiles" :max-height="420" size="small" :row-key="(r) => r.path" virtual-scroll />
+            </template>
+            <n-empty v-else-if="!bigRunning && bigFiles" description="没有超过阈值的大文件" />
+            <n-empty v-else-if="!bigRunning" description="点击「查找大文件」开始" />
+          </n-space>
+        </n-card>
+      </n-tab-pane>
+
+      <!-- ================= 冲突副本 ================= -->
+      <n-tab-pane name="conflicts" tab="冲突副本">
+        <n-card>
+          <n-space vertical size="large">
+            <n-space align="center">
+              <n-button type="primary" :loading="conflictsRunning" @click="findConflicts">检测冲突副本</n-button>
+              <n-text depth="3" style="font-size:12px">
+                全索引范围：同步冲突（文件名含「冲突/conflict」）与「xxx (1).ext」编号副本（原始文件必须存在）
+              </n-text>
+            </n-space>
+            <template v-if="conflicts && conflicts.length">
+              <n-space align="center">
+                <n-text>共 {{ conflicts.length }} 个 · 已勾选 <b>{{ conflictChecked.length }}</b> 个</n-text>
+                <n-button size="small" @click="conflictChecked = conflicts.map((f) => f.path)">全选</n-button>
+                <n-button size="small" @click="conflictChecked = []">清空</n-button>
+                <n-button size="small" type="error" ghost :disabled="!conflictChecked.length" @click="trashConflicts">
+                  删除到回收站（{{ conflictChecked.length }}）
+                </n-button>
+              </n-space>
+              <n-data-table v-model:checked-row-keys="conflictChecked" :columns="conflictColumns"
+                :data="conflicts" :max-height="420" size="small" :row-key="(r) => r.path" virtual-scroll />
+            </template>
+            <n-empty v-else-if="!conflictsRunning && conflicts" description="没有发现冲突或编号副本" />
+            <n-empty v-else-if="!conflictsRunning" description="点击「检测冲突副本」开始" />
+          </n-space>
         </n-card>
       </n-tab-pane>
 

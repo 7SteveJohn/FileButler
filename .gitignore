@@ -21,3 +21,4 @@ output/
 # 工作区工具目录
 .workbuddy/
 .zcode/
+.mimosa/

@@ -209,6 +209,18 @@ def _ensure_context_menu():
         pass
 
 
+def _startup_bg_color():
+    """窗口初始背景色取上次使用的主题底色，避免深色主题启动时白屏闪烁。"""
+    try:
+        from backend import db as _db
+        if _db.get_setting("ui_dark", "0") == "1":
+            bg = _db.get_setting("ui_caption_bg", "") or "#0b0e14"
+            return bg if bg.startswith("#") else "#0b0e14"
+    except Exception:
+        pass
+    return "#f5f7f6"
+
+
 def main():
     import webview
     from backend.api import Api
@@ -221,7 +233,13 @@ def main():
     _handle_sendto_args()
 
     dev = "--dev" in sys.argv
+    tray_start = "--tray" in sys.argv  # 开机自启：静默启动到托盘，不弹主窗口
     api = Api()
+
+    # Ollama 探测在进程启动瞬间后台预热（不等窗口/前端）：
+    # 首屏 get_status 到达时缓存已热，Dashboard 不再等 Ollama 连接
+    threading.Thread(target=api._warm_status, daemon=True,
+                     name="fb-warm-status-early").start()
 
     # 资源管理器集成（SendTo 快捷方式要 spawn powershell，可能秒级）
     # 移到后台线程：不能让它挡在窗口创建前面拖慢首屏
@@ -241,8 +259,94 @@ def main():
         width=1280,
         height=840,
         min_size=(980, 660),
+        background_color=_startup_bg_color(),
+        hidden=tray_start,  # --tray：创建即隐藏，静默驻留托盘
+        # 无边框：标题栏由前端自绘（跟随主题）。easy_drag=False 只允许
+        # .pywebview-drag-region 区域拖动，避免全窗口误拖。
+        frameless=True,
+        easy_drag=False,
     )
     api.set_window(window)
+
+    def _enable_native_resize():
+        """无边框窗口默认不能调大小：补 WS_THICKFRAME | MIN/MAXIMIZEBOX
+        让 Windows 提供原生缩放边框与 Win+方向键贴靠（Electron 同款做法），
+        并把 Win11 圆角偏好设为 ROUND。"""
+        try:
+            import ctypes
+            hwnd = int(window.native.Handle.ToInt64())
+            user32 = ctypes.windll.user32
+            GWL_STYLE = -16
+            WS_THICKFRAME = 0x00040000
+            WS_MINIMIZEBOX = 0x00020000
+            WS_MAXIMIZEBOX = 0x00010000
+            if hasattr(user32, "SetWindowLongPtrW"):
+                set_long = user32.SetWindowLongPtrW
+            else:
+                set_long = user32.SetWindowLongW
+            style = set_long(hwnd, GWL_STYLE, 0)
+            set_long(hwnd, GWL_STYLE, style | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+            SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_FRAMECHANGED = 0x1, 0x2, 0x4, 0x20
+            user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                                SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED)
+            dwm = ctypes.windll.dwmapi
+            DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND = 33, 2
+            pref = ctypes.c_int(DWMWCP_ROUND)
+            dwm.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
+                                      ctypes.byref(pref), 4)
+        except Exception as e:
+            print("enable native resize failed:", e)
+
+    # ---------- 重启 / 退出 的统一收尾 ----------
+    # 重启必须先释放单实例锁 socket 再拉起新进程：新进程 bind 不了 47928
+    # 会走「二次实例」分支静默退出——这就是原来点「立即重启」没反应的原因。
+
+    def _spawn_new_instance():
+        import subprocess
+        if getattr(sys, "frozen", False):
+            args = [sys.executable]
+        else:
+            args = [sys.executable, os.path.abspath(sys.argv[0])] + list(sys.argv[1:])
+        subprocess.Popen(args, close_fds=True,
+                         creationflags=0x08000000 if os.name == "nt" else 0)
+
+    def _teardown(stop_backup=False):
+        """停止后台服务 + 释放单实例锁。退出与重启共用。"""
+        try:
+            if api.watch_engine:
+                api.watch_engine.stop()
+            if api.thumb.server:
+                api.thumb.server.stop()
+        except Exception:
+            pass
+        try:
+            if tray.get("icon"):
+                tray["icon"].stop()
+        except Exception:
+            pass
+        # 关键：显式关闭单实例锁 socket，否则端口在 TIME_WAIT 期间不能再次
+        # bind，用户从托盘退出后再启动应用会因 bind 失败而走"二次进程"分支
+        # 静默退出
+        try:
+            if _single_sock is not None:
+                _single_sock.close()
+        except Exception:
+            pass
+
+    def do_restart():
+        try:
+            _teardown()
+            _spawn_new_instance()
+        finally:
+            try:
+                window.destroy()
+            except Exception:
+                pass
+            # destroy 不会让 webview.start() 立即返回，直接硬退出
+            os._exit(0)
+
+    api.set_restart_handler(do_restart)
+
     _start_single_server(window, api)  # 监听后续进程的 SendTo/右键路径
 
     # ---------- 全局热键（pynput，后台线程） ----------
@@ -257,9 +361,10 @@ def main():
             try:
                 api.set_visible(True)
                 window.show()
+                # 直通搜索：呼出即弹快速搜索层（Listary/PowerToys Run 的
+                # 「呼出即搜、即搜即走」——而不是开一个还要找入口的主窗口）
                 window.evaluate_js(
-                    'window.__fbEvent && window.__fbEvent('
-                    '{"name":"hotkey_trigger","payload":{}})')
+                    'window.dispatchEvent(new CustomEvent("fb-open-launcher"))')
             except Exception:
                 pass
 
@@ -339,6 +444,8 @@ def main():
                     pass
 
         threading.Thread(target=weekly_rescan, daemon=True, name="fb-weekly-rescan").start()
+        # 无边框窗口：补原生缩放边框 + Win11 圆角
+        _enable_native_resize()
 
     window.events.loaded += on_loaded
 
@@ -347,36 +454,18 @@ def main():
 
     def quit_app(icon=None, item=None):
         _exiting.set()
+        # 每日自动备份不再阻塞退出：838MB 级的库备份要几十秒（机械盘更久），
+        # 就是「退出应用退半天」的根源。改为记 pending 标记，下次启动后
+        # 台补做（备份本身先写 .tmp 再改名，中断不会留下半截正式备份）。
         try:
-            # 每日自动备份（距上次备份 >20 小时且库有变更才执行；
-            # 未变更时跳过 920MB 级的无谓复制）
             from backend import db
             import time as _t
             last = float(db.get_setting("last_backup_at", "0") or 0)
             if _t.time() - last > 20 * 3600:
-                db.backup_db(only_if_changed=True)
-                db.set_setting("last_backup_at", str(_t.time()))
+                db.set_setting("backup_pending", "1")
         except Exception:
             pass
-        try:
-            if tray.get("icon"):
-                tray["icon"].stop()
-        except Exception:
-            pass
-        try:
-            if api.watch_engine:
-                api.watch_engine.stop()
-            if api.thumb.server:
-                api.thumb.server.stop()
-        except Exception:
-            pass
-        # 关键：显式关闭单实例锁 socket，否则端口在 TIME_WAIT 期间不能再次 bind，
-        # 用户从托盘退出后再启动应用会因 bind 失败而走"二次进程"分支静默退出
-        try:
-            if _single_sock is not None:
-                _single_sock.close()
-        except Exception:
-            pass
+        _teardown()
         try:
             window.destroy()
         except Exception:
@@ -389,16 +478,43 @@ def main():
         api.set_visible(True)
         window.show()
 
-    def on_closing():
-        # 点 X = 隐藏到托盘，不退出
+    # ---- 托盘快捷操作（暂停/恢复监控、立即扫描） ----
+    monitor_paused = {"v": False}
+
+    def _watch_label(item):
+        return "恢复监控" if monitor_paused["v"] else "暂停监控"
+
+    def _toggle_watch(icon, item):
         try:
-            import pystray
+            if monitor_paused["v"]:
+                api.watch_engine.start()
+                monitor_paused["v"] = False
+            else:
+                api.watch_engine.stop()
+                monitor_paused["v"] = True
+            icon.update_menu()
+        except Exception:
+            pass
+
+    def _rescan_now(icon, item):
+        api.set_visible(True)
+        try:
+            window.show()
+        except Exception:
+            pass
+        api.rescan_library()
+
+    def hide_to_tray():
+        """隐藏到托盘（自绘标题栏的关闭按钮 / Alt+F4 共用）。"""
+        try:
             if tray.get("icon") is None:
                 from pystray import Icon, Menu, MenuItem
                 icon = Icon(
                     "FileButler", _make_tray_icon(), "FileButler · 本地智能文件管家",
                     menu=Menu(
                         MenuItem("打开主窗口", show_window, default=True),
+                        MenuItem(_watch_label, _toggle_watch),
+                        MenuItem("立即重新扫描", _rescan_now),
                         MenuItem("退出", quit_app),
                     ),
                 )
@@ -406,11 +522,21 @@ def main():
                 threading.Thread(target=icon.run, daemon=True).start()
             api.set_visible(False)  # 隐藏期间后端不再向前端推 JS 事件
             window.hide()
+            return True
         except Exception:
-            return True  # 托盘不可用时正常关闭
-        return False  # 阻止销毁，仅隐藏
+            return False
 
+    def on_closing():
+        # Alt+F4 / 系统关窗：隐藏到托盘，不退出
+        if hide_to_tray():
+            return False  # 阻止销毁，仅隐藏
+        return True  # 托盘不可用时正常关闭
+
+    api.set_hide_to_tray_handler(hide_to_tray)
     window.events.closing += on_closing
+
+    if tray_start:
+        hide_to_tray()  # 静默启动：直接驻留托盘，不弹主窗口
 
     # 命令行 --quit-隐式：无
     try:
