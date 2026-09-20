@@ -1,6 +1,6 @@
-; FileButler 安装脚本（Inno Setup 6）— 英文向导临时版
-; 说明：本环境无法获取 ChineseSimplified.isl，故先用内置英文向导编译。
-;       原 FileButler.iss 保留中文配置；待放入 ChineseSimplified.isl 后可改回中文。
+; FileButler 安装脚本（Inno Setup 6）— 英文向导版
+; 说明：本机 Inno Setup 6.7.3 已自带 ChineseSimplified.isl，中文向导请用 FileButler.iss
+;       （已验证可编译）。本文件保留作英文发行版；两份脚本的 MyAppVersion 需手工同步。
 ;
 ; 前置步骤：
 ;   1. cd frontend && npm run build
