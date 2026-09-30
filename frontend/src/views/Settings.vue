@@ -3,8 +3,9 @@ import { ref, computed, onMounted, onUnmounted, h } from 'vue'
 import {
   NCard, NButton, NSpace, NInput, NText, NTag, NDataTable, NSelect, NSwitch,
   NAlert, NProgress, NInputGroup, useMessage, NModal, NForm, NFormItem, NDescriptions, NDescriptionsItem,
-  NPopconfirm, NList, NListItem,
+  NPopconfirm, NList, NListItem, NIcon,
 } from 'naive-ui'
+import { EyeOutline, EyeOffOutline } from '@vicons/ionicons5'
 import { api, on } from '../lib/bridge'
 import { THEMES, AUTO_KEY, loadThemeKey, saveThemeKey } from '../lib/theme'
 
@@ -243,6 +244,11 @@ const provider = ref(null)
 const provMode = ref('ollama')
 const provBase = ref('')
 const provKey = ref('')
+const provKeyMask = ref('')   // 已保存密钥的打码回显（后端只回尾 4 位），明文永不下发
+const keyEditing = ref(false)   // 本次聚焦后用户真的键入过；期间显示编辑值而非掩码
+const keyInputRef = ref(null)   // 聚焦时全选掩码，直接输入即整段替换
+const keyRevealed = ref(false)   // 点眼睛查看明文；再点恢复打码
+const savedKeyPlain = ref('')    // 明文缓存：首次点眼睛才向后端取
 const provChatModel = ref('')
 const provEmbedSource = ref('follow')
 const provEmbedModel = ref('')
@@ -260,6 +266,39 @@ const embedSourceOptions = [
   { label: '云端向量模型', value: 'api' },
 ]
 
+// 密钥框显示值：编辑中 > 查看明文 > 打码掩码。掩码常驻（聚焦不清空），
+// 聚焦时全选，直接输入即整段替换
+const keyDisplay = computed(() => {
+  if (keyEditing.value || provKey.value) return provKey.value
+  if (keyRevealed.value) return savedKeyPlain.value
+  return provKeyMask.value
+})
+
+function onKeyFocus() {
+  keyInputRef.value?.select()
+}
+
+function onKeyInput(v) {
+  // 从掩码里插字会产生含 **** 的垃圾值；真密钥不会连着四个星号，不采纳
+  if (v.includes('****')) return
+  keyEditing.value = true
+  provKey.value = v
+}
+
+function onKeyBlur() {
+  if (!provKey.value) keyEditing.value = false  // 没输新值就离开，回到掩码显示
+}
+
+async function toggleKeyReveal() {
+  if (!keyRevealed.value && provKeyMask.value && !savedKeyPlain.value) {
+    try {
+      const r = await api('reveal_api_key')
+      savedKeyPlain.value = r.key || ''
+    } catch (e) { savedKeyPlain.value = '' }
+  }
+  keyRevealed.value = !keyRevealed.value
+}
+
 async function loadProvider() {
   try {
     provider.value = await api('llm_provider_status')
@@ -267,6 +306,10 @@ async function loadProvider() {
     provMode.value = s.mode
     provBase.value = s.api_base
     provKey.value = ''   // 密钥不回显，留空表示不修改
+    provKeyMask.value = s.api_key_masked || ''
+    keyEditing.value = false
+    savedKeyPlain.value = ''   // 重新载入后旧明文缓存作废
+    keyRevealed.value = false
     provChatModel.value = s.api_chat_model
     provEmbedSource.value = s.embed_source
     provEmbedModel.value = s.api_embed_model
@@ -918,8 +961,21 @@ onMounted(() => {
             </div>
             <div class="fb-kv">
               <span class="fb-kv-label">API 密钥</span>
-              <n-input v-model:value="provKey" type="password" show-password-on="click"
-                placeholder="sk-…（已保存的密钥留空即不修改；LM Studio 等本机服务无需密钥）" style="flex:1;min-width:280px" class="mono" />
+              <n-input ref="keyInputRef" :value="keyDisplay"
+                @update:value="onKeyInput"
+                @focus="onKeyFocus" @blur="onKeyBlur"
+                :type="keyRevealed ? 'text' : 'password'"
+                :placeholder="provKeyMask ? '输入新密钥可更换；留空保存则沿用已保存的密钥' : 'sk-…（LM Studio 等本机服务无需密钥）'"
+                style="flex:1;min-width:280px" class="mono">
+                <template #suffix>
+                  <n-button quaternary circle size="tiny" tabindex="-1"
+                    @click="toggleKeyReveal" :title="keyRevealed ? '隐藏密钥' : '查看密钥'">
+                    <n-icon :size="16" :depth="3">
+                      <component :is="keyRevealed ? EyeOffOutline : EyeOutline" />
+                    </n-icon>
+                  </n-button>
+                </template>
+              </n-input>
             </div>
             <div class="fb-kv">
               <span class="fb-kv-label">对话模型</span>

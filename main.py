@@ -268,6 +268,11 @@ def main():
 
     dev = "--dev" in sys.argv
     tray_start = "--tray" in sys.argv  # 开机自启：静默启动到托盘，不弹主窗口
+    if "--disable-gpu" in sys.argv:
+        # 应急开关：WebView2 的 GPU 进程偶发进入崩溃循环时窗口纯黑
+        # （渲染层没起来，只剩 background_color）。关掉 GPU 加速可绕过，
+        # 属于罕见瞬态，正常情况不要带这个参数（滚动/视频性能会变差）。
+        os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu")
     api = Api()
 
     # Ollama 探测在进程启动瞬间后台预热（不等窗口/前端）：

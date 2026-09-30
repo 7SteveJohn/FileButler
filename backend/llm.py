@@ -77,6 +77,17 @@ def api_key():
     return (db.get_setting("api_key", "") or "").strip()
 
 
+def api_key_masked():
+    """设置页回显用的打码密钥：只露尾 4 位，够用户认出存过哪把钥匙，
+    不够还原密钥本身；空串表示还没有已保存的密钥。"""
+    k = api_key()
+    if not k:
+        return ""
+    head = "sk-" if k.lower().startswith("sk-") else ""
+    tail = k[-4:] if len(k) >= 12 else ""
+    return f"{head}****{tail}"
+
+
 def api_chat_model():
     return (db.get_setting("api_chat_model", "") or "").strip()
 
@@ -252,6 +263,8 @@ def list_remote_models(base=None, key=""):
         return {"ok": False, "error": "服务地址未填写"}
     if not base.lower().startswith(("http://", "https://")):
         return {"ok": False, "error": "服务地址必须以 http:// 或 https:// 开头"}
+    if not key and not is_local_base(base):
+        key = api_key()  # 前端不回显明文，留空=沿用已保存的；本机服务无需密钥
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     try:
         r = _session_for(base).get(_norm_endpoint(base, "/models"),
@@ -341,6 +354,7 @@ def provider_summary():
     cs, es = chat_status(), embed_status()
     return {"mode": mode(), "embed_source": embed_source(),
             "api_base": api_base(), "has_key": bool(api_key()),
+            "api_key_masked": api_key_masked(),
             "api_chat_model": api_chat_model(), "api_embed_model": api_embed_model(),
             "chat": cs, "embed": es,
             "ollama_running": OllamaClient().status()["running"]}

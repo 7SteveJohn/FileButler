@@ -566,7 +566,9 @@ class Api:
                 return {"ok": False, "error": "API 模式需要填写服务地址和对话模型名"}
             if not base.lower().startswith(("http://", "https://")):
                 return {"ok": False, "error": "服务地址必须以 http:// 或 https:// 开头"}
-            if not llm_mod.is_local_base(base) and not api_key.strip():
+            # 密钥留空 = 沿用已保存的（前端不回显明文，只回打码值），无存密才拦
+            if (not llm_mod.is_local_base(base) and not api_key.strip()
+                    and not llm_mod.api_key()):
                 return {"ok": False,
                         "error": "云端服务需要填写密钥（本机服务如 LM Studio 可留空）"}
         if embed_source == "api" and not embed_model.strip():
@@ -585,6 +587,12 @@ class Api:
         供设置页下拉选择对话/向量模型。"""
         from backend import llm as llm_mod
         return llm_mod.list_remote_models(base or None, key or None)
+
+    def reveal_api_key(self):
+        """设置页点「眼睛」查看已保存的密钥明文。密钥本就明文存在本机库，
+        本机界面按需查看不增加暴露面；仅经 pywebview JS API 本机可达。"""
+        from backend import llm as llm_mod
+        return {"key": llm_mod.api_key()}
 
     def detect_local_llm(self):
         """探测本机 Ollama(11434) / LM Studio(1234)，供设置页一键填入。"""

@@ -202,6 +202,19 @@ def main():
     bad_cloud = api.save_llm_provider("api", "https://api.deepseek.com/v1", "", "m")
     check("云端无密钥被拒", bad_cloud.get("ok") is False
           and "密钥" in bad_cloud.get("error", ""), str(bad_cloud))
+    saved = api.save_llm_provider("api", "https://api.deepseek.com/v1",
+                                  "sk-test-abcd1234wxyz", "deepseek-chat")
+    check("云端带密钥可保存", saved.get("ok") is True, str(saved))
+    masked = _llm.api_key_masked()
+    check("打码回显只露尾 4 位", masked == "sk-****wxyz", masked)
+    keep = api.save_llm_provider("api", "https://api.deepseek.com/v1",
+                                 "", "deepseek-reasoner")
+    check("已存密钥留空保存沿用不报错", keep.get("ok") is True
+          and _llm.api_key() == "sk-test-abcd1234wxyz", str(keep))
+    check("打码值随 provider_summary 下发",
+          keep.get("summary", {}).get("api_key_masked") == "sk-****wxyz")
+    check("点眼睛取回明文密钥",
+          api.reveal_api_key().get("key") == "sk-test-abcd1234wxyz")
     bad_scheme = api.save_llm_provider(
         "api", "ftp" + "://127.0.0.1:1234/v1", "k", "m")
     check("非 http(s) 地址被拒", bad_scheme.get("ok") is False
