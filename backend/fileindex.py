@@ -355,15 +355,23 @@ def remove_under(dir_path):
         conn.close()
 
 
-def full_scan(progress_cb=None):
+class ScanCancelled(Exception):
+    """全量扫描被叫停（恢复备份/搬迁数据目录前必须停掉一切写库任务）。"""
+
+
+def full_scan(progress_cb=None, stop_event=None):
     """全量扫描所有启用根目录。增量：mtime/size 未变的跳过。
     流式处理：边扫边批量写库，不把全部文件攒进内存。
     差异对比放 SQLite 临时表做（scan_old 里被扫到的行当场删掉，剩的即
     已删除文件）——旧实现把 83 万条已知文件装进 Python dict，峰值 ~200MB。
-    progress_cb(stage, i, n, detail)。返回统计。"""
+    progress_cb(stage, i, n, detail)。返回统计。
+    stop_event 置位时抛 ScanCancelled（写完当前批保证不留半批脏数据）。"""
     rules = rules_mod.load_user_rules()
     roots = list_roots()
     stats = {"added": 0, "updated": 0, "removed": 0, "total": 0}
+
+    def _cancelled():
+        return stop_event is not None and stop_event.is_set()
 
     conn = db.get_conn()
     try:
@@ -399,9 +407,14 @@ def full_scan(progress_cb=None):
         seen_del.clear()
 
     for r in roots:
+        if _cancelled():
+            raise ScanCancelled()
         if progress_cb:
             progress_cb("scan", 0, 0, f"扫描 {r['label'] or r['path']}")
         for fi in scanner.iter_scan_folder(r["path"], max_files=1_000_000):
+            if _cancelled():
+                _flush()  # 已攒的批写干净再停，不留半批
+                raise ScanCancelled()
             if is_temp_file(fi["path"]):
                 continue
             stats["total"] += 1
@@ -459,6 +472,8 @@ def full_scan(progress_cb=None):
         progress_cb("clean", 0, dead_total, "")
     dead = 0
     while True:
+        if _cancelled():
+            raise ScanCancelled()
         conn = db.get_conn()
         try:
             rows = conn.execute("SELECT path FROM scan_old LIMIT 2000").fetchall()

@@ -231,10 +231,12 @@ _conn_lock = threading.Lock()
 # 读加速用的 mmap 窗口：实测 33MB 库上查询快 2.5-3.5 倍（11ms vs 28ms），
 # 代价是「被连接映射着的库文件 SQLite 不会截断」——VACUUM 因此只重组页不缩文件。
 # vacuum() 会临时撤掉所有活连接的映射再恢复，两边都不牺牲。
+# PRAGMA 不支持参数绑定，只能写内联字面量；_connect/_resume_mmap/测试三处值须一致。
 MMAP_SIZE = 268435456
 
-_live_conns = set()        # 由 _connect() 登记的活连接（供 vacuum 撤映射用）
+_live_conns = {}           # conn -> 登记时的线程对象（线程死后由 _reap_conns 回收）
 _live_lock = threading.Lock()
+_reap_last = 0.0
 
 
 def _connect():
@@ -242,18 +244,48 @@ def _connect():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10.0)
     conn.row_factory = sqlite3.Row
     # WAL + busy_timeout 解决多线程写竞争（watcher 实时 upsert + rescan 后台 + 用户 query）
-    # busy_timeout=5000ms：SQLite 写锁等 5s 才报 OperationalError
+    # busy_timeout=15000ms：SQLite 写锁竞争等 15s 才报 OperationalError
+    # （大库后台批量写入的单批事务在慢盘上也可能超过 5s，5s 阈值实测会误伤前台写入）
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=15000")
     conn.execute("PRAGMA synchronous=NORMAL")  # WAL 模式下折中（FULL=安全，NORMAL=性能+安全平衡）
     # 读性能调优（速度）：mmap 让 FTS/大表查询免掉页拷贝（文件页由 OS 缓存共享，
     # 不额外占私有内存）；页缓存 4MB/连接——多线程各持连接，过大内存会翻倍
-    conn.execute(f"PRAGMA mmap_size={MMAP_SIZE}")
+    conn.execute("PRAGMA mmap_size=268435456")
     conn.execute("PRAGMA cache_size=-4000")
     with _live_lock:
-        _live_conns.add(conn)
+        _live_conns[conn] = threading.current_thread()
     return conn
+
+
+def _reap_conns(force=False):
+    """关闭已死亡线程遗留的连接。
+
+    pywebview 每次 JS 调用都开一个新线程，线程本地缓存的连接随线程死亡失联，
+    但 _live_conns 持有强引用让它永不回收——每条泄漏的连接占一个句柄加最多
+    4MB 页缓存，托盘常驻数日会持续劣化。按登记线程是否存活来回收。
+    """
+    global _reap_last
+    now = time.monotonic()
+    if not force and now - _reap_last < 30:
+        return
+    _reap_last = now
+    dead = []
+    with _live_lock:
+        for c, t in list(_live_conns.items()):
+            try:
+                alive = t.is_alive()
+            except Exception:
+                alive = True  # 拿不准就当活着：宁可晚回收，不可误关在用的连接
+            if not alive:
+                dead.append(c)
+                _live_conns.pop(c, None)
+    for c in dead:
+        try:
+            c.close()
+        except Exception:
+            pass
 
 
 def _suspend_mmap():
@@ -263,6 +295,7 @@ def _suspend_mmap():
     长期缓存连接——只要有一条还映射着文件，SQLite 就不截断。
     别的线程在此期间照常查询，只是走普通的 read+copy。
     """
+    _reap_conns(force=True)  # 死线程连接的映射同样挡截断，先回收掉
     suspended = []
     with _live_lock:
         for c in list(_live_conns):
@@ -271,7 +304,7 @@ def _suspend_mmap():
                     c.execute("PRAGMA mmap_size=0")
                     suspended.append(c)
             except Exception:
-                _live_conns.discard(c)   # 已关闭的连接，顺手摘掉
+                _live_conns.pop(c, None)   # 已关闭的连接，顺手摘掉
     return suspended
 
 
@@ -279,9 +312,9 @@ def _resume_mmap(conns):
     with _live_lock:
         for c in conns:
             try:
-                c.execute(f"PRAGMA mmap_size={MMAP_SIZE}")
+                c.execute("PRAGMA mmap_size=268435456")
             except Exception:
-                _live_conns.discard(c)
+                _live_conns.pop(c, None)
 
 
 # ---------- 线程本地连接复用 ----------
@@ -342,6 +375,7 @@ def close_all_conns():
 
 def get_conn():
     global _conn_generation
+    _reap_conns()  # 便宜的限频检查（30s 一次），顺手回收死线程的连接
     proxy = getattr(_conn_tls, "proxy", None)
     if proxy is not None and getattr(_conn_tls, "gen", -1) == _conn_generation:
         return proxy
@@ -420,10 +454,25 @@ def switch_data_dir(new_dir, overwrite=False, mode="copy", on_status=None):
         finally:
             conn.close()
 
-        say("复制数据库")
+        say("复制数据库（在线 backup API，目标库一步成型）")
         try:
-            shutil.copy2(DB_PATH, dst_db)
-        except OSError as e:
+            if overwrite and os.path.exists(dst_db):
+                # backup API 拒绝向已存在的无效/异页大文件写入，覆盖语义先清场
+                os.remove(dst_db)
+            dst = sqlite3.connect(dst_db)
+            try:
+                src = _connect()
+                try:
+                    src.backup(dst, pages=-1)
+                finally:
+                    src.close()
+            finally:
+                dst.close()
+        except (sqlite3.Error, OSError) as e:
+            try:
+                os.remove(dst_db)
+            except OSError:
+                pass
             return {"ok": False, "error": f"复制数据库失败：{e}"}
 
         say("校验数据完整性")
@@ -592,7 +641,12 @@ _fts_rebuilding = False
 
 
 def _fts_rebuild_async():
-    """后台一致性重建（单实例防重入）。"""
+    """后台一致性重建（单实例防重入）。
+    分批提交：旧实现把清空+重灌全表放进一个 BEGIN IMMEDIATE，几十万行
+    会把全局写锁握几分钟，期间保存聊天记录、改设置等一切写库全部
+    「database is locked」。改为每批一个短事务，写锁每次只占几十毫秒；
+    批与批之间其他线程照常写库，触发器写入的行由 INSERT OR REPLACE
+    与重灌逻辑自然对齐，最终一致。"""
     global _fts_rebuilding
     if _fts_rebuilding or not _fts_rebuild_lock.acquire(blocking=False):
         return
@@ -600,29 +654,72 @@ def _fts_rebuild_async():
     def _run():
         global _fts_rebuilding
         _fts_rebuilding = True
+        conn = None
         try:
             conn = _connect()
-            try:
-                conn.execute("BEGIN IMMEDIATE")  # 单事务：期间触发器写入排队等待
-                conn.execute("DELETE FROM file_fts")
-                conn.executemany(
-                    "INSERT INTO file_fts(rowid, name, path) VALUES(?,?,?)",
-                    conn.execute("SELECT id, name, path FROM file_index"))
-                conn.commit()
-                print("[fts] background rebuild done")
-            except Exception as e:
+            _fts_resync(conn)
+            print("[fts] background rebuild done")
+        except Exception as e:
+            if conn is not None:
                 try:
                     conn.rollback()
                 except Exception:
                     pass
-                print("[fts] background rebuild failed:", e)
-            finally:
-                conn.close()
+            print("[fts] background rebuild failed:", e)
         finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             _fts_rebuilding = False
             _fts_rebuild_lock.release()
 
     threading.Thread(target=_run, daemon=True, name="fb-fts-rebuild").start()
+
+
+def _fts_resync(conn, batch=5000):
+    """把 file_fts 全量对齐到 file_index（分批短事务，不长期占写锁）。
+
+    两阶段，均按 id 升序推进，每批一个事务：
+      1) 分批清空 file_fts 现有行；
+      2) 按 file_index.id 升序分批 INSERT OR REPLACE 重灌。
+    两批之间其他线程的写入照常提交；阶段 1 之后触发器新写入的行会被
+    阶段 2 用 file_index 里的现值重写（OR REPLACE），不会丢也不会撞
+    唯一 rowid；期间被删除的文件由触发器同步删除，重灌不会复活它们。
+    进程中途被杀会留下不一致计数，下次启动 _check_fts_consistency
+    再次触发重建，自愈。"""
+    while True:  # 阶段 1：分批清空
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            cur = conn.execute(
+                "DELETE FROM file_fts WHERE rowid IN "
+                "(SELECT rowid FROM file_fts LIMIT ?)", (batch,))
+            done = cur.rowcount == 0
+            conn.commit()
+            if done:
+                break
+        except Exception:
+            conn.rollback()
+            raise
+    last = 0  # 阶段 2：分批重灌
+    while True:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = conn.execute(
+                "SELECT id, name, path FROM file_index WHERE id>? "
+                "ORDER BY id LIMIT ?", (last, batch)).fetchall()
+            if not rows:
+                conn.commit()
+                break
+            conn.executemany(
+                "INSERT OR REPLACE INTO file_fts(rowid, name, path) VALUES(?,?,?)",
+                [(r["id"], r["name"], r["path"]) for r in rows])
+            last = rows[-1]["id"]
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 # ---------- 设置 ----------
@@ -1015,7 +1112,7 @@ def vacuum(on_done=None):
         finally:
             conn.close()
             with _live_lock:
-                _live_conns.discard(conn)
+                _live_conns.pop(conn, None)
             _resume_mmap(suspended)
         # 结构已重写，作废"未变更跳过"标记，让下次退出备份必定执行
         try:
@@ -1077,7 +1174,14 @@ def list_backups():
 
 
 def restore_backup(backup_path):
-    """用备份覆盖当前库（需重启生效）。当前库先另存一份以防万一。"""
+    """用备份覆盖当前库（需重启生效）。当前库先另存一份以防万一。
+
+    覆盖用 SQLite 在线 backup API（pages=-1 单步全量，一次持锁完成），
+    不再用文件复制：复制途中其他线程写库会产生撕裂副本，删 WAL 还可能
+    损坏仍开着的连接；backup API 对其他连接是原子的。调用方应先停掉
+    watcher / 扫描等写入源（api._stop_background_writers），否则恢复期间
+    的写入会随页覆盖丢失。
+    """
     if not os.path.isfile(backup_path):
         return {"ok": False, "error": "备份文件不存在"}
     with _conn_lock:
@@ -1090,17 +1194,27 @@ def restore_backup(backup_path):
         import time as _t
         safety = DB_PATH + ".pre-restore"
         shutil.copy2(DB_PATH, safety)
-        shutil.copy2(backup_path, DB_PATH)
-        for suffix in ("-wal", "-shm"):
-            for p in (DB_PATH + suffix, safety + suffix):
-                if os.path.exists(p):
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
+        try:
+            src = sqlite3.connect(backup_path)
+            try:
+                dst = _connect()
+                try:
+                    src.backup(dst, pages=-1)
+                finally:
+                    dst.close()
+            finally:
+                src.close()
+        except (sqlite3.Error, OSError) as e:
+            # 单步 backup 失败时目标库可能处于中间态，尽力把安全副本滚回去
+            try:
+                shutil.copy2(safety, DB_PATH)
+            except OSError:
+                pass
+            return {"ok": False,
+                    "error": f"恢复失败，已回滚（安全副本：{os.path.basename(safety)}）：{e}"}
         vec_index.invalidate()
         img_vec_index.invalidate()
-        close_all_conns()  # 覆盖了库文件，缓存连接必须失效（配合 need_restart）
+        close_all_conns()  # 覆盖了库内容，缓存连接必须失效（配合 need_restart）
     return {"ok": True, "need_restart": True, "safety_copy": safety}
 
 

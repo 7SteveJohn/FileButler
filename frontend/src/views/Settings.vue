@@ -26,11 +26,21 @@ const chatModel = ref('')
 const chatModelOptions = ref([])
 const pullState = ref(null)   // {model, pct, status, done}
 const recommend = ref(null)
+const keepAlive = ref('30m')  // 模型常驻时长：默认 30m，避免空闲 5 分钟被卸载后重载几十秒
+const preload = ref(false)    // 启动时把模型预载进显存/内存
+const keepAliveOptions = [
+  { label: '5 分钟', value: '5m' },
+  { label: '30 分钟（推荐）', value: '30m' },
+  { label: '1 小时', value: '1h' },
+  { label: '常驻不卸载', value: '-1' },
+]
 
 async function refresh() {
   status.value = await api('get_status')
   host.value = status.value.ollama.host
   chatModel.value = status.value.chat_model
+  keepAlive.value = status.value.ollama_keep_alive || '30m'
+  preload.value = !!status.value.ollama_preload
   const opts = []
   for (const m of status.value.ollama.models) {
     if (!m.startsWith('bge')) opts.push({ label: m, value: m })
@@ -39,7 +49,7 @@ async function refresh() {
 }
 
 async function saveOllama() {
-  await api('save_ollama_settings', host.value, chatModel.value)
+  await api('save_ollama_settings', host.value, chatModel.value, keepAlive.value, preload.value)
   message.success('已保存')
   refresh()
   window.dispatchEvent(new CustomEvent('fb-refresh'))
@@ -240,6 +250,9 @@ const provPresets = ref([])
 const provTesting = ref(false)
 const provTestResult = ref(null)
 const provSaving = ref(false)
+const provModels = ref([])        // 从服务端拉到的模型列表（可下拉选）
+const provFetching = ref(false)
+const provDetecting = ref(false)
 
 const embedSourceOptions = [
   { label: '跟随接入方式', value: 'follow' },
@@ -282,12 +295,55 @@ async function testProvider() {
   provTesting.value = false
 }
 
+async function fetchProvModels() {
+  provFetching.value = true
+  try {
+    const r = await api('list_api_models', provBase.value, provKey.value)
+    if (r.ok && r.models.length) {
+      provModels.value = r.models
+      message.info(`获取到 ${r.models.length} 个模型`)
+    } else {
+      provModels.value = []
+      message.warning(r.error || '未获取到模型，请确认服务已启动、地址正确')
+    }
+  } catch (e) {
+    message.error(String(e))
+  } finally {
+    provFetching.value = false
+  }
+}
+
+async function detectLocal() {
+  provDetecting.value = true
+  try {
+    const r = await api('detect_local_llm')
+    const lm = r.lmstudio
+    if (lm?.running) {
+      provMode.value = 'api'
+      provBase.value = lm.base
+      provModels.value = lm.models || []
+      if (lm.models?.length && !provChatModel.value) provChatModel.value = lm.models[0]
+      message.success(`检测到 LM Studio，${lm.models.length} 个模型已就绪`)
+      return
+    }
+    if (r.ollama?.running) {
+      message.info('本机 Ollama 在运行——直接用「本地 Ollama」接入即可，无需切到 API 模式')
+      return
+    }
+    message.warning('未检测到 LM Studio（默认端口 1234）或 Ollama，请确认服务已启动')
+  } finally {
+    provDetecting.value = false
+  }
+}
+
 function pickPreset(p) {
   provBase.value = p.value
   // 自动填充该服务商的推荐模型名
   if (p.models && p.models.length) {
     provChatModel.value = p.models[0].name
     message.info(`已填入推荐模型：${p.models[0].name}（可改）`)
+  } else {
+    message.info('已填入服务地址，点「拉取模型列表」选择模型')
   }
 }
 
@@ -651,6 +707,17 @@ onMounted(() => {
               placeholder="选择已安装的模型" tag filterable />
             <n-button type="primary" @click="saveOllama">保存</n-button>
           </n-space>
+          <n-space item-style="display:flex;align-items:center;gap:8px">
+            <n-text style="width:80px">模型常驻</n-text>
+            <n-select v-model:value="keepAlive" :options="keepAliveOptions" style="width:320px" />
+            <n-switch v-model:value="preload" size="small">
+              <template #suffix>启动时预载</template>
+            </n-switch>
+          </n-space>
+          <n-text depth="3" style="font-size:12px">
+            Ollama 默认空闲 5 分钟就把模型踢出显存，下次提问要重新载入几十秒——
+            「常驻 30 分钟」可让对话随叫随到；内存充裕可开「启动时预载」并选「常驻不卸载」。
+          </n-text>
 
           <n-descriptions v-if="recommend" :column="3" bordered size="small" label-placement="left">
             <n-descriptions-item label="本机内存">{{ recommend.config.ram_gb }} GB</n-descriptions-item>
@@ -846,35 +913,44 @@ onMounted(() => {
             </n-space>
             <div class="fb-kv">
               <span class="fb-kv-label">服务地址</span>
-              <n-input v-model:value="provBase" placeholder="https://api.deepseek.com/v1"
+              <n-input v-model:value="provBase" placeholder="http://127.0.0.1:1234/v1（LM Studio）或 https://api.deepseek.com/v1"
                 style="flex:1;min-width:280px" class="mono" />
             </div>
             <div class="fb-kv">
               <span class="fb-kv-label">API 密钥</span>
               <n-input v-model:value="provKey" type="password" show-password-on="click"
-                placeholder="sk-…（已保存的密钥留空即不修改）" style="flex:1;min-width:280px" class="mono" />
+                placeholder="sk-…（已保存的密钥留空即不修改；LM Studio 等本机服务无需密钥）" style="flex:1;min-width:280px" class="mono" />
             </div>
             <div class="fb-kv">
               <span class="fb-kv-label">对话模型</span>
-              <n-input v-model:value="provChatModel" placeholder="如 deepseek-chat / glm-4.7 / gpt-4o-mini"
+              <n-select v-if="provModels.length" v-model:value="provChatModel"
+                :options="provModels.map(m => ({ label: m, value: m }))" tag filterable
+                placeholder="从服务获取的模型" style="flex:1;min-width:280px" class="mono" />
+              <n-input v-else v-model:value="provChatModel" placeholder="如 deepseek-chat / glm-4.7 / gpt-4o-mini"
                 style="flex:1;min-width:280px" class="mono" />
+              <n-button size="small" round :loading="provFetching" @click="fetchProvModels">拉取模型列表</n-button>
             </div>
             <div class="fb-kv">
               <span class="fb-kv-label">向量化</span>
               <n-select v-model:value="provEmbedSource" :options="embedSourceOptions"
                 style="width:220px" />
-              <n-input v-if="provEmbedSource === 'api'" v-model:value="provEmbedModel"
+              <n-select v-if="provEmbedSource === 'api' && provModels.length"
+                v-model:value="provEmbedModel" :options="provModels.map(m => ({ label: m, value: m }))"
+                tag filterable placeholder="向量模型名" style="flex:1;min-width:240px" class="mono" />
+              <n-input v-else-if="provEmbedSource === 'api'" v-model:value="provEmbedModel"
                 placeholder="向量模型名，如 text-embedding-3-small" style="flex:1;min-width:240px" class="mono" />
             </div>
             <n-text depth="3" style="font-size:12px">
-              省钱混搭推荐：对话走云端（质量好），向量化选「本地 bge-m3」（完全免费）。
-              密钥仅保存在本机数据库，除你填写的服务商外不经过任何第三方。
+              LM Studio：启动其本地服务后点「检测本机服务」一键填入，无需密钥；
+              向量化选「本地 bge-m3」则完全免费。密钥仅保存在本机数据库，
+              除你填写的服务商外不经过任何第三方。
             </n-text>
           </template>
 
           <n-space>
             <n-button type="primary" size="small" round :loading="provSaving" @click="saveProvider">保存</n-button>
             <n-button size="small" round :loading="provTesting" @click="testProvider">测试连接</n-button>
+            <n-button size="small" round :loading="provDetecting" @click="detectLocal">检测本机服务</n-button>
             <n-tag v-if="provider" size="small" round
               :type="provider.summary.chat.ok ? 'success' : 'error'">
               对话：{{ provider.summary.chat.reason }}
@@ -889,7 +965,7 @@ onMounted(() => {
             <template v-if="provTestResult.ok">
               ✓ 连通正常 · {{ provTestResult.latency_ms }}ms · 回复「{{ provTestResult.reply }}」
             </template>
-            <template v-else>✗ {{ provTestResult.error }}</template>
+            <template v-else><span style="white-space:pre-line">✗ {{ provTestResult.error }}</span></template>
           </n-alert>
         </n-space>
       </n-card>

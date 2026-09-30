@@ -67,9 +67,18 @@ cd frontend && npm run build && cd ..
 
 命令行手动拉取：`ollama pull qwen3:8b` / `ollama pull bge-m3`
 
-## 云端 API 接入（可选）
+## 模型接入方式
 
-不想部署本地模型的用户可在 **设置 → 模型接入方式** 切换到「云端 API（OpenAI 兼容）」：
+**本地 Ollama（默认，免费）**：设置页自动检测。对话与向量模型默认「常驻 30 分钟」，
+不会因空闲 5 分钟被卸载而每次重新载入（大模型载入要几十秒）；内存充裕可开
+「启动时预载 + 常驻不卸载」，首次问答零等待。
+
+**LM Studio（本机，免费）**：启动 LM Studio 的本地服务后，在「设置 → 模型接入方式」
+切到「云端 API（OpenAI 兼容）」，点「检测本机服务」即可一键填入（默认
+`http://127.0.0.1:1234/v1`，无需密钥），「拉取模型列表」直接选模型；向量化也走
+LM Studio 的 embedding 模型，全程不装 Ollama。
+
+**云端 API（OpenAI 兼容，可选）**：
 
 - 内置常用服务商快捷填入：DeepSeek、智谱 GLM、Kimi、通义千问、硅基流动、OpenRouter、OpenAI，也支持任何 OpenAI 兼容端点（vLLM / LM Studio 等）
 - **省钱混搭**：对话走云端（质量好），向量化留在本地 bge-m3（完全免费）——两者可独立配置
@@ -90,6 +99,7 @@ cd frontend && npm run build && cd ..
 .venv\Scripts\python tests\test_fileindex.py    # 自动扫描/监控/缩略图（不需要 Ollama）
 .venv\Scripts\python tests\test_batch2.py       # 语法搜索/FTS/清理/预览/QA历史/周报/备份/模板
 .venv\Scripts\python tests\test_datadir.py      # 数据目录切换
+.venv\Scripts\python tests\test_hardening.py    # 连接回收/恢复备份/watcher兜底/Host校验（需一次性 APPDATA）
 .venv\Scripts\python tests\test_upgrade.py      # 批量索引/自动知识库/自启（需 Ollama）
 .venv\Scripts\python tests\test_ai_classify.py  # AI 分类实测
 .venv\Scripts\python tests\test_rag.py          # 知识库端到端

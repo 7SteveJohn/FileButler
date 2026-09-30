@@ -29,6 +29,35 @@ class OllamaNotRunning(Exception):
     pass
 
 
+def http_error_detail(e):
+    """从 requests.HTTPError 里抠出服务端的错误说明。
+
+    OpenAI 兼容服务 4xx 的 body 通常是 {"error":{"message":...}} 或纯文本，
+    只报「400 Bad Request」等于让用户盲猜是模型名、密钥还是参数的问题。
+    """
+    resp = getattr(e, "response", None)
+    if resp is None:
+        return str(e)
+    detail = ""
+    try:
+        data = resp.json()
+        if isinstance(data, dict):
+            err = data.get("error")
+            if isinstance(err, dict):
+                detail = str(err.get("message") or err)
+            elif err is not None:
+                detail = str(err)
+            else:
+                detail = str(data.get("message") or data)
+    except Exception:
+        try:
+            detail = (resp.text or "").strip()
+        except Exception:
+            detail = ""
+    detail = (detail or "").strip()[:300]
+    return f"HTTP {resp.status_code}: {detail or getattr(resp, 'reason', '') or '请求被拒绝'}"
+
+
 class OllamaClient:
     def __init__(self, host=None):
         self.host = host or db.get_setting("ollama_host", DEFAULT_HOST).rstrip("/")
@@ -121,6 +150,13 @@ class OllamaClient:
 
     # ---------- 对话 ----------
 
+    def _keep_alive(self):
+        """模型常驻时长。Ollama 默认空闲 5 分钟就把模型踢出显存/内存，
+        下一次请求要重新载入（大模型几十秒）——这是「连上 Ollama 也慢」的
+        主因。这里默认 30m，让对话与向量模型都留在显存里，随叫随到。
+        可用设置项 ollama_keep_alive 覆盖（如 "5m"、"1h"、"-1" 永久）。"""
+        return db.get_setting("ollama_keep_alive", "30m") or "30m"
+
     def chat(self, messages, stream_cb=None, options=None, think=False, model=None):
         """同步对话；stream_cb(token) 逐 token 回调，返回完整文本。
         think=False 关闭思考模式（qwen3 系模型思考会吃掉 num_predict 配额）。
@@ -130,22 +166,27 @@ class OllamaClient:
             "messages": messages,
             "stream": bool(stream_cb),
             "think": bool(think),
+            "keep_alive": self._keep_alive(),
         }
         if options:
             payload["options"] = options
         s = _session_for(self.host)
         try:
             r = s.post(f"{self.host}/api/chat", json=payload,
-                       stream=bool(stream_cb), timeout=600)
+                       stream=bool(stream_cb), timeout=(5, 600))
             r.raise_for_status()
-        except requests.HTTPError:
-            if "think" in payload:  # 老版本/不支持 think 的模型：去掉参数重试
+        except requests.HTTPError as e:
+            if "think" in payload and e.response is not None and e.response.status_code == 400:
+                # 老版本/不支持 think 的模型：去掉参数重试
                 payload.pop("think")
                 r = s.post(f"{self.host}/api/chat", json=payload,
-                           stream=bool(stream_cb), timeout=600)
-                r.raise_for_status()
+                           stream=bool(stream_cb), timeout=(5, 600))
+                try:
+                    r.raise_for_status()
+                except requests.HTTPError as e2:
+                    raise requests.HTTPError(http_error_detail(e2)) from e2
             else:
-                raise
+                raise requests.HTTPError(http_error_detail(e)) from e
         if not stream_cb:
             msg = r.json()["message"]
             content = msg.get("content") or ""
@@ -177,8 +218,9 @@ class OllamaClient:
             try:
                 r = s.post(
                     f"{self.host}/api/embed",
-                    json={"model": self.embed_model(), "input": chunk},
-                    timeout=600,
+                    json={"model": self.embed_model(), "input": chunk,
+                          "keep_alive": self._keep_alive()},
+                    timeout=(5, 600),
                 )
                 r.raise_for_status()
                 vectors.extend(r.json()["embeddings"])
@@ -186,15 +228,32 @@ class OllamaClient:
                 for t in chunk:  # 老版本 Ollama 无 /api/embed
                     r = s.post(
                         f"{self.host}/api/embeddings",
-                        json={"model": self.embed_model(), "prompt": t},
-                        timeout=300,
+                        json={"model": self.embed_model(), "prompt": t,
+                              "keep_alive": self._keep_alive()},
+                        timeout=(5, 300),
                     )
-                    r.raise_for_status()
+                    try:
+                        r.raise_for_status()
+                    except requests.HTTPError as e:
+                        raise requests.HTTPError(http_error_detail(e)) from e
                     vectors.append(r.json()["embedding"])
         return vectors
 
     def embed_one(self, text):
         return self.embed([text])[0]
+
+    def preload_models(self):
+        """把对话与向量模型提前载入显存/内存并保持常驻（启动后台调用）。
+        只带 model + keep_alive 的 /api/generate 请求即「仅加载不生成」。
+        顺序：先对话模型（首问零等待），再向量模型。"""
+        s = _session_for(self.host)
+        for model in dict.fromkeys([self.chat_model(), self.embed_model()]):
+            try:
+                s.post(f"{self.host}/api/generate",
+                       json={"model": model, "keep_alive": self._keep_alive()},
+                       timeout=(5, 300))
+            except Exception:
+                pass  # 预载失败不打扰启动，首次真实请求会照常加载
 
     # ---------- 模型管理 ----------
 
@@ -203,7 +262,10 @@ class OllamaClient:
         s = _session_for(self.host)
         r = s.post(f"{self.host}/api/pull", json={"name": model, "stream": True},
                    stream=True, timeout=None)
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            raise requests.HTTPError(http_error_detail(e)) from e
         for line in r.iter_lines():
             if not line:
                 continue
@@ -261,10 +323,14 @@ class OllamaClient:
                 "stream": False,
                 "think": False,
                 "options": {"temperature": 0.1, "num_predict": 300},
+                "keep_alive": self._keep_alive(),
             },
-            timeout=300,
+            timeout=(5, 300),
         )
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            raise requests.HTTPError(http_error_detail(e)) from e
         msg = r.json()["message"]
         content = (msg.get("content") or "").strip()
         desc, ocr = content, ""

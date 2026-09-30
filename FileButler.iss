@@ -9,10 +9,10 @@
 ;   注意 Inno 可能是 per-user 安装，别只查 Program Files
 ; 产物：installer\FileButler-Setup-<版本>.exe
 ;
-; 版本号需与 backend/__init__.py 的 __version__ 手工同步（英文变体在 FileButler-en.iss）
+; 版本号需与 backend/__init__.py 的 __version__ 手工同步
 
 #define MyAppName "FileButler"
-#define MyAppVersion "1.1.6"
+#define MyAppVersion "1.2.0"
 #define MyAppExeName "FileButler.exe"
 
 [Setup]
@@ -67,6 +67,24 @@ begin
   Result := ExpandConstant('{userappdata}\FileButler');
 end;
 
+// 读取指针里「生效中」的数据目录；返回 '' 表示没有或读不出来。
+// 指针由应用按 UTF-8 写入，Inno 按 ANSI 解码，含中文的路径可能读成乱码；
+// 用目录存在性兜底：读出来不是有效目录就当没读到，页面退回默认值。
+// （纯 ASCII 路径如 F:\filebutler 不受影响，这正是绝大多数场景）
+function ExistingDataDir: String;
+var
+  Raw: AnsiString;
+  S: String;
+begin
+  Result := '';
+  if not HadPointer then Exit;
+  if LoadStringFromFile(PointerFile, Raw) then begin
+    S := Trim(string(Raw));
+    if (S <> '') and DirExists(S) then
+      Result := S;
+  end;
+end;
+
 // 去掉末尾反斜杠再比较，否则 "D:\FB" 和 "D:\FB\" 会被当成两个不同位置
 function StripTrailing(const S: String): String;
 begin
@@ -76,6 +94,8 @@ begin
 end;
 
 procedure InitializeWizard;
+var
+  Existing: String;
 begin
   HadPointer := FileExists(PointerFile);
   DataDirPage := CreateInputDirPage(wpSelectDir,
@@ -85,31 +105,47 @@ begin
     + #13#10 + '装完之后也能在应用内「设置 → 数据存储位置」随时迁移，改错了不会丢数据。',
     False, DefaultDataDir);
   DataDirPage.Add('数据目录：');
-  DataDirPage.Values[0] := DefaultDataDir;
-  // 已有指针说明这不是全新安装：绝不能用本次选择去覆盖用户既有的数据位置，
-  // 所以只在 CurStepChanged 里靠 HadPointer 判断，页面上不做任何破坏性动作
+  if HadPointer then begin
+    // 更新安装：预填当前生效的数据目录，而不是每次都默认 C 盘——
+    // 用户不会一直挪数据库位置，升级时应当原样保持，除非他主动改。
+    // 页面只做展示与可选修改，真正写不写指针仍由 EffectiveDataDir 判断
+    DataDirPage.Description :=
+      '检测到已有数据目录（下面已填好）。直接「下一步」保持不变，'
+      + #13#10 + '数据库和缩略图不会被移动或改动。'
+      + #13#10 + '只有把目录改成别的位置，安装器才会切换数据目录。';
+    Existing := ExistingDataDir;
+    if Existing <> '' then
+      DataDirPage.Values[0] := Existing
+    else
+      DataDirPage.Values[0] := DefaultDataDir;
+  end else
+    DataDirPage.Values[0] := DefaultDataDir;
 end;
 
 // 本次安装最终要写入的目录；返回 '' 表示不动指针。
+// 原则：页面/参数的值与「现状」相同 = 不动指针，只有主动给了新位置才写。
 // 无人值守安装不能拿页面上的值当"用户的选择"：真正无人值守时根本没人做过这个选择；
 // 而"以为自己是静默、其实不是"的情况更危险——/VERYSILENT 会被 Git Bash 改写成本地路径，
 // 向导于是照样弹出来，页面上留的是坐在屏幕前那个人填的值，跟调用方的意图无关。
-// 两种情况下写指针都等于替用户做决定，所以静默模式只认显式的 /DATADIR= 参数。
+// 静默模式只认显式的 /DATADIR= 参数（显式传参 = 明确要迁移，已有指针也生效）。
 function EffectiveDataDir: String;
 var
-  Param, Chosen: String;
+  Param, Chosen, Effective: String;
 begin
   Result := '';
-  if HadPointer then Exit;
   Param := ExpandConstant('{param:datadir|}');
   if WizardSilent then
   begin
-    Result := Param;
+    if Param <> '' then Result := Param;
     Exit;
   end;
   Chosen := DataDirPage.Values[0];
   if Param <> '' then Chosen := Param;
-  if CompareText(StripTrailing(Chosen), StripTrailing(DefaultDataDir)) = 0 then Exit;
+  // 与「生效中」的目录相同 → 不动指针；无指针时选了默认目录同理，也不用写
+  Effective := ExistingDataDir;
+  if Effective = '' then
+    Effective := DefaultDataDir;
+  if CompareText(StripTrailing(Chosen), StripTrailing(Effective)) = 0 then Exit;
   Result := Chosen;
 end;
 
@@ -122,7 +158,7 @@ begin
   Target := EffectiveDataDir;
   if Target = '' then begin
     if HadPointer then
-      Log('检测到已有 datadir.txt，保持用户原有的数据目录设置')
+      Log('检测到已有 datadir.txt，页面预填了当前数据目录；与现状相同则指针不动')
     else if WizardSilent then
       Log('无人值守安装且未指定 /DATADIR，数据目录沿用默认位置')
     else

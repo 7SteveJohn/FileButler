@@ -2,6 +2,8 @@
 
 安全边界：
 - 只绑定 127.0.0.1，随机端口
+- Host 头必须指向回环地址（防 DNS rebinding：把恶意域名解析到 127.0.0.1
+  后，浏览器发出的请求 Host 是那个域名，会被拒）
 - 只接受 /thumb?p=<编码路径>，路径必须在监控根目录白名单内
 - 只从缓存目录回文件，原始图片仅用于生成缩略图
 """
@@ -23,10 +25,23 @@ def thumb_dir():
 THUMB_SIZE = 256
 MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024  # 2GB
 _gen_lock = threading.Lock()
+_path_locks = {}  # 缓存路径 -> 生成锁（同图并发请求只生成一次）
+
+
+def _lock_for(cache_path):
+    with _gen_lock:
+        lk = _path_locks.get(cache_path)
+        if lk is None:
+            if len(_path_locks) > 4096:  # 锁对象很小，超限整表换新即可
+                _path_locks.clear()
+            lk = threading.Lock()
+            _path_locks[cache_path] = lk
+        return lk
 
 
 def _cache_path(src_path, mtime):
-    key = hashlib.sha1(f"{os.path.normcase(src_path)}|{int(mtime)}".encode("utf-8")).hexdigest()
+    # sha256 仅作缓存键命名（非加密用途）；换算法后旧缓存名失配，按需重生成即可
+    key = hashlib.sha256(f"{os.path.normcase(src_path)}|{int(mtime)}".encode("utf-8")).hexdigest()
     return os.path.join(thumb_dir(), key + ".jpg")
 
 
@@ -35,26 +50,28 @@ def generate_thumb(src_path):
     try:
         st = os.stat(src_path)
         cache = _cache_path(src_path, st.st_mtime)
-        if os.path.exists(cache):
-            return cache
     except OSError:
         return None
-
-    try:
-        from PIL import Image, ImageOps
-        with Image.open(src_path) as im:
-            im = ImageOps.exif_transpose(im)   # EXIF 方向矫正
-            if im.mode not in ("RGB", "L"):
-                im = im.convert("RGB")
-            im.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.LANCZOS)
-            os.makedirs(thumb_dir(), exist_ok=True)
-            tmp = cache + ".tmp"
-            im.save(tmp, "JPEG", quality=75)
-            os.replace(tmp, cache)
-        _maybe_cleanup()
+    if os.path.exists(cache):
         return cache
-    except Exception:
-        return None
+    with _lock_for(cache):
+        if os.path.exists(cache):  # 等锁期间别的请求可能已生成
+            return cache
+        try:
+            from PIL import Image, ImageOps
+            with Image.open(src_path) as im:
+                im = ImageOps.exif_transpose(im)   # EXIF 方向矫正
+                if im.mode not in ("RGB", "L"):
+                    im = im.convert("RGB")
+                im.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.LANCZOS)
+                os.makedirs(thumb_dir(), exist_ok=True)
+                tmp = cache + ".tmp"
+                im.save(tmp, "JPEG", quality=75)
+                os.replace(tmp, cache)
+            _maybe_cleanup()
+            return cache
+        except Exception:
+            return None
 
 
 def _system_icon_png(ext):
@@ -174,7 +191,22 @@ def _maybe_cleanup():
 class _Handler(BaseHTTPRequestHandler):
     server_version = "FBThumb/1.0"
 
+    def _host_ok(self):
+        """Host 头必须指向回环地址。服务虽只绑 127.0.0.1，但 DNS rebinding
+        可以把恶意域名解析到 127.0.0.1，请求照达——校验 Host 才能拒掉它。"""
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return False
+        if host.startswith("["):          # IPv6 字面量 [::1]:port
+            h = host.split("]", 1)[0].lstrip("[")
+        else:
+            h = host.rsplit(":", 1)[0]    # 去掉端口
+        return h in ("127.0.0.1", "localhost", "::1")
+
     def do_GET(self):
+        if not self._host_ok():
+            self.send_error(403)
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/thumb":
             self._serve_thumb(parse_qs(parsed.query))
@@ -238,13 +270,17 @@ class _Handler(BaseHTTPRequestHandler):
             if size > 100 * 1024 * 1024:
                 self.send_error(413)
                 return
-            with open(src, "rb") as f:
-                data = f.read()
             self.send_response(200)
             self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Length", str(size))
             self.end_headers()
-            self.wfile.write(data)
+            with open(src, "rb") as f:
+                # 分块发送：整文件读进内存（最大 100MB）纯属浪费
+                while True:
+                    chunk = f.read(1 << 20)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
         except OSError:
             self.send_error(404)
 

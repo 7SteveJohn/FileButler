@@ -9,11 +9,19 @@ import time
 import requests
 
 from backend import db
-from backend.ollama_client import OllamaClient
+from backend.ollama_client import OllamaClient, http_error_detail
 
 # 常见 OpenAI 兼容服务商（填到 /v1 或等价路径为止）
-# models: 该服务商 2026-08 在售推荐模型（name 用于自动填充，note 为说明）
+# models: 该服务商在售推荐模型（name 用于自动填充，note 为说明）
+# local: 本机服务，无需密钥，请求必须绕过系统代理
+LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
 API_PRESETS = [
+    {"label": "LM Studio（本机）", "value": LMSTUDIO_BASE, "local": True,
+     "models": []},
+    # 各家模型 id 随版本漂移（v2.5/v2.6/flash/pro 命名各家文章说法不一），
+    # 不硬编码：预设只填地址，模型一律走「拉取模型列表」从服务端取真实 id
+    {"label": "小米 MiMo", "value": "https://api.xiaomimimo.com/v1",
+     "models": []},
     {"label": "DeepSeek", "value": "https://api.deepseek.com/v1",
      "models": [
          {"name": "deepseek-chat", "note": "V4-Pro 通用（峰谷计价，闲时半价）"},
@@ -83,6 +91,25 @@ def _norm_endpoint(base, path):
     return base + path
 
 
+# 本机直连 session：与 Ollama 客户端同理，系统代理会把 127.0.0.1 的请求
+# 也转出去，LM Studio 明明在本机却「连不上/等超时」。
+_local_session = requests.Session()
+_local_session.trust_env = False
+
+
+def is_local_base(base):
+    """OpenAI 兼容端点是否指向本机（本机服务无需密钥）。"""
+    b = (base or "").lower()
+    for marker in ("//127.0.0.1", "//localhost", "//[::1]"):
+        if marker in b:
+            return True
+    return False
+
+
+def _session_for(base):
+    return _local_session if is_local_base(base) else requests
+
+
 class OpenAICompatClient:
     """OpenAI 兼容协议客户端（chat/completions + embeddings，支持 SSE 流式与视觉图片）。"""
 
@@ -95,11 +122,16 @@ class OpenAICompatClient:
     # ---- 基础 ----
 
     def _headers(self):
-        return {"Authorization": f"Bearer {self.key}",
-                "Content-Type": "application/json"}
+        # LM Studio 等本地服务不需要密钥：无密钥时干脆不发 Authorization，
+        # 避免把上一次配置的云端密钥发给本机服务
+        h = {"Content-Type": "application/json"}
+        if self.key:
+            h["Authorization"] = f"Bearer {self.key}"
+        return h
 
     def configured(self):
-        return bool(self.base and self.key and self._chat_model)
+        # 密钥可空：本机服务（LM Studio）不设密钥
+        return bool(self.base and self._chat_model)
 
     def chat_model(self):
         return self._chat_model
@@ -117,10 +149,14 @@ class OpenAICompatClient:
                 payload["temperature"] = options["temperature"]
             if "num_predict" in options:
                 payload["max_tokens"] = options["num_predict"]
-        r = requests.post(_norm_endpoint(self.base, "/chat/completions"),
-                          headers=self._headers(), json=payload,
-                          stream=bool(stream_cb), timeout=600)
-        r.raise_for_status()
+        r = _session_for(self.base).post(_norm_endpoint(self.base, "/chat/completions"),
+                                         headers=self._headers(), json=payload,
+                                         stream=bool(stream_cb), timeout=(10, 600))
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            # 把服务端的错误说明带出来（模型名/参数/密钥哪错了，body 里写得明白）
+            raise requests.HTTPError(http_error_detail(e)) from e
         if not stream_cb:
             data = r.json()
             return data["choices"][0]["message"].get("content") or ""
@@ -149,11 +185,15 @@ class OpenAICompatClient:
     def embed(self, texts, batch=32):
         vectors = []
         for i in range(0, len(texts), batch):
-            r = requests.post(_norm_endpoint(self.base, "/embeddings"),
-                              headers=self._headers(),
-                              json={"model": self._embed_model, "input": texts[i:i + batch]},
-                              timeout=600)
-            r.raise_for_status()
+            r = _session_for(self.base).post(_norm_endpoint(self.base, "/embeddings"),
+                                             headers=self._headers(),
+                                             json={"model": self._embed_model,
+                                                   "input": texts[i:i + batch]},
+                                             timeout=(10, 300))
+            try:
+                r.raise_for_status()
+            except requests.HTTPError as e:
+                raise requests.HTTPError(http_error_detail(e)) from e
             data = r.json()["data"]
             vectors.extend(d["embedding"] for d in sorted(data, key=lambda x: x["index"]))
         return vectors
@@ -204,6 +244,39 @@ def _split_desc_ocr(content):
 
 # ---------- 工厂与可用性 ----------
 
+def list_remote_models(base=None, key=""):
+    """拉取 OpenAI 兼容端点的模型列表（LM Studio / 云端服务商通用）。
+    返回 {"ok": bool, "models": [id]} 或 {"ok": False, "error": str}。"""
+    base = (base or api_base()).strip().rstrip("/")
+    if not base:
+        return {"ok": False, "error": "服务地址未填写"}
+    if not base.lower().startswith(("http://", "https://")):
+        return {"ok": False, "error": "服务地址必须以 http:// 或 https:// 开头"}
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    try:
+        r = _session_for(base).get(_norm_endpoint(base, "/models"),
+                                   headers=headers, timeout=(5, 15))
+        r.raise_for_status()
+        ids = [m.get("id", "") for m in r.json().get("data", [])]
+        return {"ok": True, "models": [i for i in ids if i]}
+    except requests.HTTPError as e:
+        return {"ok": False, "error": http_error_detail(e)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def detect_local():
+    """探测本机 Ollama(11434) 与 LM Studio(1234)，供设置页一键填入。"""
+    st = OllamaClient().status()
+    r = list_remote_models(LMSTUDIO_BASE, "")
+    return {
+        "ollama": {"running": st["running"], "models": st["models"],
+                   "chat_model": st.get("chat_model", "")},
+        "lmstudio": {"running": bool(r["ok"]), "base": LMSTUDIO_BASE,
+                     "models": r.get("models", [])},
+    }
+
+
 def get_chat_client():
     if mode() == "api":
         return OpenAICompatClient()
@@ -221,11 +294,12 @@ def chat_status():
     """{"ok": bool, "reason": str} —— 对话模型可用性。"""
     if mode() == "api":
         c = OpenAICompatClient()
-        if not (api_base() and api_key()):
-            return {"ok": False, "reason": "API 地址或密钥未配置"}
+        if not api_base():
+            return {"ok": False, "reason": "服务地址未配置"}
         if not c.chat_model():
-            return {"ok": False, "reason": "API 对话模型名未填写"}
-        return {"ok": True, "reason": "云端 API"}
+            return {"ok": False, "reason": "对话模型名未填写"}
+        return {"ok": True,
+                "reason": "本机服务" if is_local_base(api_base()) else "云端 API"}
     st = OllamaClient().status()
     if not st["running"]:
         return {"ok": False, "reason": "Ollama 未运行"}
@@ -246,11 +320,13 @@ def embed_status():
             return {"ok": False, "reason": "向量模型 bge-m3 未安装"}
         return {"ok": True, "reason": f"本地 · {oc.embed_model()}"}
     c = OpenAICompatClient()
-    if not (api_base() and api_key()):
-        return {"ok": False, "reason": "API 地址或密钥未配置"}
+    if not api_base():
+        return {"ok": False, "reason": "服务地址未配置"}
     if not c.embed_model():
-        return {"ok": False, "reason": "云端向量模型名未填写（或改用本地 bge-m3）"}
-    return {"ok": True, "reason": f"云端 · {c.embed_model()}"}
+        return {"ok": False, "reason": "向量模型名未填写（或改用本地 bge-m3）"}
+    return {"ok": True,
+            "reason": ("本机 · " if is_local_base(api_base()) else "云端 · ")
+                      + c.embed_model()}
 
 
 def chat_available():
@@ -271,14 +347,24 @@ def provider_summary():
 
 
 def test_chat():
-    """连通性测试：发一句极短请求，返回延迟与回复。"""
+    """连通性测试：发一句极短请求，返回延迟与回复。
+    不带 temperature：部分兼容服务对精确 0 也报 400，连通性测试没必要带它。
+    失败且是 API 模式时，顺带拉一次 /models 把该服务真实支持的模型 id 列出来——
+    「Unsupported model xxx」十有八九是模型名和它家的叫法对不上，光报错解决不了。"""
     t0 = time.time()
     try:
         client = get_chat_client()
         reply = client.chat([{"role": "user", "content": "回复两个字：已连通"}],
-                            options={"temperature": 0, "num_predict": 20}, think=False)
+                            options={"num_predict": 20}, think=False)
         return {"ok": True, "latency_ms": int((time.time() - t0) * 1000),
                 "reply": reply.strip()[:60], "provider": chat_status()["reason"]}
     except Exception as e:
-        return {"ok": False, "error": str(e)[:200],
+        err = str(e)
+        if mode() == "api" and api_base():
+            r = list_remote_models()
+            if r.get("ok") and r.get("models"):
+                ids = r["models"]
+                shown = "、".join(ids[:8]) + ("…" if len(ids) > 8 else "")
+                err += f"\n该服务可用模型（{len(ids)} 个）：{shown}"
+        return {"ok": False, "error": err[:400],
                 "latency_ms": int((time.time() - t0) * 1000)}

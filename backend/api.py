@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import quote as _urlquote
 
 import webview
 
@@ -107,6 +108,8 @@ class Api:
         self._restart_handler = None  # main.py 注入：真正执行重启的收尾函数
         self._hide_to_tray_handler = None  # main.py 注入：隐藏到托盘
         self._win_maximized = False  # 最大化状态（由 pywebview 事件维护）
+        self._scan_stop = threading.Event()  # 恢复备份/搬迁前叫停全量扫描
+        self._scan_thread = None     # 在飞的全量扫描线程（配合 _scan_stop 等它退出）
 
     def set_window(self, window):
         self._window = window
@@ -258,9 +261,17 @@ class Api:
             print("pending dir cleanup error:", e)
 
     def _warm_status(self):
-        """后台预热 Ollama 状态缓存（30s TTL 的第一次探测）。"""
+        """后台预热 Ollama 状态缓存（30s TTL 的第一次探测）。
+        设置开启时顺带把对话/向量模型预载进显存（配合 keep_alive 常驻），
+        首次问答/向量化不再等几十秒的模型载入。"""
         try:
             OllamaClient().status()
+        except Exception:
+            pass
+        try:
+            if db.get_setting("ollama_preload", "0") == "1":
+                threading.Thread(target=OllamaClient().preload_models,
+                                 daemon=True, name="fb-preload-models").start()
         except Exception:
             pass
 
@@ -386,6 +397,7 @@ class Api:
 
     def rescan_library(self, after=None):
         """后台全量扫描（启动时与手动刷新时调用）。after: 扫描完成后的回调。"""
+        self._scan_stop.clear()
 
         def worker():
             self._lower_thread_priority()  # 扫描 65 万+文件不应抢占前台 CPU
@@ -396,7 +408,7 @@ class Api:
                     self._emit("lib_scan_progress", {"stage": stage, "i": i, "n": n,
                                                      "detail": detail})
 
-                result = fileindex.full_scan(cb)
+                result = fileindex.full_scan(cb, stop_event=self._scan_stop)
                 db.set_setting("last_full_scan_at", str(time.time()))
                 self._dir_tree_cache = [0.0, False, {"tree": []}]  # 扫描后目录树/空间缓存失效
                 self._space_cache.clear()
@@ -405,11 +417,42 @@ class Api:
                                              "stats": fileindex.index_stats()})
                 if after:
                     after()
+            except fileindex.ScanCancelled:
+                self._emit("lib_scan_error", "扫描已被取消（恢复备份/搬迁数据目录）")
             except Exception as e:
                 self._emit("lib_scan_error", str(e))
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._scan_thread = threading.Thread(target=worker, daemon=True,
+                                             name="fb-rescan")
+        self._scan_thread.start()
         return {"started": True}
+
+    def _stop_background_writers(self):
+        """恢复备份/搬迁数据目录前停掉所有会写库的后台任务：
+        watcher（含在飞的自动知识库/图片钩子线程）、全量扫描、内容索引。
+        这些任务写库到一半时覆盖/复制库文件，会产生撕裂副本。"""
+        self._scan_stop.set()
+        try:
+            contentindex.stop()
+        except Exception:
+            pass
+        if self.watch_engine:
+            try:
+                self.watch_engine.stop()  # 内部会等在飞的钩子线程收尾
+            except Exception:
+                pass
+        t = self._scan_thread
+        if t and t.is_alive():
+            t.join(timeout=15)
+        self._scan_stop.clear()
+
+    def _restart_watch_engine(self):
+        """恢复/搬迁失败后把监控重新拉起来（成功路径反正要重启应用，不用管）。"""
+        if self.watch_engine:
+            try:
+                self.watch_engine.start()
+            except Exception:
+                pass
 
     # ---------- 全盘内容索引（正文进 FTS；默认不自动跑，设置页手动启动） ----------
 
@@ -510,22 +553,43 @@ class Api:
 
     def save_llm_provider(self, mode, api_base="", api_key="", chat_model="",
                           embed_source="follow", embed_model=""):
-        """保存接入配置。mode: ollama|api；embed_source: follow|ollama|api。"""
+        """保存接入配置。mode: ollama|api；embed_source: follow|ollama|api。
+        密钥对云端必填；本机服务（LM Studio 等）不需要，留空即可。"""
         from backend import llm as llm_mod
         if mode not in ("ollama", "api"):
             return {"ok": False, "error": "无效模式"}
-        if mode == "api" and not (api_base.strip() and api_key.strip() and chat_model.strip()):
-            return {"ok": False, "error": "API 模式需要填写服务地址、密钥和对话模型名"}
+        if embed_source not in ("follow", "ollama", "api"):
+            return {"ok": False, "error": "无效的向量化来源"}
+        base = api_base.strip().rstrip("/")
+        if mode == "api":
+            if not (base and chat_model.strip()):
+                return {"ok": False, "error": "API 模式需要填写服务地址和对话模型名"}
+            if not base.lower().startswith(("http://", "https://")):
+                return {"ok": False, "error": "服务地址必须以 http:// 或 https:// 开头"}
+            if not llm_mod.is_local_base(base) and not api_key.strip():
+                return {"ok": False,
+                        "error": "云端服务需要填写密钥（本机服务如 LM Studio 可留空）"}
         if embed_source == "api" and not embed_model.strip():
-            return {"ok": False, "error": "云端向量化需要填写向量模型名（或改用本地 bge-m3）"}
+            return {"ok": False, "error": "API 向量化需要填写向量模型名（或改用本地 bge-m3）"}
         db.set_setting("llm_mode", mode)
         db.set_setting("embed_source", embed_source)
-        db.set_setting("api_base", api_base.strip().rstrip("/"))
+        db.set_setting("api_base", base)
         if api_key.strip():
             db.set_setting("api_key", api_key.strip())  # 不填则保留原密钥
         db.set_setting("api_chat_model", chat_model.strip())
         db.set_setting("api_embed_model", embed_model.strip())
         return {"ok": True, "summary": llm_mod.provider_summary()}
+
+    def list_api_models(self, base="", key=""):
+        """拉取 OpenAI 兼容端点的模型列表（LM Studio / 云端服务商），
+        供设置页下拉选择对话/向量模型。"""
+        from backend import llm as llm_mod
+        return llm_mod.list_remote_models(base or None, key or None)
+
+    def detect_local_llm(self):
+        """探测本机 Ollama(11434) / LM Studio(1234)，供设置页一键填入。"""
+        from backend import llm as llm_mod
+        return llm_mod.detect_local()
 
     def test_llm_provider(self):
         from backend import llm as llm_mod
@@ -550,6 +614,8 @@ class Api:
             "ollama": client.status(),
             "chat_model": client.chat_model(),
             "embed_model": client.embed_model(),
+            "ollama_keep_alive": db.get_setting("ollama_keep_alive", "30m"),
+            "ollama_preload": db.get_setting("ollama_preload", "0") == "1",
             "kb": db.stats(),
             "winocr": winocr_status,
             "images_by_year": db.get_setting("images_by_year", "1"),
@@ -1375,11 +1441,15 @@ class Api:
 
     # ---------- Ollama 管理 ----------
 
-    def save_ollama_settings(self, host, chat_model):
+    def save_ollama_settings(self, host, chat_model, keep_alive="", preload=None):
         if host:
             db.set_setting("ollama_host", host.rstrip("/"))
         if chat_model:
             db.set_setting("chat_model", chat_model)
+        if keep_alive:
+            db.set_setting("ollama_keep_alive", keep_alive)
+        if preload is not None:
+            db.set_setting("ollama_preload", "1" if preload else "0")
         return {"ok": True}
 
     def recommend_model(self):
@@ -1837,17 +1907,19 @@ class Api:
         mode=move：搬迁成功并重启后自动删除旧目录，不占双份空间。
         （删除放到下次启动执行：本进程还握着旧库文件句柄，立即删必失败）"""
         try:
-            # 先停写入源，缩小搬迁窗口
-            if self.watch_engine:
-                self.watch_engine.stop()
+            # 停掉 watcher / 全量扫描 / 内容索引，复制期间不能有任何写库
+            self._stop_background_writers()
             result = db.switch_data_dir(
                 new_dir, overwrite=overwrite, mode=mode,
                 on_status=lambda m: self._emit("data_switch_status", m))
+            if not result.get("ok"):
+                self._restart_watch_engine()  # 失败要把监控恢复，否则索引静默停摆
             if result.get("ok"):
                 result["need_restart"] = True
                 result["mode"] = mode
             return result
         except Exception as e:
+            self._restart_watch_engine()
             return {"ok": False, "error": str(e)}
 
     def reset_data_dir(self, overwrite=False):
@@ -1899,20 +1971,23 @@ class Api:
     # ---------- 内置文件预览 ----------
 
     def preview_file(self, path):
-        """返回预览信息：text/markdown/pdf/image/unknown。"""
+        """返回预览信息：text/markdown/pdf/image/unknown。
+        URL 里的路径必须 quote：文件名含 & # ? 空格时原样拼接会被
+        服务端截断成残缺 query，预览白屏。"""
         from backend.core.scanner import TEXT_EXTS
         ext = os.path.splitext(path)[1].lstrip(".").lower()
         base = f"{self.thumb.port}" if self.thumb.port else "0"
+        p = _urlquote(path, safe="")
         if ext == "pdf":
             return {"type": "pdf",
-                    "url": f"http://127.0.0.1:{base}/preview?p={path}"}
+                    "url": f"http://127.0.0.1:{base}/preview?p={p}"}
         if ext in fileindex.IMAGE_EXTS:
             return {"type": "image",
-                    "url": f"http://127.0.0.1:{base}/preview?p={path}"}
+                    "url": f"http://127.0.0.1:{base}/preview?p={p}"}
         if ext in ("mp4", "m4v", "webm", "mov"):
             # 浏览器可直接解码的容器才给内置播放（mkv/avi 不支持，走系统打开）
             return {"type": "video",
-                    "url": f"http://127.0.0.1:{base}/preview?p={path}"}
+                    "url": f"http://127.0.0.1:{base}/preview?p={p}"}
         if ext in ("docx", "xlsx", "pptx"):
             try:
                 from backend import office_preview
@@ -2066,7 +2141,13 @@ class Api:
         return {"backups": db.list_backups()}
 
     def restore_backup(self, backup_path):
-        return db.restore_backup(backup_path)
+        """恢复备份：先停掉 watcher/扫描/内容索引（恢复期间不能有任何写库），
+        失败时把监控拉起来；成功则 need_restart，应用随重启收尾。"""
+        self._stop_background_writers()
+        result = db.restore_backup(backup_path)
+        if not result.get("ok"):
+            self._restart_watch_engine()
+        return result
 
     # ---------- 数据库维护 ----------
 
