@@ -224,11 +224,3 @@ cd frontend && npm run build && cd ..
 ```
 
 </details>
-
-## 路线图
-
-功能规划、已完成项与搁置项见 [ROADMAP.md](ROADMAP.md)。
-
----
-
-<div align="center"><sub>本地运行 · 无 API Key · 无订阅 · 你的文件始终是你的</sub></div>
