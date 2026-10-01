@@ -5,8 +5,8 @@
   <p>
     <a href="https://github.com/7SteveJohn/FileButler/releases/latest"><img src="https://img.shields.io/github/v/release/7SteveJohn/FileButler?color=4f8cff&label=release" alt="release"></a>
     <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white" alt="platform">
-    <img src="https://img.shields.io/badge/data-100%25%20local-2ea44f" alt="local">
-    <img src="https://img.shields.io/badge/API%20Key-not%20required-orange" alt="no api key">
+    <img src="https://img.shields.io/badge/data-local%20first-2ea44f" alt="local first">
+    <img src="https://img.shields.io/badge/LLM-Ollama%20%2F%20OpenAI%20compatible-4f8cff" alt="llm backends">
   </p>
   <p>
     <a href="https://github.com/7SteveJohn/FileButler/releases/latest"><b>↓ 下载安装包</b></a>
@@ -20,15 +20,16 @@
 
 FileButler 是一个**完全跑在你自己电脑上**的文件管家：替你记住硬盘里有什么、让你用大白话找到文件、把文档变成能问答的知识库，并且在**动你文件之前先给你看一遍**。
 
-不需要任何 API Key，不花一分钱——AI 能力由本机 [Ollama](https://ollama.com) 免费开源模型提供。不满足条件时也能用：没装 Ollama，规则整理 + 关键词搜索照常工作。
+AI 默认跑在你本机的 [Ollama](https://ollama.com) 开源模型上——数据不出机器、零成本；想换就换，LM Studio 或任意 OpenAI 兼容的云端 API 都支持，模型和后端由你自己挑。
+不管有没有模型在跑，搜索、预览、整理、去重这些**都不依赖 AI**，照常能用。
 
 | 你现在的麻烦 | FileButler 的做法 |
 |---|---|
 | 找一份三个月前的 PDF，只记得大概写了什么 | 文件名、正文、图片文字一起搜；也可以直接问「那份报价单里写了什么」 |
-| 想让 AI 读自己的文档，但不想上传到别人服务器 | 文档在本机解析、切块、向量化，本地模型作答，数据一步不出电脑 |
+| 想让 AI 读自己的文档，但不想上传到别人服务器 | 文档在本机解析、切块、向量化，默认由本地模型作答，数据不离开电脑 |
 | 文件夹乱得不敢动，怕一整理就找不到 | 先出整理方案 → 逐条预览勾选 → 执行 → 不满意一键撤销 |
 | 重复文件删完才后悔 | **不删除**，移进「待清理」文件夹，随时还原 |
-| 装个 AI 又要账号又要充值 | 本地模型零成本，密钥一个都不用填 |
+| 装个 AI 又要账号又要充值 | 默认用本机开源模型，零成本；想接 LM Studio 或云端 API 也随你 |
 
 ## 30 秒上手
 
@@ -81,8 +82,8 @@ FileButler 是一个**完全跑在你自己电脑上**的文件管家：替你�
 
 ### 🔒 隐私
 
-- 数据全部存本机 SQLite，不访问任何云端服务
-- 云端 API **可选**：密钥仅保存在本机，界面打码不回显，保存前可「测试连接」验证
+- 数据全部存本机 SQLite；默认不联网
+- 云端 API **可选**：只有你主动填了，才会把提问文本发给你指定的服务商；密钥仅保存在本机，界面打码不回显，保存前可「测试连接」验证
 - 可以「对话走云端、向量化留本地」——省钱混搭，两者独立配置
 
 ## 界面一览
@@ -106,7 +107,7 @@ FileButler 是一个**完全跑在你自己电脑上**的文件管家：替你�
 不必须。搜索语法、预览、重复检测、规则整理、Windows 内置 OCR 都不依赖模型；只有「问答、自然语言搜索、AI 分类」需要。
 
 **会把我的文件传上网吗？**
-不会。默认全程本地。只有你自己在设置里填了云端 API 地址，才会把**你问的那段文字**发出去，文件本身不上传。
+默认不会——走本机模型时数据不离开电脑。只有你自己在设置里填了云端 API 地址，才会把**你问的那段文字**发给你指定的服务商；文件本身始终不上传。
 
 **整理文件会不会把文件弄丢？**
 不会静默移动。所有移动先出计划给你逐条勾选；执行后写日志，可按批次撤销；目标重名自动改 `(1)`、`(2)`，绝不覆盖；重复文件只移进「待清理」，不删除。
