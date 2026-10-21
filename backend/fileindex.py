@@ -42,31 +42,42 @@ CREATE INDEX IF NOT EXISTS idx_fi_category ON file_index(category);
 IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "tiff", "ico", "svg"}
 
 
-def _ensure_stats_index_async():
-    """后台补建统计覆盖索引（idx_fi_stats）。
+# 加速索引：(名字, 表与列, 用途)。
+# - idx_fi_stats：Dashboard 的 COUNT/SUM/MAX/GROUP BY 只读索引，14.5s → 90ms
+# - idx_fi_mtime/size/name：文件页三种排序。没有它们 ORDER BY ... LIMIT 200
+#   要全表扫 33 万行（859MB 库冷缓存实测 60s+，就是「文件页一直转圈」）
+_EXTRA_INDEXES = (
+    ("idx_fi_stats", "file_index(category, size, mtime)"),
+    ("idx_fi_mtime", "file_index(mtime)"),
+    ("idx_fi_size", "file_index(size)"),
+    ("idx_fi_name", "file_index(name)"),
+)
 
-    Dashboard 的 COUNT / SUM(size) / MAX(mtime) / GROUP BY category 有了它只读
-    十几 MB 的索引，而不是扫 859MB 的表：实测 14.5s → 90ms。
-    老库首次升级要建索引（33 万行约 2s），放后台以免拖慢启动；
-    新库在空表上瞬间完成。"""
+
+def _ensure_indexes_async():
+    """后台补建加速索引。
+
+    老库首次升级要建索引（33 万行每个 2-3s），放后台以免拖慢启动；
+    新库在空表上瞬间完成。已存在则跳过，可反复调用。"""
     def run():
         try:
             conn = db.get_conn()
             try:
-                row = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_fi_stats'"
-                ).fetchone()
-                if row:
-                    return
-                conn.execute("CREATE INDEX idx_fi_stats ON file_index(category, size, mtime)")
-                conn.commit()
-                print("[index] stats covering index created")
+                existing = {r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index'")}
+                for name, target in _EXTRA_INDEXES:
+                    if name in existing:
+                        continue
+                    t0 = time.time()
+                    conn.execute(f"CREATE INDEX {name} ON {target}")
+                    conn.commit()
+                    print(f"[index] {name} created in {time.time()-t0:.1f}s")
             finally:
                 conn.close()
         except Exception as e:
-            print("[index] stats index failed:", e)
+            print("[index] ensure failed:", e)
 
-    threading.Thread(target=run, daemon=True, name="fb-stats-index").start()
+    threading.Thread(target=run, daemon=True, name="fb-extra-index").start()
 
 
 # ---------- 文件名拼音与照片拍摄时间（检索增强元数据） ----------
@@ -248,7 +259,7 @@ def ensure_default_roots():
         # file_index 表此刻才存在：全新安装时 init_db 里的 FTS 建表
         # 因表缺失被整体跳过，这里补建（老库幂等无副作用）
         db.ensure_fts()
-        _ensure_stats_index_async()
+        _ensure_indexes_async()
         n = conn.execute("SELECT COUNT(*) c FROM watch_roots").fetchone()["c"]
         now = time.time()
         added = False
