@@ -12,8 +12,14 @@
 ; 版本号需与 backend/__init__.py 的 __version__ 手工同步
 
 #define MyAppName "FileButler"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.3.1"
 #define MyAppExeName "FileButler.exe"
+
+; PyInstaller onedir 产物目录；可用 ISCC /DSourceDir="dist_132\FileButler" 覆盖，
+; 便于在不动 dist\FileButler 的前提下用新构建出包。
+#ifndef SourceDir
+#define SourceDir "dist\FileButler"
+#endif
 
 [Setup]
 AppId={{7F3A2B4C-5D6E-4F8A-9B0C-1D2E3F4A5B6C}
@@ -39,7 +45,7 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："
 
 [Files]
-Source: "dist\FileButler\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

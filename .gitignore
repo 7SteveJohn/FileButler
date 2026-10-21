@@ -3,20 +3,17 @@ __pycache__/
 *.pyc
 frontend/node_modules/
 frontend/dist/
-build/
-dist_app/
 .test_tmp/
 *.spec.bak
 .DS_Store
 
 # PyInstaller 输出与安装包（通过 GitHub Releases 分发，不进仓库）
-dist/
-dist_verify/
+# dist*/ 与 build*/ 同时覆盖 dist/ dist_verify/ dist_131/ build_verify/ 这类
+# 临时验证目录——一律不入库。
+dist*/
+build*/
 installer/
 output/
-
-# 验证打包的独立 workpath/distpath（与上面同性质，只是换了目录以避开正式产物）
-build_verify/
 
 # 本地测试截图与日志
 .test_*.png

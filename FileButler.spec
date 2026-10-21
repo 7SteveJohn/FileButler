@@ -26,6 +26,24 @@ for _pkg in ('winrt.runtime',
         pass
 
 
+def _is_winrt_msvcp(entry):
+    """winrt 包自带一份旧版 MSVCP140.dll，collect_all 会把它收到
+    _internal/winrt/ 下，和 PyInstaller 从 Python 环境收集到 _internal/
+    根的新版并存。winrt 的 .pyd 会优先加载同目录那份旧版，与
+    onnxruntime / tokenizers 用的运行库冲突，表现为启动瞬间
+    0xc0000005（v1.3.0 实测闪退，事件日志指向 winrt\\MSVCP140.dll）。
+    这里只保留根目录那份。"""
+    for part in entry[:2]:
+        if isinstance(part, str) and part.replace("\\", "/").lower().endswith(
+                "winrt/msvcp140.dll"):
+            return True
+    return False
+
+
+binaries = [b for b in binaries if not _is_winrt_msvcp(b)]
+datas = [d for d in datas if not _is_winrt_msvcp(d)]
+
+
 a = Analysis(
     ['main.py'],
     pathex=[],
@@ -40,6 +58,11 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
+
+# 依赖分析会把 winrt 的 .pyd 依赖的 MSVCP140.dll 复制到同目录
+# （_internal/winrt/），这一步发生在 Analysis 内部，所以必须在
+# a.binaries 上再过滤一次。TOC 元素是 (dest, src, typecode)。
+a.binaries = [b for b in a.binaries if not _is_winrt_msvcp(b)]
 
 exe = EXE(
     pyz,
