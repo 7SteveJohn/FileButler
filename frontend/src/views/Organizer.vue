@@ -78,7 +78,7 @@ async function scan() {
 const ambiguousFiles = computed(() =>
   (scanInfo.value?.files || []).filter((f) => !f.rule_hit))
 
-const scanColumns = [
+const scanColumns = computed(() => [
   { title: t('org.colName'), key: 'name', ellipsis: { tooltip: (r) => r.ai_reason || r.name } },
   { title: t('org.colCategory'), key: 'category', width: 110, render: (r) => h(NTag, {
       size: 'small', bordered: false,
@@ -86,7 +86,7 @@ const scanColumns = [
     }, { default: () => r.final_category || r.category }) },
   { title: t('org.colExt'), key: 'ext', width: 90, render: (r) => h('span', { class: 'mono' }, r.ext || '-') },
   { title: t('org.colSize'), key: 'size', width: 100, render: (r) => fmtSize(r.size) },
-]
+])
 
 async function runAiClassify() {
   if (ambiguousFiles.value.length === 0) return message.info(t('org.msgNoAmbiguous'))
@@ -128,12 +128,12 @@ async function buildPlan() {
   executing.value = false
 }
 
-const planColumns = [
+const planColumns = computed(() => [
   { type: 'selection' },
   { title: t('org.colSrc'), key: 'src', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.src) },
   { title: t('org.colDst'), key: 'dst', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.dst || r.src) },
   { title: t('org.colCategory'), key: 'category', width: 110, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
-]
+])
 
 const planRows = computed(() => planData.value?.plan || [])
 
@@ -169,7 +169,7 @@ async function runDedupe() {
   dedupeRunning.value = false
 }
 
-const dedupeColumns = [
+const dedupeColumns = computed(() => [
   { title: t('org.colHash'), key: 'hash', width: 130, render: (r) => h('span', { class: 'mono' }, r.hash) },
   { title: t('org.colSize'), key: 'size', width: 90, render: (r) => fmtSize(r.size) },
   { title: t('org.colPaths'), key: 'paths', render: (r) =>
@@ -178,19 +178,19 @@ const dedupeColumns = [
       onClick: () => api('open_path', p),
       title: p,
     }, (i === 0 ? t('org.keepSuggest') : t('org.dupMark')) + p))) },
-]
+])
 
 // ---------- 重复清理 ----------
 const selectedDupGroups = ref([])
 const keepRule = ref('newest')
-const keepRuleOptions = [
+const keepRuleOptions = computed(() => [
   { label: t('org.keepNewest'), value: 'newest' },
   { label: t('org.keepOldest'), value: 'oldest' },
   { label: t('org.keepShortest'), value: 'shortest' },
-]
+])
 const cleaning = ref(false)
 
-const dedupeColumnsWithSelection = [{ type: 'selection' }, ...dedupeColumns]
+const dedupeColumnsWithSelection = computed(() => [{ type: 'selection' }, ...dedupeColumns.value])
 
 async function cleanupDuplicates() {
   const groups = dedupe.value.groups.filter((g) => selectedDupGroups.value.includes(g.hash))
@@ -238,7 +238,7 @@ async function runSimilar() {
   similarRunning.value = false
 }
 
-const simColumns = [
+const simColumns = computed(() => [
   { title: t('org.colSimPaths'), key: 'paths', render: (r) =>
     h('div', null, r.paths.map((p, i) => h('div', {
       style: 'display:flex;align-items:center;gap:10px;padding:2px 0;cursor:pointer',
@@ -254,9 +254,9 @@ const simColumns = [
         class: 'mono', style: 'font-size:12px;color:' + (i === 0 ? '#18a058' : '#888'),
       }, (i === 0 ? t('org.keepSuggest') : t('org.simMark')) + p),
     ]))) },
-]
+])
 
-const simColumnsWithSelection = [{ type: 'selection' }, ...simColumns]
+const simColumnsWithSelection = computed(() => [{ type: 'selection' }, ...simColumns.value])
 
 async function cleanupSimilar() {
   const groups = similar.value.groups.filter((g) => selectedSimGroups.value.includes(g.hash))
@@ -283,13 +283,13 @@ const bigFiles = ref(null)
 const bigRunning = ref(false)
 const bigChecked = ref([])
 const bigMinSize = ref('1gb')
-const bigSizeOptions = [
+const bigSizeOptions = computed(() => [
   { label: '> 1 GB', value: '1gb' },
   { label: '> 500 MB', value: '500mb' },
   { label: '> 100 MB', value: '100mb' },
   { label: '> 10 MB', value: '10mb' },
   { label: t('org.unlimited'), value: '' },
-]
+])
 
 async function findBigFiles() {
   bigRunning.value = true
@@ -308,7 +308,7 @@ const bigWaste = computed(() =>
     .filter((f) => bigChecked.value.includes(f.path))
     .reduce((s, f) => s + (f.size || 0), 0))
 
-const bigColumns = [
+const bigColumns = computed(() => [
   { type: 'selection' },
   { title: t('org.colSize'), key: 'size', width: 100, render: (r) => h('b', null, fmtSize(r.size)) },
   { title: t('org.colName'), key: 'name', ellipsis: { tooltip: true } },
@@ -317,7 +317,7 @@ const bigColumns = [
   { title: t('org.colPath'), key: 'path', ellipsis: { tooltip: true },
     render: (r) => h('span', { class: 'mono', style: 'cursor:pointer', title: t('org.colPath'),
       onClick: () => api('open_path', r.path) }, r.path) },
-]
+])
 
 async function trashBigFiles() {
   const paths = (bigFiles.value || []).filter((f) => bigChecked.value.includes(f.path)).map((f) => f.path)
@@ -345,7 +345,7 @@ async function findConflicts() {
   conflictsRunning.value = false
 }
 
-const conflictColumns = [
+const conflictColumns = computed(() => [
   { type: 'selection' },
   { title: t('org.colReason'), key: 'reason', width: 100,
     render: (r) => h(NTag, { size: 'small', type: r.reason === '同步冲突' ? 'error' : 'warning', bordered: false },
@@ -356,7 +356,7 @@ const conflictColumns = [
   { title: t('org.colMtime'), key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
   { title: t('org.colRelated'), key: 'related', ellipsis: { tooltip: true },
     render: (r) => r.related ? h('span', { class: 'mono' }, r.related) : h('span', { style: 'opacity:.4' }, '-') },
-]
+])
 
 async function trashConflicts() {
   const paths = (conflicts.value || []).filter((f) => conflictChecked.value.includes(f.path)).map((f) => f.path)

@@ -40,19 +40,19 @@ const recommend = ref(null)
 const keepAlive = ref('30m')  // 模型常驻时长：默认 30m，避免空闲 5 分钟被卸载后重载几十秒
 const preload = ref(false)    // 启动时把模型预载进显存/内存
 const numCtx = ref('8192')    // 上下文窗口 token：默认 8192，防止长资料被 Ollama 默认窗口静默截断
-const keepAliveOptions = [
+const keepAliveOptions = computed(() => [
   { label: t('settings.keep5'), value: '5m' },
   { label: t('settings.keep30'), value: '30m' },
   { label: t('settings.keep60'), value: '1h' },
   { label: t('settings.keepForever'), value: '-1' },
-]
-const numCtxOptions = [
+])
+const numCtxOptions = computed(() => [
   { label: t('settings.ctx4096'), value: '4096' },
   { label: t('settings.ctx8192'), value: '8192' },
   { label: '16384', value: '16384' },
   { label: '32768', value: '32768' },
   { label: t('settings.ctxDefault'), value: '0' },
-]
+])
 
 async function refresh() {
   status.value = await api('get_status')
@@ -132,7 +132,7 @@ function applyFilter() {
   filteredRules.value = rows.slice(0, 200)
 }
 
-const ruleColumns = [
+const ruleColumns = computed(() => [
   { title: t('settings.colExt'), key: 'pattern', width: 110, render: (r) => '.' + r.pattern },
   { title: t('settings.colCat'), key: 'category', width: 110 },
   { title: t('settings.colSub'), key: 'sub', width: 130, render: (r) => r.sub || '-' },
@@ -143,7 +143,7 @@ const ruleColumns = [
             { default: () => t('settings.del') }),
         ] })
       : h(NTag, { size: 'small', bordered: false }, { default: () => t('settings.builtin') }) },
-]
+])
 
 async function addRule() {
   if (!newRule.value.pattern.trim()) return message.warning(t('settings.m.needExt'))
@@ -279,11 +279,11 @@ const provModels = ref([])        // 从服务端拉到的模型列表（可下�
 const provFetching = ref(false)
 const provDetecting = ref(false)
 
-const embedSourceOptions = [
+const embedSourceOptions = computed(() => [
   { label: t('settings.embFollow'), value: 'follow' },
   { label: t('settings.embLocal'), value: 'ollama' },
   { label: t('settings.embApi'), value: 'api' },
-]
+])
 
 // 密钥框显示值：编辑中 > 查看明文 > 打码掩码。掩码常驻（聚焦不清空），
 // 聚焦时全选，直接输入即整段替换
@@ -571,7 +571,7 @@ async function pullVl() {
 const watchRoots = ref([])
 const rescanning = ref(false)
 
-const rootColumns = [
+const rootColumns = computed(() => [
   { title: t('settings.colDir'), key: 'path', ellipsis: { tooltip: true }, render: (r) => r.path },
   { title: t('settings.colLabel'), key: 'label', width: 100 },
   { title: t('settings.colIndexed'), key: 'n_files', width: 90 },
@@ -580,7 +580,7 @@ const rootColumns = [
       h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => removeWatchRoot(r.id) },
         { default: () => t('settings.remove') }),
     ] }) },
-]
+])
 
 async function loadWatchRoots() {
   try {
@@ -670,10 +670,10 @@ async function removeExclude(id) {
 
 // ---------- 自动整理（可选项） ----------
 const autoOrganize = ref({ enabled: false, mode: 'report', root: '' })
-const organizeModeOptions = [
+const organizeModeOptions = computed(() => [
   { label: t('settings.orgReport'), value: 'report' },
   { label: t('settings.orgMove'), value: 'move' },
-]
+])
 
 async function loadAutoOrganize() {
   try { autoOrganize.value = await api('auto_organize_status') } catch (e) { /* 忽略 */ }
