@@ -41,17 +41,17 @@ const keepAlive = ref('30m')  // 模型常驻时长：默认 30m，避免空闲 
 const preload = ref(false)    // 启动时把模型预载进显存/内存
 const numCtx = ref('8192')    // 上下文窗口 token：默认 8192，防止长资料被 Ollama 默认窗口静默截断
 const keepAliveOptions = [
-  { label: '5 分钟', value: '5m' },
-  { label: '30 分钟（推荐）', value: '30m' },
-  { label: '1 小时', value: '1h' },
-  { label: '常驻不卸载', value: '-1' },
+  { label: t('settings.keep5'), value: '5m' },
+  { label: t('settings.keep30'), value: '30m' },
+  { label: t('settings.keep60'), value: '1h' },
+  { label: t('settings.keepForever'), value: '-1' },
 ]
 const numCtxOptions = [
-  { label: '4096（低配省显存）', value: '4096' },
-  { label: '8192（推荐）', value: '8192' },
+  { label: t('settings.ctx4096'), value: '4096' },
+  { label: t('settings.ctx8192'), value: '8192' },
   { label: '16384', value: '16384' },
   { label: '32768', value: '32768' },
-  { label: '跟随模型默认', value: '0' },
+  { label: t('settings.ctxDefault'), value: '0' },
 ]
 
 async function refresh() {
@@ -70,7 +70,7 @@ async function refresh() {
 
 async function saveOllama() {
   await api('save_ollama_settings', host.value, chatModel.value, keepAlive.value, preload.value, numCtx.value)
-  message.success('已保存')
+  message.success(t('settings.m.saved'))
   refresh()
   window.dispatchEvent(new CustomEvent('fb-refresh'))
 }
@@ -87,15 +87,15 @@ const MODEL_SIZES = {
 const localModelCards = ['qwen3:8b', 'qwen3:14b', 'qwen3:32b', 'qwen3:4b']
 
 async function pull(model) {
-  pullState.value = { model, pct: 0, status: '准备中…' }
+  pullState.value = { model, pct: 0, status: t('settings.m.preparing') }
   await api('pull_model', model)
 }
 
 let offs = []
-offs.push(on('pull_start', (p) => { pullState.value = { model: p.model, pct: 0, status: '开始下载' } }))
+offs.push(on('pull_start', (p) => { pullState.value = { model: p.model, pct: 0, status: t('settings.m.starting') } }))
 offs.push(on('pull_progress', (p) => { pullState.value = p }))
 offs.push(on('pull_done', (p) => {
-  message.success(`模型 ${p.model} 下载完成`)
+  message.success(t('settings.m.pullDone', { m: p.model }))
   pullState.value = null
   refresh()
   // 若下载的是推荐模型，自动设为当前对话模型
@@ -110,7 +110,7 @@ onUnmounted(() => offs.forEach((f) => f()))
 
 async function installOllama() {
   await api('open_url', 'https://ollama.com/download/windows')
-  message.info('已打开 Ollama 官网，下载安装后它会自动在后台运行，然后回到这里检测')
+  message.info(t('settings.m.ollamaOpened'))
 }
 
 // ---------- 规则 ----------
@@ -133,22 +133,22 @@ function applyFilter() {
 }
 
 const ruleColumns = [
-  { title: '扩展名', key: 'pattern', width: 110, render: (r) => '.' + r.pattern },
-  { title: '类别', key: 'category', width: 110 },
-  { title: '子目录', key: 'sub', width: 130, render: (r) => r.sub || '-' },
-  { title: '来源', key: 'custom', width: 160, render: (r) => r.custom
+  { title: t('settings.colExt'), key: 'pattern', width: 110, render: (r) => '.' + r.pattern },
+  { title: t('settings.colCat'), key: 'category', width: 110 },
+  { title: t('settings.colSub'), key: 'sub', width: 130, render: (r) => r.sub || '-' },
+  { title: t('settings.colSrc'), key: 'custom', width: 160, render: (r) => r.custom
       ? h(NSpace, { size: 'small', align: 'center' }, { default: () => [
-          h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '自定义' }),
+          h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => t('settings.custom') }),
           h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => delRule(r.pattern) },
-            { default: () => '删除' }),
+            { default: () => t('settings.del') }),
         ] })
-      : h(NTag, { size: 'small', bordered: false }, { default: () => '内置' }) },
+      : h(NTag, { size: 'small', bordered: false }, { default: () => t('settings.builtin') }) },
 ]
 
 async function addRule() {
-  if (!newRule.value.pattern.trim()) return message.warning('请输入扩展名，如 dat')
+  if (!newRule.value.pattern.trim()) return message.warning(t('settings.m.needExt'))
   await api('add_rule', newRule.value.pattern.trim(), newRule.value.category, newRule.value.sub)
-  message.success('规则已添加')
+  message.success(t('settings.m.ruleAdded'))
   showAdd.value = false
   newRule.value = { pattern: '', category: '文档', sub: '' }
   loadRules()
@@ -188,9 +188,9 @@ async function doVacuum() {
   const r = await api('vacuum_db')
   if (r.ok) {
     dbMaint.value.vacuum_running = true
-    message.info('压缩已开始，完成后将提示（大库可能需要一两分钟）')
+    message.info(t('settings.m.vacStarted'))
   } else {
-    message.error(r.error || '启动失败')
+    message.error(r.error || t('settings.m.startFail'))
   }
 }
 offs.push(on('db_vacuum_done', (r) => {
@@ -198,12 +198,12 @@ offs.push(on('db_vacuum_done', (r) => {
   if (r.ok) {
     const saved = ((r.before - r.after) / 1e6).toFixed(1)
     if (r.after >= r.before && r.note) {
-      message.warning(`未回收空间：${r.note}`)
+      message.warning(t('settings.m.noSpace', { note: r.note }))
     } else {
-      message.success(`压缩完成：${fmtMB(r.before)} → ${fmtMB(r.after)}（回收 ${saved} MB）`)
+      message.success(t('settings.m.vacDone', { b: fmtMB(r.before), a: fmtMB(r.after), s: saved }))
     }
   } else {
-    message.error('压缩失败：' + (r.error || '未知'))
+    message.error(t('settings.m.vacFail', { e: r.error || '?' }))
   }
   loadDbMaint()
   loadDataDir()
@@ -218,20 +218,20 @@ async function pickNewDataDir() {
 async function doSwitch(overwrite = false) {
   if (!pendingDir.value) return
   switching.value = true
-  switchStatus.value = '准备搬迁…'
+  switchStatus.value = t('settings.m.moving')
   const r = await api('switch_data_dir', pendingDir.value, overwrite, moveMode.value)
   switching.value = false
   if (r.ok) {
     message.success(moveMode.value === 'move'
-      ? '搬迁完成，重启后生效（旧目录将在重启后自动删除）'
-      : '搬迁完成，重启应用后生效（旧目录保留为备份）')
+      ? t('settings.m.movedDel')
+      : t('settings.m.movedKeep'))
     restartPending.value = true
     loadDataDir()
   } else if (r.error && r.error.includes('覆盖')) {
     // 目标已有数据库 → 弹确认
     pendingOverwrite.value = true
   } else {
-    message.error('搬迁失败：' + r.error)
+    message.error(t('settings.m.moveFail', { e: r.error }))
   }
 }
 
@@ -246,11 +246,11 @@ async function confirmOverwrite() {
 async function doResetDir() {
   const r = await api('reset_data_dir')
   if (r.ok) {
-    message.success('已恢复默认位置，重启应用后生效')
+    message.success(t('settings.m.resetDone'))
     restartPending.value = true
     loadDataDir()
   } else {
-    message.error('恢复失败：' + (r.error || '未知错误'))
+    message.error(t('settings.m.resetFail', { e: r.error || '?' }))
   }
 }
 
@@ -280,9 +280,9 @@ const provFetching = ref(false)
 const provDetecting = ref(false)
 
 const embedSourceOptions = [
-  { label: '跟随接入方式', value: 'follow' },
-  { label: '本地 bge-m3（免费）', value: 'ollama' },
-  { label: '云端向量模型', value: 'api' },
+  { label: t('settings.embFollow'), value: 'follow' },
+  { label: t('settings.embLocal'), value: 'ollama' },
+  { label: t('settings.embApi'), value: 'api' },
 ]
 
 // 密钥框显示值：编辑中 > 查看明文 > 打码掩码。掩码常驻（聚焦不清空），
@@ -342,11 +342,11 @@ async function saveProvider() {
     provKey.value, provChatModel.value, provEmbedSource.value, provEmbedModel.value)
   provSaving.value = false
   if (r.ok) {
-    message.success('接入配置已保存')
+    message.success(t('settings.m.provSaved'))
     loadProvider(); refresh()
     window.dispatchEvent(new CustomEvent('fb-refresh'))
   } else {
-    message.error(r.error || '保存失败')
+    message.error(r.error || t('settings.saveFail2'))
   }
 }
 
@@ -363,10 +363,10 @@ async function fetchProvModels() {
     const r = await api('list_api_models', provBase.value, provKey.value)
     if (r.ok && r.models.length) {
       provModels.value = r.models
-      message.info(`获取到 ${r.models.length} 个模型`)
+      message.info(t('settings.m.modelsGot', { n: r.models.length }))
     } else {
       provModels.value = []
-      message.warning(r.error || '未获取到模型，请确认服务已启动、地址正确')
+      message.warning(r.error || t('settings.m.modelsEmpty'))
     }
   } catch (e) {
     message.error(String(e))
@@ -385,14 +385,14 @@ async function detectLocal() {
       provBase.value = lm.base
       provModels.value = lm.models || []
       if (lm.models?.length && !provChatModel.value) provChatModel.value = lm.models[0]
-      message.success(`检测到 LM Studio，${lm.models.length} 个模型已就绪`)
+      message.success(t('settings.m.lmFound', { n: lm.models.length }))
       return
     }
     if (r.ollama?.running) {
-      message.info('本机 Ollama 在运行——直接用「本地 Ollama」接入即可，无需切到 API 模式')
+      message.info(t('settings.ollamaLocal'))
       return
     }
-    message.warning('未检测到 LM Studio（默认端口 1234）或 Ollama，请确认服务已启动')
+    message.warning(t('settings.m.lmNotFound'))
   } finally {
     provDetecting.value = false
   }
@@ -403,9 +403,9 @@ function pickPreset(p) {
   // 自动填充该服务商的推荐模型名
   if (p.models && p.models.length) {
     provChatModel.value = p.models[0].name
-    message.info(`已填入推荐模型：${p.models[0].name}（可改）`)
+    message.info(t('settings.m.filledModel', { m: p.models[0].name }))
   } else {
-    message.info('已填入服务地址，点「拉取模型列表」选择模型')
+    message.info(t('settings.m.filledBase'))
   }
 }
 
@@ -421,16 +421,16 @@ async function backupNow() {
   backingUp.value = true
   const r = await api('backup_now')
   backingUp.value = false
-  if (r.ok) { message.success('备份完成：' + r.path.split('\\').pop()); loadBackups() }
-  else message.error('备份失败：' + r.error)
+  if (r.ok) { message.success(t('settings.m.backupDone', { f: r.path.split('\\').pop() })); loadBackups() }
+  else message.error(t('settings.m.backupFail', { e: r.error }))
 }
 
 async function restoreBk(b) {
-  const ok = window.confirm(`用备份 ${b.file} 覆盖当前数据库？\n当前数据会先另存一份。恢复后需重启应用。`)
+  const ok = window.confirm(t('settings.m.restoreConfirm', { f: b.file }))
   if (!ok) return
   const r = await api('restore_backup', b.path)
-  if (r.ok) message.success('已恢复，请重启应用生效')
-  else message.error('恢复失败：' + r.error)
+  if (r.ok) message.success(t('settings.m.restored'))
+  else message.error(t('settings.m.restoreFail', { e: r.error }))
 }
 
 // ---------- 模型管理（含删除权） ----------
@@ -453,11 +453,11 @@ async function deleteModel(m) {
   const r = await api('delete_model', m)
   deleting.value = false
   if (r.ok) {
-    message.success(`已删除 ${m}`)
+    message.success(t('settings.m.modelDeleted', { m }))
     loadModels(); refresh()
     window.dispatchEvent(new CustomEvent('fb-refresh'))
   } else {
-    message.error(`删除失败：${r.error}`)
+    message.error(t('settings.m.deleteFail', { e: r.error }))
   }
 }
 
@@ -466,7 +466,7 @@ imgOffs.push(on('img_desc_start', (p) => { imgDescProgress.value = { i: 0, n: p.
 imgOffs.push(on('img_desc_progress', (p) => { imgDescProgress.value = p }))
 imgOffs.push(on('img_desc_done', (r) => {
   imgDescProgress.value = null
-  message.success(`图片语义描述完成：新增 ${r.described || 0}，跳过 ${r.skipped || 0}`)
+  message.success(t('settings.m.descDone', { a: r.described || 0, s: r.skipped || 0 }))
   loadImgSem()
 }))
 imgOffs.push(on('img_desc_error', (e) => { imgDescProgress.value = null; message.error(String(e)) }))
@@ -490,17 +490,16 @@ async function ciStart() {
 
 async function ciStop() {
   await api('content_index_stop')
-  message.info('已请求停止，当前文件处理完即退出')
+  message.info(t('settings.m.stopReq'))
 }
 
 const ciHasIndex = computed(() => !!ci.value?.status?.indexed?.docs)
 
 async function ciReset() {
-  if (!window.confirm('清空已索引的文档正文？预算额度会一并释放，之后可重新开始索引。\n'
-    + '（磁盘空间要再点一次「压缩数据库」才会真的腾出来）')) return
+  if (!window.confirm(t('settings.m.ciClearConfirm'))) return
   const r = await api('content_index_reset')
-  if (r && r.ok === false) { message.error(r.error || '清空失败'); return }
-  message.success('正文索引已清空')
+  if (r && r.ok === false) { message.error(r.error || t('settings.m.clearFail')); return }
+  message.success(t('settings.m.ciCleared'))
   loadContentIndex()
 }
 
@@ -510,8 +509,8 @@ ciOffs.push(on('content_index_progress', (p) => {
   ci.value.status = { ...ci.value.status, ...p, running: true }
 }))
 ciOffs.push(on('content_index_done', (s) => {
-  if (s.budget_hit) message.warning('已达预算上限，可在设置里放宽篇数或体积上限')
-  else message.success(`内容索引结束：成功 ${s.ok || 0} 篇，失败 ${s.failed || 0} 篇`)
+  if (s.budget_hit) message.warning(t('settings.m.budgetHit'))
+  else message.success(t('settings.m.ciDone', { ok: s.ok || 0, f: s.failed || 0 }))
   loadContentIndex()
 }))
 onUnmounted(() => ciOffs.forEach((f) => f()))
@@ -531,16 +530,16 @@ async function loadToggles() {
 async function toggleAutoKb(v) {
   autoKb.value = v
   await api('set_auto_kb', v)
-  message.success(v ? '自动知识库已开启：监控目录的新文档将自动索引' : '自动知识库已关闭')
+  message.success(v ? t('settings.m.autoKbOn') : t('settings.m.autoKbOff'))
 }
 
 async function toggleAutostart(v) {
   const r = await api('set_autostart', v)
   if (r.ok) {
     autostart.value = v
-    message.success(v ? '将在开机时自动启动并最小化' : '已取消开机自启')
+    message.success(v ? t('settings.m.autoStartOn') : t('settings.m.autoStartOff'))
   } else {
-    message.error('设置失败：' + r.error)
+    message.error(t('settings.m.setFail', { e: r.error }))
   }
 }
 
@@ -551,21 +550,21 @@ async function loadImgSem() {
 async function toggleImgSem(v) {
   const r = await api('set_img_semantic', v)
   if (!v) {
-    message.info('图片语义搜索已关闭')
+    message.info(t('settings.m.imgSemOff'))
     loadImgSem()
     return
   }
   if (r.model_ready) {
-    message.success('已开启，开始为图片生成语义描述（后台进行）')
+    message.success(t('settings.m.imgSemOn'))
   } else {
-    message.warning(`已开启，但视觉模型 ${r.vl_model} 未安装——下方下载后自动开始`)
+    message.warning(t('settings.m.imgSemNoModel', { m: r.vl_model }))
   }
   loadImgSem()
 }
 
 async function pullVl() {
   await api('pull_model', 'qwen2.5vl:7b')
-  pullState.value = { model: 'qwen2.5vl:7b', pct: 0, status: '排队下载' }
+  pullState.value = { model: 'qwen2.5vl:7b', pct: 0, status: t('settings.m.queued') }
 }
 
 // ---------- 自动扫描监控目录 ----------
@@ -573,13 +572,13 @@ const watchRoots = ref([])
 const rescanning = ref(false)
 
 const rootColumns = [
-  { title: '目录', key: 'path', ellipsis: { tooltip: true }, render: (r) => r.path },
-  { title: '标签', key: 'label', width: 100 },
-  { title: '已编目', key: 'n_files', width: 90 },
-  { title: '操作', key: 'ops', width: 160, render: (r) => h(NSpace, { size: 'small' }, { default: () => [
-      h(NButton, { size: 'tiny', onClick: () => api('open_path', r.path) }, { default: () => '打开' }),
+  { title: t('settings.colDir'), key: 'path', ellipsis: { tooltip: true }, render: (r) => r.path },
+  { title: t('settings.colLabel'), key: 'label', width: 100 },
+  { title: t('settings.colIndexed'), key: 'n_files', width: 90 },
+  { title: t('settings.colOps'), key: 'ops', width: 160, render: (r) => h(NSpace, { size: 'small' }, { default: () => [
+      h(NButton, { size: 'tiny', onClick: () => api('open_path', r.path) }, { default: () => t('settings.open') }),
       h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => removeWatchRoot(r.id) },
-        { default: () => '移除' }),
+        { default: () => t('settings.remove') }),
     ] }) },
 ]
 
@@ -594,20 +593,20 @@ async function addWatchRoot() {
   if (!p) return
   const r = await api('add_watch_root', p)
   if (r.error) return message.error(r.error)
-  message.success('已添加，开始扫描')
+  message.success(t('settings.m.watchAdded'))
   loadWatchRoots()
 }
 
 async function removeWatchRoot(id) {
   await api('remove_watch_root', id)
-  message.success('已移除（索引记录一并清除）')
+  message.success(t('settings.m.watchRemoved'))
   loadWatchRoots()
 }
 
 async function rescanNow() {
   rescanning.value = true
   await api('rescan_library')
-  message.info('后台扫描已启动，进度见「文件」页')
+  message.info(t('settings.m.scanStarted'))
   setTimeout(() => { rescanning.value = false; loadWatchRoots() }, 3000)
 }
 
@@ -620,7 +619,7 @@ async function loadMisc() {
 async function toggleImagesByYear(v) {
   imagesByYear.value = v
   await api('set_images_by_year', v)
-  message.success(v ? '图片将按年份归档' : '图片不再按年份归档')
+  message.success(v ? t('settings.m.yearOn') : t('settings.m.yearOff'))
 }
 
 // ---------- 全局热键 ----------
@@ -634,17 +633,17 @@ async function toggleHotkey(v) {
   const r = await api('set_hotkey', v, hotkey.value.hotkey)
   if (r.ok) {
     hotkey.value.enabled = v
-    message.success(v ? `全局热键已开启：任意程序下按 ${hotkey.value.hotkey} 呼出` : '全局热键已关闭')
+    message.success(v ? t('settings.m.hotkeyOn', { k: hotkey.value.hotkey }) : t('settings.m.hotkeyOff'))
   } else {
-    message.error('设置失败：' + (r.error || '未知错误'))
+    message.error(t('settings.m.setFail', { e: r.error || '?' }))
   }
 }
 
 async function saveHotkeyCombo() {
-  if (!hotkey.value.hotkey.trim()) return message.warning('请输入组合键，如 Alt+Space')
+  if (!hotkey.value.hotkey.trim()) return message.warning(t('settings.m.hotkeyNeed'))
   const r = await api('set_hotkey', hotkey.value.enabled, hotkey.value.hotkey.trim())
-  if (r.ok) message.success(`热键已应用：${hotkey.value.hotkey.trim()}`)
-  else message.error('设置失败：' + (r.error || '未知错误'))
+  if (r.ok) message.success(t('settings.m.hotkeyApplied', { k: hotkey.value.hotkey.trim() }))
+  else message.error(t('settings.m.setFail', { e: r.error || '?' }))
 }
 
 // ---------- 排除目录（扫描时跳过） ----------
@@ -659,21 +658,21 @@ async function addExclude() {
   if (!p) return
   const r = await api('add_exclude', p)
   if (r.error) return message.error(r.error)
-  message.success('已添加排除目录，下次扫描生效（可点上方「立即重新扫描」立即应用）')
+  message.success(t('settings.m.excludeAdded'))
   loadExcludes()
 }
 
 async function removeExclude(id) {
   await api('remove_exclude', id)
-  message.success('已移除排除规则')
+  message.success(t('settings.m.excludeRemoved'))
   loadExcludes()
 }
 
 // ---------- 自动整理（可选项） ----------
 const autoOrganize = ref({ enabled: false, mode: 'report', root: '' })
 const organizeModeOptions = [
-  { label: '仅生成整理报告（不移动文件）', value: 'report' },
-  { label: '自动移动（可一键撤销）', value: 'move' },
+  { label: t('settings.orgReport'), value: 'report' },
+  { label: t('settings.orgMove'), value: 'move' },
 ]
 
 async function loadAutoOrganize() {
@@ -684,14 +683,14 @@ async function toggleAutoOrganize(v) {
   const r = await api('set_auto_organize', v, autoOrganize.value.mode, autoOrganize.value.root)
   if (r.ok) {
     autoOrganize.value.enabled = v
-    message.success(v ? '自动整理已开启' : '自动整理已关闭')
-  } else message.error('设置失败')
+    message.success(v ? t('settings.m.autoOrgOn') : t('settings.m.autoOrgOff'))
+  } else message.error(t('settings.m.setFailShort'))
 }
 
 async function changeOrganizeMode(mode) {
   await api('set_auto_organize', autoOrganize.value.enabled, mode, autoOrganize.value.root)
   autoOrganize.value.mode = mode
-  message.success(mode === 'move' ? '新文件将自动移动（每步可撤销）' : '仅出报告，不移动文件')
+  message.success(mode === 'move' ? t('settings.m.orgModeMove') : t('settings.m.orgModeReport'))
 }
 
 async function pickOrganizeRoot() {
@@ -699,7 +698,7 @@ async function pickOrganizeRoot() {
   if (p) {
     autoOrganize.value.root = p
     await api('set_auto_organize', autoOrganize.value.enabled, autoOrganize.value.mode, p)
-    message.success('自动整理目标目录已设置')
+    message.success(t('settings.m.orgRootSet'))
   }
 }
 
@@ -716,9 +715,9 @@ async function checkUpdate() {
   try {
     updateInfo.value = await api('check_update')
     if (!updateInfo.value.outdated && !updateInfo.value.latest) {
-      message.info(updateInfo.value.error || '检查失败')
+      message.info(updateInfo.value.error || t('settings.m.checkFail'))
     }
-  } catch (e) { message.error('检查更新失败：' + e) }
+  } catch (e) { message.error(t('settings.m.checkFailE', { e })) }
   checkingUpdate.value = false
 }
 
@@ -732,8 +731,8 @@ updateOffs.push(on('update_done', (p) => {
   downloadingUpdate.value = false
   updateReady.value = p
   message.success(p.rollback
-    ? `v${p.version} 已下载完成，点「重启并安装」即可回退`
-    : `v${p.version} 已下载完成，点「重启并安装」即可更新`)
+    ? t('settings.m.updReadyRb', { v: p.version })
+    : t('settings.m.updReady', { v: p.version }))
 }))
 updateOffs.push(on('update_error', (e) => {
   downloadingUpdate.value = false
@@ -747,17 +746,17 @@ async function downloadUpdate() {
   updatePct.value = 0
   try {
     const r = await api('download_update')
-    if (!r.ok) { downloadingUpdate.value = false; message.error(r.error || '下载失败') }
-  } catch (e) { downloadingUpdate.value = false; message.error('下载失败：' + e) }
+    if (!r.ok) { downloadingUpdate.value = false; message.error(r.error || t('settings.m.dlFailShort')) }
+  } catch (e) { downloadingUpdate.value = false; message.error(t('settings.m.dlFail', { e })) }
 }
 
 async function installUpdate() {
   if (!updateReady.value) return
   try {
     const r = await api('install_update', updateReady.value.path)
-    if (!r.ok) message.error(r.error || '安装失败')
-    else message.info('安装器已启动，应用即将退出，装完重新打开即可')
-  } catch (e) { message.error('安装失败：' + e) }
+    if (!r.ok) message.error(r.error || t('settings.m.installFail', { e: '' }))
+    else message.info(t('settings.m.installing'))
+  } catch (e) { message.error(t('settings.m.installFail', { e })) }
 }
 
 // 回退：新版装坏了退回上一个正式版（复用同一套下载 + 静默安装）
@@ -765,14 +764,14 @@ const rollbackLoading = ref(false)
 async function startRollback() {
   rollbackLoading.value = true
   try {
-    const t = await api('rollback_target')
-    if (!t.ok) { message.warning(t.error || '没有可回退的版本'); return }
-    if (!window.confirm(`将下载并安装 v${t.target}（当前 v${t.current}），确定继续？`)) return
+    const target = await api('rollback_target')
+    if (!target.ok) { message.warning(target.error || t('settings.m.noRollback')); return }
+    if (!window.confirm(t('settings.m.rollbackConfirm', { t: target.target, c: target.current }))) return
     const r = await api('download_rollback')
-    if (!r.ok) { message.error(r.error || '下载失败'); return }
+    if (!r.ok) { message.error(r.error || t('settings.m.dlFailShort')); return }
     downloadingUpdate.value = true
     updatePct.value = 0
-  } catch (e) { message.error('回退失败：' + e) }
+  } catch (e) { message.error(t('settings.m.rollbackFail', { e })) }
   finally { rollbackLoading.value = false }
 }
 
@@ -786,7 +785,7 @@ async function refreshRerank() {
 }
 async function toggleRerank(v) {
   rerank.value = await api('set_rerank_enabled', v)
-  if (v && !rerank.value.active) message.warning('Rerank 尚未就绪（运行时或模型缺失），问答仍走纯 RRF')
+  if (v && !rerank.value.active) message.warning(t('settings.m.rerankNotReady'))
 }
 async function rerankDownload() {
   rerank.value = await api('rerank_download')
@@ -795,14 +794,14 @@ async function rerankDownload() {
     await refreshRerank()
     if (!rerank.value?.download?.downloading) {
       clearInterval(rerankTimer); rerankTimer = null
-      if (rerank.value?.download?.error) message.error('Rerank 模型下载失败：' + rerank.value.download.error)
-      else if (rerank.value?.downloaded) message.success('Rerank 模型已就绪')
+      if (rerank.value?.download?.error) message.error(t('settings.m.rerankDlFail', { e: rerank.value.download.error }))
+      else if (rerank.value?.downloaded) message.success(t('settings.m.rerankReady'))
     }
   }, 1000)
 }
 async function rerankDelete() {
   await api('rerank_delete')
-  message.success('已删除 Rerank 模型')
+  message.success(t('settings.m.rerankDeleted'))
   refreshRerank()
 }
 
@@ -878,7 +877,7 @@ onMounted(() => {
                 : t('settings.noGpu') }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('settings.recModel')">
-              <b class="mono">{{ recommend.local.model }}</b>（约 {{ recommend.local.size_gb }} GB）
+              <b class="mono">{{ recommend.local.model }}</b>{{ t('settings.approxGB', { n: recommend.local.size_gb }) }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('settings.recReason')" :span="3">
               {{ recommend.local.reason }} · {{ recommend.local.note }}
@@ -914,7 +913,7 @@ onMounted(() => {
       </n-card>
 
       <!-- ============ 外观主题 ============ -->
-      <n-card title="外观主题">
+      <n-card :title="t('settings.appearanceTitle')">
         <n-space :size="14">
           <!-- 跟随系统（auto）：亮暗各半预览 -->
           <div class="theme-card" :class="{ active: themeKey === AUTO_KEY }" @click="pickTheme(AUTO_KEY)">
@@ -1038,8 +1037,7 @@ onMounted(() => {
             <n-tag size="small" round depth="2">{{ t('settings.backups', { n: dbMaint.backups }) }}</n-tag>
           </div>
           <n-text depth="3" style="font-size:12.5px">
-            大量删除/重建索引后库文件不会自动缩小，压缩（VACUUM）可回收空间。
-            需要约 2 倍库大小的空闲磁盘，期间后台索引可能短暂暂停。
+            {{ t('settings.vacHint') }}
           </n-text>
           <n-space>
             <n-button size="small" round type="primary" ghost :loading="dbMaint.vacuum_running"
@@ -1103,34 +1101,32 @@ onMounted(() => {
                 style="width:220px" />
               <n-select v-if="provEmbedSource === 'api' && provModels.length"
                 v-model:value="provEmbedModel" :options="provModels.map(m => ({ label: m, value: m }))"
-                tag filterable placeholder="向量模型名" style="flex:1;min-width:240px" class="mono" />
+                tag filterable :placeholder="t('settings.vecModelPh')" style="flex:1;min-width:240px" class="mono" />
               <n-input v-else-if="provEmbedSource === 'api'" v-model:value="provEmbedModel"
-                placeholder="向量模型名，如 text-embedding-3-small" style="flex:1;min-width:240px" class="mono" />
+                :placeholder="t('settings.vecModelPh2')" style="flex:1;min-width:240px" class="mono" />
             </div>
             <n-text depth="3" style="font-size:12px">
-              LM Studio：启动其本地服务后点「检测本机服务」一键填入，无需密钥；
-              向量化选「本地 bge-m3」则完全免费。密钥仅保存在本机数据库，
-              除你填写的服务商外不经过任何第三方。
+              {{ t('settings.provHint') }}
             </n-text>
           </template>
 
           <n-space>
-            <n-button type="primary" size="small" round :loading="provSaving" @click="saveProvider">保存</n-button>
-            <n-button size="small" round :loading="provTesting" @click="testProvider">测试连接</n-button>
-            <n-button size="small" round :loading="provDetecting" @click="detectLocal">检测本机服务</n-button>
+            <n-button type="primary" size="small" round :loading="provSaving" @click="saveProvider">{{ t('settings.saveProvider') }}</n-button>
+            <n-button size="small" round :loading="provTesting" @click="testProvider">{{ t('settings.testConn') }}</n-button>
+            <n-button size="small" round :loading="provDetecting" @click="detectLocal">{{ t('settings.detectLocal') }}</n-button>
             <n-tag v-if="provider" size="small" round
               :type="provider.summary.chat.ok ? 'success' : 'error'">
-              对话：{{ provider.summary.chat.reason }}
+              {{ t('settings.chatReason', { v: provider.summary.chat.reason }) }}
             </n-tag>
             <n-tag v-if="provider" size="small" round
               :type="provider.summary.embed.ok ? 'success' : 'warning'">
-              向量：{{ provider.summary.embed.reason }}
+              {{ t('settings.embedReason', { v: provider.summary.embed.reason }) }}
             </n-tag>
           </n-space>
           <n-alert v-if="provTestResult" :bordered="false"
             :type="provTestResult.ok ? 'success' : 'error'">
             <template v-if="provTestResult.ok">
-              ✓ 连通正常 · {{ provTestResult.latency_ms }}ms · 回复「{{ provTestResult.reply }}」
+              {{ t('settings.testOk', { ms: provTestResult.latency_ms, reply: provTestResult.reply }) }}
             </template>
             <template v-else><span style="white-space:pre-line">✗ {{ provTestResult.error }}</span></template>
           </n-alert>
@@ -1138,17 +1134,14 @@ onMounted(() => {
       </n-card>
 
       <!-- ============ 备份管理 ============ -->
-      <n-card title="数据库备份">
+      <n-card :title="t('settings.backupTitle')">
         <n-space vertical size="large">
           <n-space>
-            <n-button type="primary" ghost size="small" :loading="backingUp" @click="backupNow">立即备份</n-button>
+            <n-button type="primary" ghost size="small" :loading="backingUp" @click="backupNow">{{ t('settings.backupNow') }}</n-button>
             <n-text depth="3" style="font-size:12px;align-self:center">
-              应用运行期间每日自动备份一次（后台进行，不阻塞退出），存于数据目录 backups\ 下。
-              保留最近 {{ dbMaint.backup_keep || 5 }} 份，且总占用不超过
-              {{ ((dbMaint.backup_max_total || 0) / 1e9).toFixed(1) }} GB——超预算先删最旧的，
-              至少留最新一份（份数之外还要限体积，否则大库的 5 份就是好几个 GB）。
+              {{ t('settings.backupAuto', { keep: dbMaint.backup_keep || 5, gb: ((dbMaint.backup_max_total || 0) / 1e9).toFixed(1) }) }}
               <template v-if="dbMaint.backups">
-                当前 {{ dbMaint.backups }} 份 · 共 {{ fmtMB(dbMaint.backups_size || 0) }}
+                {{ t('settings.backupStat', { n: dbMaint.backups, size: fmtMB(dbMaint.backups_size || 0) }) }}
               </template>
             </n-text>
           </n-space>
@@ -1161,102 +1154,97 @@ onMounted(() => {
                     {{ (b.size / 1e6).toFixed(1) }} MB · {{ new Date(b.mtime * 1000).toLocaleString() }}
                   </n-text>
                 </n-space>
-                <n-button size="tiny" type="warning" ghost @click="restoreBk(b)">恢复此备份</n-button>
+                <n-button size="tiny" type="warning" ghost @click="restoreBk(b)">{{ t('settings.restoreBk') }}</n-button>
               </n-space>
             </n-list-item>
           </n-list>
-          <n-text v-else depth="3">暂无备份</n-text>
+          <n-text v-else depth="3">{{ t('settings.noBackup') }}</n-text>
         </n-space>
       </n-card>
 
       <!-- ============ 配置导出 / 导入 ============ -->
-      <n-card title="配置导出 / 导入">
+      <n-card :title="t('settings.cfgTitle')">
         <n-space vertical size="medium">
           <n-space align="center">
-            <n-button size="small" round type="primary" ghost @click="exportConfig">导出配置</n-button>
-            <n-button size="small" round @click="triggerImport">导入配置</n-button>
+            <n-button size="small" round type="primary" ghost @click="exportConfig">{{ t('settings.exportCfg') }}</n-button>
+            <n-button size="small" round @click="triggerImport">{{ t('settings.importCfg') }}</n-button>
             <input ref="importFileEl" type="file" accept=".json,application/json"
               style="display:none" @change="onImportFile" />
           </n-space>
           <n-text depth="3" style="font-size:12px">
-            导出内容：自定义分类规则、整理模板、标签、收藏、排除目录、保存的筛选。
-            换机或重装后导入即可恢复（合并式导入，不覆盖已有数据，绝不删除）。
+            {{ t('settings.cfgHint') }}
           </n-text>
         </n-space>
       </n-card>
 
       <!-- ============ 模型管理 ============ -->
-      <n-card title="已安装模型（可删除释放磁盘）">
+      <n-card :title="t('settings.modelsTitle')">
         <n-space vertical size="large">
           <n-list bordered v-if="modelsDetail.length">
             <n-list-item v-for="m in modelsDetail" :key="m.name">
               <n-space justify="space-between" align="center" style="width:100%">
                 <n-space align="center">
                   <n-text class="mono" strong>{{ m.name }}</n-text>
-                  <n-tag size="small" type="success" v-if="m.is_chat">当前对话模型</n-tag>
-                  <n-tag size="small" type="info" v-if="m.is_embed">向量模型</n-tag>
-                  <n-tag size="small" type="warning" v-if="m.is_vl">视觉模型</n-tag>
+                  <n-tag size="small" type="success" v-if="m.is_chat">{{ t('settings.tagCurrent') }}</n-tag>
+                  <n-tag size="small" type="info" v-if="m.is_embed">{{ t('settings.tagEmbedM') }}</n-tag>
+                  <n-tag size="small" type="warning" v-if="m.is_vl">{{ t('settings.tagVl') }}</n-tag>
                   <n-text depth="3">{{ (m.size / 1e9).toFixed(1) }} GB</n-text>
                 </n-space>
                 <n-popconfirm @positive-click="deleteModel(m.name)">
                   <template #trigger>
-                    <n-button size="small" type="error" ghost :loading="deleting">删除</n-button>
+                    <n-button size="small" type="error" ghost :loading="deleting">{{ t('settings.del') }}</n-button>
                   </template>
-                  确定删除 {{ m.name }}（{{ (m.size / 1e9).toFixed(1) }} GB）？
-                  删除后相关 AI 功能将不可用，可随时重新下载。
-                  <template v-if="m.is_chat || m.is_embed"><br/><b>这是当前正在使用的模型，删除会影响核心功能！</b></template>
+                  {{ t('settings.delConfirm', { name: m.name, size: (m.size / 1e9).toFixed(1) }) }}
+                  {{ t('settings.delWarn') }}
+                  <template v-if="m.is_chat || m.is_embed"><br/><b>{{ t('settings.delWarn2') }}</b></template>
                 </n-popconfirm>
               </n-space>
             </n-list-item>
           </n-list>
-          <n-text v-else depth="3">Ollama 未运行或尚无模型</n-text>
+          <n-text v-else depth="3">{{ t('settings.noModel') }}</n-text>
         </n-space>
       </n-card>
 
       <!-- ============ 全盘内容索引 ============ -->
-      <n-card title="全盘内容索引（正文搜索）">
+      <n-card :title="t('settings.ciTitle')">
         <n-space vertical size="small">
           <n-text depth="3" style="font-size:12.5px">
-            把已编目文档（PDF / Word / PPT / Excel / 文本 / 代码）的正文抽进本地全文索引，
-            之后「搜内容」可直接命中正文里的词。不依赖 AI 模型、不产生向量，
-            与上面的「自动知识库索引」互不影响。
+            {{ t('settings.ciHint') }}
           </n-text>
           <n-space size="small" align="center" style="margin-top:4px">
             <n-button size="small" type="primary" ghost :disabled="ciRunning" :loading="ciBusy"
-              @click="ciStart">{{ ciRunning ? '索引进行中…' : '开始索引' }}</n-button>
-            <n-button size="small" :disabled="!ciRunning" @click="ciStop">停止</n-button>
+              @click="ciStart">{{ ciRunning ? t('settings.ciRunning') : t('settings.ciStart') }}</n-button>
+            <n-button size="small" :disabled="!ciRunning" @click="ciStop">{{ t('settings.ciStop') }}</n-button>
             <n-button size="small" quaternary type="error" :disabled="ciRunning || !ciHasIndex"
-              @click="ciReset">清空索引</n-button>
-            <n-button size="small" quaternary @click="loadContentIndex">刷新</n-button>
+              @click="ciReset">{{ t('settings.ciReset') }}</n-button>
+            <n-button size="small" quaternary @click="loadContentIndex">{{ t('settings.refresh') }}</n-button>
           </n-space>
           <n-progress v-if="ciRunning && ci?.status?.total" type="line" :percentage="Math.min(99.5, Math.round((ci.status.done || 0) / ci.status.total * 100))"
             indicator-placement="inside" processing />
           <n-text depth="3" style="font-size:12px">
-            已索引 {{ ci?.status?.indexed?.ok ?? 0 }} 篇 ·
-            正文 {{ fmtBody(ci?.status?.indexed?.bytes ?? 0) }} ·
-            失败 {{ ci?.status?.indexed?.failed ?? 0 }} 篇
+            {{ t('settings.ciStat', { ok: ci?.status?.indexed?.ok ?? 0 }) }}
+            {{ t('settings.ciBody', { b: fmtBody(ci?.status?.indexed?.bytes ?? 0) }) }}
+            {{ t('settings.ciFail', { f: ci?.status?.indexed?.failed ?? 0 }) }}
           </n-text>
           <n-text v-if="ci?.plan" depth="3" style="font-size:12px">
-            待处理候选 {{ ci.plan.candidates }} 篇，预算内还会索引 {{ ci.plan.will_index }} 篇 ·
-            上限 {{ ci.plan.budget.max_docs }} 篇 / {{ (ci.plan.budget.max_body_bytes / 1e9).toFixed(1) }} GB
+            {{ t('settings.ciPlan', { c: ci.plan.candidates, w: ci.plan.will_index }) }}
+            {{ t('settings.ciBudget', { d: ci.plan.budget.max_docs, b: (ci.plan.budget.max_body_bytes / 1e9).toFixed(1) }) }}
           </n-text>
           <n-text depth="3" style="font-size:12px">
-            单文件不超过 10 MB、正文最多取前 20 万字符；可随时停止，已完成的进度会保留并增量续跑。
+            {{ t('settings.ciHint2') }}
           </n-text>
           <n-text v-if="ci?.status?.budget_hit || (ci?.plan && ci.plan.budget.docs_left === 0)"
             type="warning" style="font-size:12px">
-            已达预算上限——放宽上限后再次点「开始索引」即可继续。
+            {{ t('settings.ciBudgetHit') }}
           </n-text>
         </n-space>
       </n-card>
 
       <!-- ============ Rerank 检索精排 ============ -->
-      <n-card title="检索精排 Rerank（可选增强）">
+      <n-card :title="t('settings.rerankTitle')">
         <n-space vertical size="small">
           <n-text depth="3" style="font-size:12.5px">
-            用本地 rerank 模型（bge-reranker-v2-m3 int8，CPU 推理）对混合检索结果读原文重排，
-            提升问答与检索的准确度。模型约 544 MB 按需下载不占安装包；打分 50 段约 1~3 秒，
-            默认关闭。任何一步不可用（未下载 / 运行时缺失）问答自动回退纯 RRF，不受影响。
+            {{ t('settings.rerankHint') }}
           </n-text>
           <n-space size="small" align="center" style="margin-top:4px">
             <n-switch
@@ -1264,48 +1252,48 @@ onMounted(() => {
               :disabled="!rerank?.runtime || !rerank?.downloaded"
               @update:value="toggleRerank" />
             <n-text style="font-size:12.5px">
-              {{ !rerank?.runtime ? '运行时缺失（onnxruntime / tokenizers）'
-                  : !rerank?.downloaded ? '模型未下载'
-                  : rerank.enabled ? '已开启' : '已关闭' }}
+              {{ !rerank?.runtime ? t('settings.rkNoRuntime')
+                  : !rerank?.downloaded ? t('settings.rkNoModel')
+                  : rerank.enabled ? t('settings.rkOn') : t('settings.rkOff') }}
             </n-text>
             <template v-if="rerank?.runtime && !rerank?.downloaded">
               <n-button size="small" type="primary" ghost :loading="rerank?.download?.downloading"
                 @click="rerankDownload">
-                {{ rerank?.download?.downloading ? '下载中…' : '下载模型' }}
+                {{ rerank?.download?.downloading ? t('settings.rkDownloading') : t('settings.rkDownload') }}
               </n-button>
               <n-text depth="3" style="font-size:12px">
                 {{ rerank?.download?.downloading
                     ? (rerank.download.pct + '% · ' + ((rerank.download.done_bytes || 0) / 1048576).toFixed(0) + ' MB')
-                    : '约 544 MB' }}
+                    : t('settings.rkSize') }}
               </n-text>
             </template>
             <template v-if="rerank?.downloaded">
               <n-popconfirm @positive-click="rerankDelete">
                 <template #trigger>
-                  <n-button size="small" quaternary type="error">删除模型</n-button>
+                  <n-button size="small" quaternary type="error">{{ t('settings.rkDel') }}</n-button>
                 </template>
-                删除后磁盘释放约 544 MB，需要时可重新下载。
+                {{ t('settings.rkDelHint') }}
               </n-popconfirm>
               <n-text depth="3" style="font-size:12px">
-                已就绪 · {{ ((rerank.size_bytes || 0) / 1048576).toFixed(0) }} MB
+                {{ t('settings.rkReady', { size: ((rerank.size_bytes || 0) / 1048576).toFixed(0) }) }}
               </n-text>
             </template>
           </n-space>
           <n-text v-if="rerank?.failed" type="warning" style="font-size:12px">
-            模型加载失败：{{ rerank.error }}——问答已自动回退纯 RRF。
+            {{ t('settings.rkFail', { e: rerank.error }) }}
           </n-text>
         </n-space>
       </n-card>
 
       <!-- ============ 自动化开关 ============ -->
-      <n-card title="自动化">
+      <n-card :title="t('settings.autoTitle')">
         <n-space vertical size="large">
           <n-space item-style="display:flex;align-items:center;gap:10px">
             <n-switch :value="autoKb" @update:value="toggleAutoKb" />
             <div>
-              <n-text strong>自动知识库索引</n-text>
+              <n-text strong>{{ t('settings.autoKb') }}</n-text>
               <n-text depth="3" style="display:block;font-size:12px">
-                监控目录里的新文档（PDF/Word/代码等）自动向量化进知识库，可直接内容搜索与问答
+                {{ t('settings.autoKbHint') }}
               </n-text>
             </div>
           </n-space>
@@ -1313,33 +1301,33 @@ onMounted(() => {
           <n-space item-style="display:flex;align-items:center;gap:10px">
             <n-switch :value="!!imgSem?.enabled" @update:value="toggleImgSem" />
             <div>
-              <n-text strong>图片语义搜索</n-text>
+              <n-text strong>{{ t('settings.imgSem') }}</n-text>
               <n-text depth="3" style="display:block;font-size:12px">
-                用视觉模型为图片生成描述，搜「日落」即可找到夕阳照片（需下载视觉模型）
+                {{ t('settings.imgSemHint') }}
               </n-text>
               <n-text v-if="winOcrOk" depth="3" style="display:block;font-size:12px">
-                系统内置 OCR 可用（{{ winOcrLangs }}）：不装任何模型也能搜图中的文字（发票号/截图文字），扫描版 PDF 自动识别
+                {{ t('settings.ocrOk', { langs: winOcrLangs }) }}
               </n-text>
               <n-text v-else depth="3" style="display:block;font-size:12px">
-                系统内置 OCR 不可用：可在 系统设置→时间和语言→语言→选项 中添加「光学字符识别」后使用图中文字搜索
+                {{ t('settings.ocrFail') }}
               </n-text>
               <n-space v-if="imgSem" style="margin-top:4px" size="small">
                 <n-tag size="small" :type="imgSem.model_ready ? 'success' : 'warning'">
-                  {{ imgSem.model_ready ? imgSem.vl_model + ' 已安装' : imgSem.vl_model + ' 未安装' }}
+                  {{ imgSem.model_ready ? t('settings.imgReady', { m: imgSem.vl_model }) : t('settings.imgNotReady', { m: imgSem.vl_model }) }}
                 </n-tag>
-                <n-tag v-if="imgSem.described" size="small">已描述 {{ imgSem.described }} 张</n-tag>
-                <n-tag v-if="imgSem.pending" size="small">待描述 {{ imgSem.pending }} 张</n-tag>
+                <n-tag v-if="imgSem.described" size="small">{{ t('settings.imgDescribed', { n: imgSem.described }) }}</n-tag>
+                <n-tag v-if="imgSem.pending" size="small">{{ t('settings.imgPending', { n: imgSem.pending }) }}</n-tag>
                 <n-button v-if="!imgSem.model_ready" size="tiny" type="primary" ghost @click="pullVl">
-                  下载视觉模型（~6 GB）
+                  {{ t('settings.imgDownload') }}
                 </n-button>
                 <n-button v-else-if="imgSem.pending" size="tiny" @click="api('describe_backlog')">
-                  补描述
+                  {{ t('settings.imgBackfill') }}
                 </n-button>
               </n-space>
               <n-progress v-if="imgDescProgress"
                 :percentage="imgDescProgress.n ? Math.round(imgDescProgress.i / imgDescProgress.n * 100) : 0"
                 style="margin-top:6px" processing>
-                正在描述 {{ imgDescProgress.i }}/{{ imgDescProgress.n }} · {{ imgDescProgress.name }}
+                {{ t('settings.imgProgress', { i: imgDescProgress.i, n: imgDescProgress.n, name: imgDescProgress.name }) }}
               </n-progress>
             </div>
           </n-space>
@@ -1347,9 +1335,9 @@ onMounted(() => {
           <n-space item-style="display:flex;align-items:center;gap:10px">
             <n-switch :value="autostart" @update:value="toggleAutostart" />
             <div>
-              <n-text strong>开机自动启动</n-text>
+              <n-text strong>{{ t('settings.autostart') }}</n-text>
               <n-text depth="3" style="display:block;font-size:12px">
-                开机后台常驻，文件监控与自动索引不间断；关闭窗口最小化到托盘，托盘菜单可退出
+                {{ t('settings.autostartHint') }}
               </n-text>
             </div>
           </n-space>
@@ -1357,17 +1345,17 @@ onMounted(() => {
           <n-space item-style="display:flex;align-items:center;gap:10px">
             <n-switch :value="autoOrganize.enabled" @update:value="toggleAutoOrganize" />
             <div style="flex:1">
-              <n-text strong>自动整理新文件</n-text>
+              <n-text strong>{{ t('settings.autoOrg') }}</n-text>
               <n-text depth="3" style="display:block;font-size:12px">
-                新文件进入监控目录后按规则自动归类；默认「仅出报告」绝不静默移动
+                {{ t('settings.autoOrgHint') }}
               </n-text>
               <n-space v-if="autoOrganize.enabled" style="margin-top:6px" size="small" align="center">
                 <n-select :value="autoOrganize.mode" :options="organizeModeOptions" size="small"
                   style="width:230px" @update:value="changeOrganizeMode" />
-                <n-input :value="autoOrganize.root" placeholder="选择整理目标目录…" readonly
+                <n-input :value="autoOrganize.root" :placeholder="t('settings.autoOrgPh')" readonly
                   style="width:320px" class="mono">
                   <template #suffix>
-                    <n-button size="tiny" @click="pickOrganizeRoot">浏览</n-button>
+                    <n-button size="tiny" @click="pickOrganizeRoot">{{ t('settings.browse2') }}</n-button>
                   </template>
                 </n-input>
               </n-space>
@@ -1377,23 +1365,23 @@ onMounted(() => {
       </n-card>
 
       <!-- ============ 自动扫描监控目录 ============ -->
-      <n-card title="自动扫描的监控目录（只读索引，不移动文件）">
+      <n-card :title="t('settings.watchTitle')">
         <n-space vertical size="large">
           <n-space>
-            <n-button type="primary" @click="addWatchRoot">＋ 添加监控目录</n-button>
-            <n-button :loading="rescanning" @click="rescanNow">立即重新扫描</n-button>
-            <n-text depth="3">默认包含桌面/文档/下载/图片/视频/音乐；后台实时监控变化自动更新索引</n-text>
+            <n-button type="primary" @click="addWatchRoot">{{ t('settings.watchAdd') }}</n-button>
+            <n-button :loading="rescanning" @click="rescanNow">{{ t('settings.rescan') }}</n-button>
+            <n-text depth="3">{{ t('settings.watchHint') }}</n-text>
           </n-space>
           <n-data-table v-if="watchRoots.length" :columns="rootColumns" :data="watchRoots" size="small" />
         </n-space>
       </n-card>
 
       <!-- ============ 排除目录 ============ -->
-      <n-card title="排除目录（扫描时跳过）">
+      <n-card :title="t('settings.exclTitle')">
         <n-space vertical size="large">
           <n-space>
-            <n-button type="primary" @click="addExclude">＋ 添加排除目录</n-button>
-            <n-text depth="3">排除后该目录及其子目录不再编目、不进知识库；移除规则后下次扫描自动恢复</n-text>
+            <n-button type="primary" @click="addExclude">{{ t('settings.exclAdd') }}</n-button>
+            <n-text depth="3">{{ t('settings.exclHint') }}</n-text>
           </n-space>
           <n-list v-if="excludes.length" bordered size="small">
             <n-list-item v-for="r in excludes" :key="r.id">
@@ -1402,21 +1390,21 @@ onMounted(() => {
                   <n-text class="mono" style="font-size:12.5px">{{ r.path }}</n-text>
                   <n-text depth="3" style="font-size:12px">{{ new Date(r.added_at * 1000).toLocaleString() }}</n-text>
                 </n-space>
-                <n-button size="tiny" type="error" ghost @click="removeExclude(r.id)">移除</n-button>
+                <n-button size="tiny" type="error" ghost @click="removeExclude(r.id)">{{ t('settings.exclRemove') }}</n-button>
               </n-space>
             </n-list-item>
           </n-list>
-          <n-text v-else depth="3">暂无自定义排除目录（内置会跳过微信/QQ 等缓存目录）</n-text>
+          <n-text v-else depth="3">{{ t('settings.exclEmpty') }}</n-text>
         </n-space>
       </n-card>
 
       <!-- ============ 分类规则 ============ -->
-      <n-card title="分类规则（扩展名 → 类别）">
+      <n-card :title="t('settings.rulesTitle')">
         <n-space vertical size="large">
           <n-space>
-            <n-input v-model:value="filterExt" placeholder="按扩展名筛选，如 pdf" style="width:240px" @input="applyFilter" />
-            <n-button type="primary" @click="showAdd = true">＋ 自定义规则</n-button>
-            <n-text depth="3">共 {{ rules.rules.length }} 条内置规则，自定义规则优先级更高</n-text>
+            <n-input v-model:value="filterExt" :placeholder="t('settings.rulePh')" style="width:240px" @input="applyFilter" />
+            <n-button type="primary" @click="showAdd = true">{{ t('settings.ruleAdd') }}</n-button>
+            <n-text depth="3">{{ t('settings.ruleCount', { n: rules.rules.length }) }}</n-text>
           </n-space>
           <n-data-table :columns="ruleColumns" :data="filteredRules" :max-height="360" size="small"
             :row-key="(r) => r.pattern" virtual-scroll />
@@ -1424,40 +1412,40 @@ onMounted(() => {
       </n-card>
 
       <!-- ============ 其他 ============ -->
-      <n-card title="整理选项">
+      <n-card :title="t('settings.optTitle')">
         <n-space vertical>
           <n-space item-style="display:flex;align-items:center;gap:10px">
             <n-switch :value="imagesByYear" @update:value="toggleImagesByYear" />
-            <n-text>图片按拍摄年份归档（读取 EXIF，读不到的归入「未知年份」）</n-text>
+            <n-text>{{ t('settings.imgYear') }}</n-text>
           </n-space>
         </n-space>
       </n-card>
 
       <!-- ============ 关于 ============ -->
-      <n-card title="关于 FileButler">
+      <n-card :title="t('settings.aboutTitle')">
         <n-space vertical>
           <n-space align="center">
-            <n-text strong style="font-size:14px">FileButler · 本地智能文件管家</n-text>
+            <n-text strong style="font-size:14px">{{ t('settings.aboutName') }}</n-text>
             <n-tag v-if="about" size="small" round type="info">v{{ about.version }}</n-tag>
             <n-button v-if="!checkingUpdate" size="tiny" secondary @click="checkUpdate">
-              检查更新
+              {{ t('settings.checkUpdate') }}
             </n-button>
-            <n-button v-else size="tiny" secondary loading>检查中…</n-button>
+            <n-button v-else size="tiny" secondary loading>{{ t('settings.checking') }}</n-button>
           </n-space>
           <n-alert v-if="updateInfo" :type="updateInfo.outdated ? 'warning' : 'success'" :bordered="false">
             <template #header>
-              {{ updateInfo.outdated ? `发现新版本 v${updateInfo.latest}（当前 v${updateInfo.current}）`
-                 : updateInfo.latest ? `已是最新版本 v${updateInfo.current}` : updateInfo.error }}
+              {{ updateInfo.outdated ? t('settings.updNew', { latest: updateInfo.latest, cur: updateInfo.current })
+                 : updateInfo.latest ? t('settings.updLatest', { cur: updateInfo.current }) : updateInfo.error }}
             </template>
             <template #default>
               <n-space v-if="updateInfo.outdated && updateInfo.download && !updateReady"
                        align="center" size="small">
                 <n-button size="tiny" type="primary" :loading="downloadingUpdate"
                           @click="downloadUpdate">
-                  {{ downloadingUpdate ? `下载中 ${updatePct}%` : '下载更新' }}
+                  {{ downloadingUpdate ? t('settings.dlPct', { p: updatePct }) : t('settings.dlUpdate') }}
                 </n-button>
                 <n-button size="tiny" quaternary @click="api('open_url', updateInfo.download)">
-                  手动下载
+                  {{ t('settings.manual') }}
                 </n-button>
               </n-space>
               <n-progress v-if="downloadingUpdate" :percentage="updatePct" :height="6"
@@ -1467,40 +1455,36 @@ onMounted(() => {
           </n-alert>
           <n-alert v-if="updateReady" type="success" :bordered="false">
             <n-space align="center" size="small">
-              <n-text>v{{ updateReady.version }} 安装包已就绪，安装时应用会自动退出</n-text>
-              <n-button size="tiny" type="primary" @click="installUpdate">重启并安装</n-button>
+              <n-text>{{ t('settings.ready', { v: updateReady.version }) }}</n-text>
+              <n-button size="tiny" type="primary" @click="installUpdate">{{ t('settings.restartInstall') }}</n-button>
             </n-space>
           </n-alert>
           <n-space v-if="!updateReady" align="center" size="small">
             <n-button size="tiny" quaternary :loading="rollbackLoading" @click="startRollback">
-              回退到上一版本
+              {{ t('settings.rollback') }}
             </n-button>
-            <n-text depth="3" style="font-size:12px">新版装坏了可以用它装回上一个正式版</n-text>
+            <n-text depth="3" style="font-size:12px">{{ t('settings.rollbackHint') }}</n-text>
           </n-space>
           <n-text depth="3" style="font-size:12.5px">
-            完全本地运行：自动编目 / 语法搜索 / 知识库问答 / 智能整理与去重。
-            AI 能力由本机 Ollama（或你配置的云端 API）提供，文件数据零上传。
-            <br>更新源为 GitHub Releases：点「检查更新」会向 api.github.com 发一次请求，
-            只带 FileButler 版本号的 User-Agent，不含文件名或库内容，也不会后台轮询。
+            {{ t('settings.aboutDesc') }}
           </n-text>
         </n-space>
       </n-card>
     </n-space>
 
-    <n-modal v-model:show="showAdd" preset="card" title="添加自定义规则" style="width:420px">
+    <n-modal v-model:show="showAdd" preset="card" :title="t('settings.addRuleTitle')" style="width:420px">
       <n-space vertical>
-        <n-input v-model:value="newRule.pattern" placeholder="扩展名，如 dat、npy（不含点）" />
+        <n-input v-model:value="newRule.pattern" :placeholder="t('settings.ruleExtPh')" />
         <n-select v-model:value="newRule.category" :options="rules.categories.map(c => ({ label: c, value: c }))" />
-        <n-input v-model:value="newRule.sub" placeholder="子目录（可留空），如 我的资料" />
-        <n-button type="primary" @click="addRule">添加</n-button>
+        <n-input v-model:value="newRule.sub" :placeholder="t('settings.ruleSubPh')" />
+        <n-button type="primary" @click="addRule">{{ t('settings.add') }}</n-button>
       </n-space>
     </n-modal>
 
     <n-modal v-model:show="pendingOverwrite" preset="dialog" type="warning"
-      title="目标目录已有数据库" positive-text="覆盖目标并搬迁" negative-text="取消"
+      :title="t('settings.dbExistsTitle')" :positive-text="t('settings.dbExistsOk')" :negative-text="t('settings.cancel')"
       @positive-click="confirmOverwrite" @negative-click="pendingOverwrite = false">
-      <span class="mono">{{ pendingDir }}</span> 里已存在 filebutler.db。
-      覆盖后将使用当前数据替换目标目录里的旧数据，确定继续吗？
+      {{ t('settings.dbExistsBody', { p: pendingDir }) }}
     </n-modal>
   </div>
 </template>
