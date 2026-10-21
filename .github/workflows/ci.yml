@@ -15,6 +15,11 @@ jobs:
     name: Windows / Python 3.13
     runs-on: windows-latest
     timeout-minutes: 30
+    # runner 的控制台代码页不是 UTF-8，测试里大量中文 print 会抛
+    # UnicodeEncodeError（cp1252），必须显式把 Python 的 IO 编码钉成 UTF-8。
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     steps:
       - uses: actions/checkout@v4
 
