@@ -147,6 +147,35 @@ def main():
     r = api.install_update(os.path.join(api.UPDATE_DIR, "not-an-installer.exe"))
     check("reject wrong filename", r.get("ok") is False, str(r))
 
+    # 5. 回滚：从 release 列表里找「比当前版本小的最近一个」
+    from backend import __version__ as cur_ver
+    fake = [
+        {"tag_name": "v99.0.0", "assets": [{"name": "FileButler-Setup-99.0.0.exe",
+                                            "browser_download_url": base + "/pkg.exe"}]},
+        {"tag_name": "v1.2.1", "assets": [{"name": "FileButler-Setup-1.2.1.exe",
+                                           "browser_download_url": base + "/pkg.exe",
+                                           "digest": "sha256:" + hashlib.sha256(PKG).hexdigest()}]},
+        {"tag_name": "v1.1.6", "assets": [{"name": "FileButler-Setup-1.1.6.exe",
+                                           "browser_download_url": base + "/pkg.exe"}]},
+    ]
+    api._list_releases = lambda limit=30: fake
+    t = api.rollback_target()
+    check("rollback target is previous", t.get("ok") is True and t.get("target") == "v1.2.1", str(t))
+    check("rollback ignores newer release", t.get("target") != "v99.0.0", str(t))
+
+    win.events.clear()
+    r = api.download_rollback()
+    check("rollback download started", r.get("ok") is True, str(r))
+    done = wait_event(win, "update_done")
+    check("rollback download done", done is not None and done.get("rollback") is True, str(done))
+
+    api._list_releases = lambda limit=30: [fake[0]]
+    t = api.rollback_target()
+    check("no older release -> error", t.get("ok") is False and "更早" in str(t.get("error")), str(t))
+    check("_ver_key pads", Api._ver_key("v1.4") == [1, 4, 0], str(Api._ver_key("v1.4")))
+    check("_ver_key rejects junk", Api._ver_key("nightly") is None)
+    check("current version parsed", Api._ver_key(cur_ver) is not None, cur_ver)
+
     srv.shutdown()
     shutil.rmtree(api.UPDATE_DIR, ignore_errors=True)
     print(f"\n{'ALL PASS' if FAIL == 0 else 'FAILURES: ' + str(FAIL)} ({PASS} passed, {FAIL} failed)")

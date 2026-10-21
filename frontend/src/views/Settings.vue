@@ -721,7 +721,9 @@ updateOffs.push(on('update_progress', (p) => { updatePct.value = p.pct || 0 }))
 updateOffs.push(on('update_done', (p) => {
   downloadingUpdate.value = false
   updateReady.value = p
-  message.success(`v${p.version} 已下载完成，点「重启并安装」即可更新`)
+  message.success(p.rollback
+    ? `v${p.version} 已下载完成，点「重启并安装」即可回退`
+    : `v${p.version} 已下载完成，点「重启并安装」即可更新`)
 }))
 updateOffs.push(on('update_error', (e) => {
   downloadingUpdate.value = false
@@ -746,6 +748,22 @@ async function installUpdate() {
     if (!r.ok) message.error(r.error || '安装失败')
     else message.info('安装器已启动，应用即将退出，装完重新打开即可')
   } catch (e) { message.error('安装失败：' + e) }
+}
+
+// 回退：新版装坏了退回上一个正式版（复用同一套下载 + 静默安装）
+const rollbackLoading = ref(false)
+async function startRollback() {
+  rollbackLoading.value = true
+  try {
+    const t = await api('rollback_target')
+    if (!t.ok) { message.warning(t.error || '没有可回退的版本'); return }
+    if (!window.confirm(`将下载并安装 v${t.target}（当前 v${t.current}），确定继续？`)) return
+    const r = await api('download_rollback')
+    if (!r.ok) { message.error(r.error || '下载失败'); return }
+    downloadingUpdate.value = true
+    updatePct.value = 0
+  } catch (e) { message.error('回退失败：' + e) }
+  finally { rollbackLoading.value = false }
 }
 
 // Rerank（检索结果精排，可选增强）：模型 ~544MB 按需下载，CPU 打分，默认关
@@ -1421,11 +1439,9 @@ onMounted(() => {
                  : updateInfo.latest ? `已是最新版本 v${updateInfo.current}` : updateInfo.error }}
             </template>
             <template #default>
-              <n-space v-if="updateInfo.outdated && updateInfo.download" align="center" size="small">
-                <n-button v-if="updateReady" size="tiny" type="primary" @click="installUpdate">
-                  重启并安装 v{{ updateReady.version }}
-                </n-button>
-                <n-button v-else size="tiny" type="primary" :loading="downloadingUpdate"
+              <n-space v-if="updateInfo.outdated && updateInfo.download && !updateReady"
+                       align="center" size="small">
+                <n-button size="tiny" type="primary" :loading="downloadingUpdate"
                           @click="downloadUpdate">
                   {{ downloadingUpdate ? `下载中 ${updatePct}%` : '下载更新' }}
                 </n-button>
@@ -1438,6 +1454,18 @@ onMounted(() => {
               <div v-if="updateInfo.notes" style="margin-top:6px">{{ updateInfo.notes }}</div>
             </template>
           </n-alert>
+          <n-alert v-if="updateReady" type="success" :bordered="false">
+            <n-space align="center" size="small">
+              <n-text>v{{ updateReady.version }} 安装包已就绪，安装时应用会自动退出</n-text>
+              <n-button size="tiny" type="primary" @click="installUpdate">重启并安装</n-button>
+            </n-space>
+          </n-alert>
+          <n-space v-if="!updateReady" align="center" size="small">
+            <n-button size="tiny" quaternary :loading="rollbackLoading" @click="startRollback">
+              回退到上一版本
+            </n-button>
+            <n-text depth="3" style="font-size:12px">新版装坏了可以用它装回上一个正式版</n-text>
+          </n-space>
           <n-text depth="3" style="font-size:12.5px">
             完全本地运行：自动编目 / 语法搜索 / 知识库问答 / 智能整理与去重。
             AI 能力由本机 Ollama（或你配置的云端 API）提供，文件数据零上传。

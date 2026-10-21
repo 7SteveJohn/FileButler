@@ -1428,62 +1428,126 @@ class Api:
         url = str(info.get("download") or "")
         if not url.split("?")[0].lower().endswith(".exe"):
             return {"ok": False, "error": "更新源没有提供安装包，请到 Releases 页手动下载"}
-        digest = str(info.get("digest") or "")
-        version = str(info.get("latest") or "")
-        self._updating = True
-
-        def worker():
-            import hashlib
-            import urllib.request as _url
-            from backend import __version__ as ver
-            part = None
-            try:
-                os.makedirs(self.UPDATE_DIR, exist_ok=True)
-                name = os.path.basename(url.split("?")[0]) or "FileButler-Setup.exe"
-                dest = os.path.join(self.UPDATE_DIR, name)
-                part = dest + ".part"
-                h = hashlib.sha256()
-                self._emit("update_progress", {"pct": 0, "done": 0, "total": 0})
-                req = _url.Request(url, headers={"User-Agent": "FileButler/" + ver})
-                with _url.urlopen(req, timeout=30) as resp, open(part, "wb") as f:
-                    total = int(resp.headers.get("Content-Length") or 0)
-                    done = 0
-                    last = 0.0
-                    while True:
-                        chunk = resp.read(65536)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        h.update(chunk)
-                        done += len(chunk)
-                        now = time.time()
-                        if now - last > 0.25:
-                            last = now
-                            self._emit("update_progress", {
-                                "pct": int(done * 100 / total) if total else 0,
-                                "done": done, "total": total})
-                if digest.lower().startswith("sha256:"):
-                    want = digest.split(":", 1)[1].strip().lower()
-                    if h.hexdigest().lower() != want:
-                        os.remove(part)
-                        part = None
-                        self._emit("update_error", "安装包校验失败（SHA-256 不匹配），已丢弃")
-                        return
-                os.replace(part, dest)
-                part = None
-                self._emit("update_done", {"path": dest, "version": version})
-            except Exception as e:
-                if part and os.path.exists(part):
-                    try:
-                        os.remove(part)
-                    except OSError:
-                        pass
-                self._emit("update_error", f"下载失败：{e}")
-            finally:
-                self._updating = False
-
-        threading.Thread(target=worker, daemon=True, name="fb-update").start()
+        self._start_download(url, str(info.get("digest") or ""),
+                             str(info.get("latest") or ""), rollback=False)
         return {"ok": True, "started": True}
+
+    def download_rollback(self):
+        """下载上一版安装包（新版装坏了退回用），流程与 download_update 一致。"""
+        if self._updating:
+            return {"ok": False, "error": "正在下载中"}
+        t = self.rollback_target()
+        if not t.get("ok"):
+            return t
+        url = str(t.get("download") or "")
+        if not url.split("?")[0].lower().endswith(".exe"):
+            return {"ok": False, "error": "该版本没有提供安装包，请到 Releases 页手动下载"}
+        self._start_download(url, str(t.get("digest") or ""),
+                             str(t.get("target") or ""), rollback=True)
+        return {"ok": True, "started": True, "target": t.get("target")}
+
+    def rollback_target(self):
+        """比当前版本小的最近一个正式版；没有就明确报错。
+
+        只读 releases 列表，不下载。回滚不覆盖设置与数据，装回旧版后
+        新版写入的库结构由旧版自己处理（SQLite 前向兼容的追加列除外）。
+        """
+        from backend import __version__
+        cur = self._ver_key(__version__)
+        try:
+            releases = self._list_releases()
+        except Exception as e:
+            return {"ok": False, "error": f"读取版本列表失败：{e}"}
+        best = None
+        for r in releases:
+            k = self._ver_key(r.get("tag_name") or r.get("version") or "")
+            if k is None or (cur is not None and k >= cur):
+                continue
+            if best is None or k > best[0]:
+                best = (k, r)
+        if best is None:
+            return {"ok": False, "error": "没有更早的版本可以退回"}
+        info = self._parse_release(best[1], __version__)
+        return {"ok": True, "current": __version__, "target": info.get("latest"),
+                "download": info.get("download"), "digest": info.get("digest")}
+
+    def _list_releases(self, limit=30):
+        """正式 releases 列表（新→旧）。DEFAULT_UPDATE_URL 去掉 /latest 即列表接口。"""
+        import json as _json
+        import urllib.request as _url
+        from backend import __version__
+        base = self.DEFAULT_UPDATE_URL.rsplit("/", 1)[0]
+        req = _url.Request(base + "?per_page=%d" % limit,
+                           headers={"User-Agent": "FileButler/" + __version__})
+        with _url.urlopen(req, timeout=15) as r:
+            data = _json.loads(r.read().decode("utf-8"))
+        return data if isinstance(data, list) else []
+
+    @staticmethod
+    def _ver_key(v):
+        """'v1.4' → [1,4,0]；无法解析返回 None（用于版本比较）。"""
+        try:
+            parts = [int(x) for x in str(v).lstrip("vV").split(".")[:3]]
+        except (TypeError, ValueError):
+            return None
+        return parts + [0] * (3 - len(parts))
+
+    def _start_download(self, url, digest, version, rollback=False):
+        self._updating = True
+        threading.Thread(target=self._download_worker,
+                         args=(url, digest, version, rollback),
+                         daemon=True, name="fb-update").start()
+
+    def _download_worker(self, url, digest, version, rollback):
+        import hashlib
+        import urllib.request as _url
+        from backend import __version__ as ver
+        part = None
+        try:
+            os.makedirs(self.UPDATE_DIR, exist_ok=True)
+            name = os.path.basename(url.split("?")[0]) or "FileButler-Setup.exe"
+            dest = os.path.join(self.UPDATE_DIR, name)
+            part = dest + ".part"
+            h = hashlib.sha256()
+            self._emit("update_progress", {"pct": 0, "done": 0, "total": 0})
+            req = _url.Request(url, headers={"User-Agent": "FileButler/" + ver})
+            with _url.urlopen(req, timeout=30) as resp, open(part, "wb") as f:
+                total = int(resp.headers.get("Content-Length") or 0)
+                done = 0
+                last = 0.0
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    h.update(chunk)
+                    done += len(chunk)
+                    now = time.time()
+                    if now - last > 0.25:
+                        last = now
+                        self._emit("update_progress", {
+                            "pct": int(done * 100 / total) if total else 0,
+                            "done": done, "total": total})
+            if digest.lower().startswith("sha256:"):
+                want = digest.split(":", 1)[1].strip().lower()
+                if h.hexdigest().lower() != want:
+                    os.remove(part)
+                    part = None
+                    self._emit("update_error", "安装包校验失败（SHA-256 不匹配），已丢弃")
+                    return
+            os.replace(part, dest)
+            part = None
+            self._emit("update_done", {"path": dest, "version": version,
+                                       "rollback": bool(rollback)})
+        except Exception as e:
+            if part and os.path.exists(part):
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+            self._emit("update_error", f"下载失败：{e}")
+        finally:
+            self._updating = False
 
     def install_update(self, path):
         """用已下载的安装包静默升级：先拉起安装器，再退出本进程。
