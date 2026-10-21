@@ -337,6 +337,45 @@ def main():
             pref = ctypes.c_int(DWMWCP_ROUND)
             dwm.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
                                       ctypes.byref(pref), 4)
+
+            # 去顶线：WS_THICKFRAME 会带回 1px 系统非客户区边框（窗口最顶上的黑线）。
+            # 子类化窗口过程拦截 WM_NCCALCSIZE 返回 0，把客户区扩到整个窗口——
+            # 保留缩放/贴靠能力但不再绘制非客户区（Electron 同款做法）。
+            GWLP_WNDPROC = -4
+            WM_NCCALCSIZE = 0x0083
+            SM_CXFRAME, SM_CXPADDEDBORDER = 32, 92
+            user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+            user32.GetWindowLongPtrW.argtypes = [ctypes.c_ssize_t, ctypes.c_int]
+            user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+            user32.SetWindowLongPtrW.argtypes = [ctypes.c_ssize_t, ctypes.c_int, ctypes.c_ssize_t]
+            user32.CallWindowProcW.restype = ctypes.c_ssize_t
+            user32.CallWindowProcW.argtypes = [ctypes.c_ssize_t, ctypes.c_ssize_t,
+                                               ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+
+            class _RECT(ctypes.Structure):
+                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                            ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+            wndproc_t = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_ssize_t,
+                                           ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t)
+            prev_proc = user32.GetWindowLongPtrW(hwnd, GWLP_WNDPROC)
+
+            def _fb_wndproc(h, msg, wp, lp):
+                if msg == WM_NCCALCSIZE and wp:
+                    if user32.IsZoomed(h):
+                        # 最大化时把客户区缩回一个边框宽，防止内容溢出屏幕
+                        pad = (user32.GetSystemMetrics(SM_CXFRAME)
+                               + user32.GetSystemMetrics(SM_CXPADDEDBORDER))
+                        rect = ctypes.cast(lp, ctypes.POINTER(_RECT)).contents
+                        rect.left += pad; rect.top += pad
+                        rect.right -= pad; rect.bottom -= pad
+                    return 0
+                return user32.CallWindowProcW(prev_proc, h, msg, wp, lp)
+
+            proc_ref = wndproc_t(_fb_wndproc)
+            # 回调引用必须常驻（被 C 侧持有），否则 GC 回收后窗口消息回调崩溃
+            globals().setdefault("_FB_WNDPROC_REFS", []).append(proc_ref)
+            set_long(hwnd, GWLP_WNDPROC, proc_ref)
         except Exception as e:
             print("enable native resize failed:", e)
 
@@ -577,8 +616,8 @@ def main():
             pass
         api.rescan_library()
 
-    def hide_to_tray():
-        """隐藏到托盘（自绘标题栏的关闭按钮 / Alt+F4 共用）。"""
+    def _ensure_tray_icon():
+        """托盘图标常驻：应用启动时就创建，而不是等最小化才有（用户反馈）。幂等。"""
         try:
             if tray.get("icon") is None:
                 from pystray import Icon, Menu, MenuItem
@@ -593,6 +632,13 @@ def main():
                 )
                 tray["icon"] = icon
                 threading.Thread(target=icon.run, daemon=True).start()
+        except Exception:
+            pass
+
+    def hide_to_tray():
+        """隐藏到托盘（自绘标题栏的关闭按钮 / Alt+F4 共用）。"""
+        try:
+            _ensure_tray_icon()
             api.set_visible(False)  # 隐藏期间后端不再向前端推 JS 事件
             window.hide()
             return True
@@ -608,6 +654,7 @@ def main():
     api.set_hide_to_tray_handler(hide_to_tray)
     window.events.closing += on_closing
 
+    _ensure_tray_icon()  # 启动即驻留托盘（点击可唤起主窗口）
     if tray_start:
         hide_to_tray()  # 静默启动：直接驻留托盘，不弹主窗口
 

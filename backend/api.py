@@ -268,10 +268,48 @@ class Api:
         except Exception as e:
             print("pending dir cleanup error:", e)
 
+    def _maybe_start_ollama(self):
+        """设置开启时：Ollama 没在运行就拉起 `ollama serve`。
+        用户痛点：首屏要等 Ollama 冷启动 + 模型加载几十秒；服务先起，
+        配合 preload 预载模型，首屏几乎不等。已运行则直接返回。"""
+        try:
+            if db.get_setting("auto_start_ollama", "1") != "1":
+                return
+            try:
+                # status() 不抛异常：未运行时返回 running=False（还有 5s 缓存）
+                if OllamaClient().status().get("running"):
+                    return   # 已在运行
+            except Exception:
+                pass
+            exe = shutil.which("ollama")
+            if not exe:
+                # ollama 安装器不一定写 PATH，补两个常见位置
+                for p in (os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe"),
+                          r"C:\Program Files\Ollama\ollama.exe"):
+                    if os.path.exists(p):
+                        exe = p
+                        break
+            if not exe:
+                return
+            subprocess.Popen([exe, "serve"],
+                             creationflags=0x08000000,  # CREATE_NO_WINDOW，不弹黑框
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # 轮询等就绪（最多 20s），就绪后 warm/preload 才有意义
+            for _ in range(40):
+                time.sleep(0.5)
+                try:
+                    if OllamaClient().status().get("running"):
+                        return
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
     def _warm_status(self):
         """后台预热 Ollama 状态缓存（30s TTL 的第一次探测）。
         设置开启时顺带把对话/向量模型预载进显存（配合 keep_alive 常驻），
         首次问答/向量化不再等几十秒的模型载入。"""
+        self._maybe_start_ollama()
         try:
             OllamaClient().status()
         except Exception:
@@ -637,6 +675,7 @@ class Api:
             "winocr": winocr_status,
             "images_by_year": db.get_setting("images_by_year", "1"),
             "auto_kb": db.get_setting("auto_kb", "1") == "1",
+            "auto_start_ollama": db.get_setting("auto_start_ollama", "1") == "1",
             "img_semantic": db.get_setting("img_semantic", "0") == "1",
             "library": lib,
             "thumb_base": f"http://127.0.0.1:{self.thumb.port}" if self.thumb.port else None,
@@ -2067,6 +2106,11 @@ class Api:
         if enabled:
             indexer.sync_auto_folders()
             self.index_all_auto_folders()
+        return {"ok": True}
+
+    def set_auto_start_ollama(self, enabled):
+        """启动时自动拉起 ollama serve（Ollama 没在运行时），默认开。"""
+        db.set_setting("auto_start_ollama", "1" if enabled else "0")
         return {"ok": True}
 
     def set_img_semantic(self, enabled):

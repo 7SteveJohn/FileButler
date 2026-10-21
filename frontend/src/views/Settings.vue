@@ -519,12 +519,20 @@ loadContentIndex()
 // ---------- 功能开关 ----------
 const autoKb = ref(true)
 const autostart = ref(false)
+const autoStartOllama = ref(true)
 
 async function loadToggles() {
   const st = await api('get_status')
   autoKb.value = st.auto_kb
+  autoStartOllama.value = st.auto_start_ollama
   const as = await api('autostart_status')
   autostart.value = as.enabled
+}
+
+async function toggleAutoStartOllama(v) {
+  autoStartOllama.value = v
+  await api('set_auto_start_ollama', v)
+  message.success(v ? t('settings.m.asoOn') : t('settings.m.asoOff'))
 }
 
 async function toggleAutoKb(v) {
@@ -1288,6 +1296,16 @@ onMounted(() => {
       <!-- ============ 自动化开关 ============ -->
       <n-card :title="t('settings.autoTitle')">
         <n-space vertical size="large">
+          <n-space item-style="display:flex;align-items:center;gap:10px">
+            <n-switch :value="autoStartOllama" @update:value="toggleAutoStartOllama" />
+            <div>
+              <n-text strong>{{ t('settings.autoStartOllama') }}</n-text>
+              <n-text depth="3" style="display:block;font-size:12px">
+                {{ t('settings.autoStartOllamaHint') }}
+              </n-text>
+            </div>
+          </n-space>
+
           <n-space item-style="display:flex;align-items:center;gap:10px">
             <n-switch :value="autoKb" @update:value="toggleAutoKb" />
             <div>
