@@ -58,6 +58,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 - **Filters you don't have to rebuild**: save the current filter set and reopen it later; star, tag and annotate files you return to
 - **Batch operations**: multi-select to move / copy / rename / delete (to Recycle Bin) / copy path
 - **Two small utilities**: OCR text extraction from images, and SHA-256 checksums for any file
+- **English / 简体中文 UI**: switch under Settings → Appearance; the choice is stored in the app's own settings, not the browser locale
 
 ### 💬 Asking your documents — a knowledge base that answers
 
