@@ -6,8 +6,10 @@ import {
   NCheckbox, useMessage, NEmpty, NAlert, NSpin,
 } from 'naive-ui'
 import { api, on } from '../lib/bridge'
+import { useI18n } from 'vue-i18n'
 
 const message = useMessage()
+const { t } = useI18n()
 
 // ---------- 状态 ----------
 const tab = ref('organize')
@@ -27,6 +29,11 @@ const batchOps = ref(null)
 const showBatchOps = ref(false)
 
 const CATEGORIES = ['文档', '图片', '视频', '音频', '压缩包', '安装包', '代码', '数据', '字体', '其他']
+const CAT_KEY = {
+  文档: 'doc', 图片: 'image', 视频: 'video', 音频: 'audio', 压缩包: 'archive',
+  安装包: 'installer', 代码: 'code', 数据: 'data', 字体: 'font', 其他: 'other',
+}
+const catLabel = (c) => (CAT_KEY[c] ? t('files.cat.' + CAT_KEY[c]) : c)
 const categoryOptions = CATEGORIES.map((c) => ({ label: c, value: c }))
 
 let offs = []
@@ -37,7 +44,7 @@ offs.push(on('ai_classify_done', (p) => {
   scanInfo.value.files = p.files
   aiRunning.value = false
   aiProgress.value = null
-  message.success('AI 分类完成')
+  message.success(t('org.aiDone'))
 }))
 offs.push(on('ai_classify_error', (e) => { aiRunning.value = false; message.error(String(e)) }))
 onUnmounted(() => offs.forEach((f) => f()))
@@ -54,16 +61,16 @@ async function pickFolderThenKeep() {
 }
 
 async function scan() {
-  if (!rootPath.value) return message.warning('请先选择要整理的文件夹')
+  if (!rootPath.value) return message.warning(t('org.msgNeedFolder'))
   scanning.value = true
   scanInfo.value = null
   planData.value = null
   try {
     scanInfo.value = await api('scan_folder', rootPath.value)
     targetRoot.value = rootPath.value
-    if (scanInfo.value.files.length === 0) message.info('该文件夹没有发现文件')
+    if (scanInfo.value.files.length === 0) message.info(t('org.msgNoFiles'))
   } catch (e) {
-    message.error('扫描失败：' + e)
+    message.error(t('org.msgScanFail', { e }))
   }
   scanning.value = false
 }
@@ -72,17 +79,17 @@ const ambiguousFiles = computed(() =>
   (scanInfo.value?.files || []).filter((f) => !f.rule_hit))
 
 const scanColumns = [
-  { title: '文件名', key: 'name', ellipsis: { tooltip: (r) => r.ai_reason || r.name } },
-  { title: '类别', key: 'category', width: 110, render: (r) => h(NTag, {
+  { title: t('org.colName'), key: 'name', ellipsis: { tooltip: (r) => r.ai_reason || r.name } },
+  { title: t('org.colCategory'), key: 'category', width: 110, render: (r) => h(NTag, {
       size: 'small', bordered: false,
       type: r.ai_category ? 'success' : (r.rule_hit ? 'default' : 'warning'),
     }, { default: () => r.final_category || r.category }) },
-  { title: '扩展名', key: 'ext', width: 90, render: (r) => h('span', { class: 'mono' }, r.ext || '-') },
-  { title: '大小', key: 'size', width: 100, render: (r) => fmtSize(r.size) },
+  { title: t('org.colExt'), key: 'ext', width: 90, render: (r) => h('span', { class: 'mono' }, r.ext || '-') },
+  { title: t('org.colSize'), key: 'size', width: 100, render: (r) => fmtSize(r.size) },
 ]
 
 async function runAiClassify() {
-  if (ambiguousFiles.value.length === 0) return message.info('没有需要 AI 判断的文件')
+  if (ambiguousFiles.value.length === 0) return message.info(t('org.msgNoAmbiguous'))
   const r = await api('ai_classify', JSON.parse(JSON.stringify(ambiguousFiles.value)))
   if (r.started) aiRunning.value = true
 }
@@ -114,72 +121,72 @@ async function buildPlan() {
       .filter((r) => r.action === 'move')
       .map((r) => r.src)
     const n = checkedKeys.value.length
-    if (n === 0) message.info('所有文件都已在合适的位置，无需整理')
+    if (n === 0) message.info(t('org.msgAllInPlace'))
   } catch (e) {
-    message.error('生成计划失败：' + e)
+    message.error(t('org.msgPlanFail', { e }))
   }
   executing.value = false
 }
 
 const planColumns = [
   { type: 'selection' },
-  { title: '原路径', key: 'src', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.src) },
-  { title: '→ 目标', key: 'dst', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.dst || r.src) },
-  { title: '类别', key: 'category', width: 110, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
+  { title: t('org.colSrc'), key: 'src', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.src) },
+  { title: t('org.colDst'), key: 'dst', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.dst || r.src) },
+  { title: t('org.colCategory'), key: 'category', width: 110, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
 ]
 
 const planRows = computed(() => planData.value?.plan || [])
 
 async function execute() {
-  if (checkedKeys.value.length === 0) return message.warning('请先勾选要整理的文件')
+  if (checkedKeys.value.length === 0) return message.warning(t('org.msgNeedCheck'))
   executing.value = true
   try {
     const rows = planRows.value.filter((r) => checkedKeys.value.includes(r.src))
     const result = await api('execute_plan', JSON.parse(JSON.stringify(rows)))
     const ok = result.results.filter((r) => r.ok).length
     const fail = result.results.length - ok
-    if (fail === 0) message.success(`整理完成：${ok} 个文件已移动`)
-    else message.warning(`完成：${ok} 成功 / ${fail} 失败（详见操作历史）`)
+    if (fail === 0) message.success(t('org.msgDoneMove', { ok }))
+    else message.warning(t('org.msgDonePartial', { ok, fail }))
     loadHistory()
     scan()  // 重新扫描反映现状
   } catch (e) {
-    message.error('执行失败：' + e)
+    message.error(t('org.msgExecFail', { e }))
   }
   executing.value = false
 }
 
 // ---------- 重复检测 ----------
 async function runDedupe() {
-  if (!scanInfo.value) return message.warning('请先扫描文件夹')
+  if (!scanInfo.value) return message.warning(t('org.msgNeedScan'))
   dedupeRunning.value = true
   dedupe.value = null
   try {
     dedupe.value = await api('find_duplicates', JSON.parse(JSON.stringify(scanInfo.value.files)))
-    if (dedupe.value.groups.length === 0) message.info('没有发现重复文件')
+    if (dedupe.value.groups.length === 0) message.info(t('org.msgNoDup'))
   } catch (e) {
-    message.error('检测失败：' + e)
+    message.error(t('org.msgDetectFail', { e }))
   }
   dedupeRunning.value = false
 }
 
 const dedupeColumns = [
-  { title: '哈希(前16)', key: 'hash', width: 130, render: (r) => h('span', { class: 'mono' }, r.hash) },
-  { title: '大小', key: 'size', width: 90, render: (r) => fmtSize(r.size) },
-  { title: '文件列表（点击打开所在位置）', key: 'paths', render: (r) =>
+  { title: t('org.colHash'), key: 'hash', width: 130, render: (r) => h('span', { class: 'mono' }, r.hash) },
+  { title: t('org.colSize'), key: 'size', width: 90, render: (r) => fmtSize(r.size) },
+  { title: t('org.colPaths'), key: 'paths', render: (r) =>
     h('div', null, r.paths.map((p, i) => h('div', {
       class: 'mono', style: 'cursor:pointer;color:' + (i === 0 ? '#18a058' : '#666') + ';padding:1px 0',
       onClick: () => api('open_path', p),
       title: p,
-    }, (i === 0 ? '✓ 保留建议  ' : '   重复     ') + p))) },
+    }, (i === 0 ? t('org.keepSuggest') : t('org.dupMark')) + p))) },
 ]
 
 // ---------- 重复清理 ----------
 const selectedDupGroups = ref([])
 const keepRule = ref('newest')
 const keepRuleOptions = [
-  { label: '保留最新', value: 'newest' },
-  { label: '保留最早', value: 'oldest' },
-  { label: '保留路径最短', value: 'shortest' },
+  { label: t('org.keepNewest'), value: 'newest' },
+  { label: t('org.keepOldest'), value: 'oldest' },
+  { label: t('org.keepShortest'), value: 'shortest' },
 ]
 const cleaning = ref(false)
 
@@ -187,20 +194,20 @@ const dedupeColumnsWithSelection = [{ type: 'selection' }, ...dedupeColumns]
 
 async function cleanupDuplicates() {
   const groups = dedupe.value.groups.filter((g) => selectedDupGroups.value.includes(g.hash))
-  if (!groups.length) return message.warning('请先勾选要清理的重复组')
+  if (!groups.length) return message.warning(t('org.msgNeedDupGroups'))
   const toMove = groups.reduce((n, g) => n + g.paths.length - 1, 0)
   const ok = await new Promise((resolve) => {
     // 简易确认：用 window.confirm 足够，避免再引弹窗组件
-    resolve(window.confirm(`将把 ${toMove} 个重复文件移入「待清理」文件夹（不删除，可在操作历史撤销）。继续？`))
+    resolve(window.confirm(t('org.confirmDup', { n: toMove })))
   })
   if (!ok) return
   cleaning.value = true
   try {
     const r = await api('dedupe_cleanup', JSON.parse(JSON.stringify(groups)), keepRule.value, false)
     if (r.failed === 0) {
-      message.success(`已移入待清理 ${r.moved} 个（保留 ${r.kept} 个），批次 ${r.batch_id}`)
+      message.success(t('org.msgMovedClean', { moved: r.moved, kept: r.kept, id: r.batch_id }))
     } else {
-      message.warning(`移动 ${r.moved} 个，失败 ${r.failed} 个`)
+      message.warning(t('org.msgMovePartial', { moved: r.moved, failed: r.failed }))
     }
     loadHistory()
     scan()
@@ -215,7 +222,7 @@ const selectedSimGroups = ref([])
 const simThumbBase = ref(null)
 
 async function runSimilar() {
-  if (!scanInfo.value) return message.warning('请先扫描文件夹')
+  if (!scanInfo.value) return message.warning(t('org.msgNeedScan'))
   similarRunning.value = true
   similar.value = null
   selectedSimGroups.value = []
@@ -224,15 +231,15 @@ async function runSimilar() {
     simThumbBase.value = st.thumb_base
     similar.value = await api('find_similar_images',
       JSON.parse(JSON.stringify(scanInfo.value.files)))
-    if (similar.value.groups.length === 0) message.info('没有发现相似图片（缩放/压缩/连拍近似重复）')
+    if (similar.value.groups.length === 0) message.info(t('org.msgNoSimilar'))
   } catch (e) {
-    message.error('检测失败：' + e)
+    message.error(t('org.msgDetectFail', { e }))
   }
   similarRunning.value = false
 }
 
 const simColumns = [
-  { title: '相似组（点击打开所在位置）', key: 'paths', render: (r) =>
+  { title: t('org.colSimPaths'), key: 'paths', render: (r) =>
     h('div', null, r.paths.map((p, i) => h('div', {
       style: 'display:flex;align-items:center;gap:10px;padding:2px 0;cursor:pointer',
       onClick: () => api('open_path', p),
@@ -245,7 +252,7 @@ const simColumns = [
       }),
       h('span', {
         class: 'mono', style: 'font-size:12px;color:' + (i === 0 ? '#18a058' : '#888'),
-      }, (i === 0 ? '✓ 保留建议  ' : '近似重复  ') + p),
+      }, (i === 0 ? t('org.keepSuggest') : t('org.simMark')) + p),
     ]))) },
 ]
 
@@ -253,17 +260,17 @@ const simColumnsWithSelection = [{ type: 'selection' }, ...simColumns]
 
 async function cleanupSimilar() {
   const groups = similar.value.groups.filter((g) => selectedSimGroups.value.includes(g.hash))
-  if (!groups.length) return message.warning('请先勾选要清理的相似组')
+  if (!groups.length) return message.warning(t('org.msgNeedSimGroups'))
   const toMove = groups.reduce((n, g) => n + g.paths.length - 1, 0)
-  const ok = window.confirm(`将把 ${toMove} 个近似重复图片移入「待清理」文件夹（不删除，可在操作历史撤销）。继续？`)
+  const ok = window.confirm(t('org.confirmSim', { n: toMove }))
   if (!ok) return
   cleaning.value = true
   try {
     const r = await api('dedupe_cleanup', JSON.parse(JSON.stringify(groups)), keepRule.value, false)
     if (r.failed === 0) {
-      message.success(`已移入待清理 ${r.moved} 个（保留 ${r.kept} 个），批次 ${r.batch_id}`)
+      message.success(t('org.msgMovedClean', { moved: r.moved, kept: r.kept, id: r.batch_id }))
     } else {
-      message.warning(`移动 ${r.moved} 个，失败 ${r.failed} 个`)
+      message.warning(t('org.msgMovePartial', { moved: r.moved, failed: r.failed }))
     }
     loadHistory()
     scan()
@@ -281,7 +288,7 @@ const bigSizeOptions = [
   { label: '> 500 MB', value: '500mb' },
   { label: '> 100 MB', value: '100mb' },
   { label: '> 10 MB', value: '10mb' },
-  { label: '不限', value: '' },
+  { label: t('org.unlimited'), value: '' },
 ]
 
 async function findBigFiles() {
@@ -291,7 +298,7 @@ async function findBigFiles() {
     const q = bigMinSize.value ? `size:>${bigMinSize.value}` : null
     const r = await api('browse_files', q, null, null, 0, 300, 'size', 'desc')
     bigFiles.value = r.items
-    if (!r.items.length) message.info('没有超过阈值的大文件')
+    if (!r.items.length) message.info(t('org.msgBigNone'))
   } catch (e) { message.error(String(e)) }
   bigRunning.value = false
 }
@@ -303,23 +310,23 @@ const bigWaste = computed(() =>
 
 const bigColumns = [
   { type: 'selection' },
-  { title: '大小', key: 'size', width: 100, render: (r) => h('b', null, fmtSize(r.size)) },
-  { title: '文件名', key: 'name', ellipsis: { tooltip: true } },
-  { title: '类别', key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
-  { title: '修改时间', key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
-  { title: '路径', key: 'path', ellipsis: { tooltip: true },
-    render: (r) => h('span', { class: 'mono', style: 'cursor:pointer', title: '点击打开所在位置',
+  { title: t('org.colSize'), key: 'size', width: 100, render: (r) => h('b', null, fmtSize(r.size)) },
+  { title: t('org.colName'), key: 'name', ellipsis: { tooltip: true } },
+  { title: t('org.colCategory'), key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
+  { title: t('org.colMtime'), key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
+  { title: t('org.colPath'), key: 'path', ellipsis: { tooltip: true },
+    render: (r) => h('span', { class: 'mono', style: 'cursor:pointer', title: t('org.colPath'),
       onClick: () => api('open_path', r.path) }, r.path) },
 ]
 
 async function trashBigFiles() {
   const paths = (bigFiles.value || []).filter((f) => bigChecked.value.includes(f.path)).map((f) => f.path)
-  if (!paths.length) return message.warning('请先勾选要清理的大文件')
-  const ok = window.confirm(`将 ${paths.length} 个大文件（共 ${fmtSize(bigWaste.value)}）移入系统回收站？\n可从回收站恢复。`)
+  if (!paths.length) return message.warning(t('org.msgNeedBig'))
+  const ok = window.confirm(t('org.confirmBig', { n: paths.length, size: fmtSize(bigWaste.value) }))
   if (!ok) return
   const r = await api('trash_files', JSON.parse(JSON.stringify(paths)))
   const okN = r.results.filter((x) => x.ok).length
-  message.success(`已移入回收站 ${okN}/${paths.length}`)
+  message.success(t('org.msgTrashed', { ok: okN, all: paths.length }))
   findBigFiles()
 }
 
@@ -333,32 +340,32 @@ async function findConflicts() {
   conflictChecked.value = []
   try {
     conflicts.value = (await api('find_conflict_files')).items
-    if (!conflicts.value.length) message.info('没有发现冲突或编号副本')
+    if (!conflicts.value.length) message.info(t('org.msgConflictNone'))
   } catch (e) { message.error(String(e)) }
   conflictsRunning.value = false
 }
 
 const conflictColumns = [
   { type: 'selection' },
-  { title: '原因', key: 'reason', width: 100,
+  { title: t('org.colReason'), key: 'reason', width: 100,
     render: (r) => h(NTag, { size: 'small', type: r.reason === '同步冲突' ? 'error' : 'warning', bordered: false },
       { default: () => r.reason }) },
-  { title: '文件名', key: 'name', ellipsis: { tooltip: (r) => r.path },
+  { title: t('org.colName'), key: 'name', ellipsis: { tooltip: (r) => r.path },
     render: (r) => r.path.split(/[\\/]/).pop() },
-  { title: '大小', key: 'size', width: 100, render: (r) => fmtSize(r.size) },
-  { title: '修改时间', key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
-  { title: '相关文件', key: 'related', ellipsis: { tooltip: true },
+  { title: t('org.colSize'), key: 'size', width: 100, render: (r) => fmtSize(r.size) },
+  { title: t('org.colMtime'), key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
+  { title: t('org.colRelated'), key: 'related', ellipsis: { tooltip: true },
     render: (r) => r.related ? h('span', { class: 'mono' }, r.related) : h('span', { style: 'opacity:.4' }, '-') },
 ]
 
 async function trashConflicts() {
   const paths = (conflicts.value || []).filter((f) => conflictChecked.value.includes(f.path)).map((f) => f.path)
-  if (!paths.length) return message.warning('请先勾选要清理的文件')
-  const ok = window.confirm(`将 ${paths.length} 个冲突/副本文件移入系统回收站？\n可从回收站恢复。`)
+  if (!paths.length) return message.warning(t('org.msgNeedConflict'))
+  const ok = window.confirm(t('org.confirmConflict', { n: paths.length }))
   if (!ok) return
   const r = await api('trash_files', JSON.parse(JSON.stringify(paths)))
   const okN = r.results.filter((x) => x.ok).length
-  message.success(`已移入回收站 ${okN}/${paths.length}`)
+  message.success(t('org.msgTrashed', { ok: okN, all: paths.length }))
   findConflicts()
 }
 
@@ -371,16 +378,16 @@ async function loadTemplates() {
   try { templates.value = (await api('list_templates')).templates } catch (e) { /* 忽略 */ }
 }
 
-function applyTemplate(t) {
-  targetRoot.value = t.target_root
-  message.info(`已应用模板「${t.name}」`)
+function applyTemplate(tp) {
+  targetRoot.value = tp.target_root
+  message.info(t('org.msgTplApplied', { name: tp.name }))
 }
 
 async function saveTemplateNow() {
-  if (!tplName.value.trim()) return message.warning('请输入模板名')
+  if (!tplName.value.trim()) return message.warning(t('org.msgNeedTplName'))
   const byYear = (await api('get_status')).images_by_year === '1'
   await api('save_template', tplName.value.trim(), targetRoot.value, byYear)
-  message.success('模板已保存')
+  message.success(t('org.msgTplSaved'))
   showSaveTpl.value = false
   tplName.value = ''
   loadTemplates()
@@ -413,31 +420,31 @@ async function loadEmptyDirs() {
   loadingDirs.value = false
 }
 async function cleanEmptyDirs() {
-  const ok = window.confirm(`将 ${emptyDirs.value.length} 个空文件夹移入系统回收站？\n可在资源管理器回收站中恢复。`)
+  const ok = window.confirm(t('org.confirmEmpty', { n: emptyDirs.value.length }))
   if (!ok) return
   cleaningDirs.value = true
   const r = await api('trash_empty_dirs', JSON.parse(JSON.stringify(emptyDirs.value)))
   const okN = r.results.filter((x) => x.ok).length
-  message.success(`已送入回收站 ${okN}/${r.results.length}`)
+  message.success(t('org.msgEmptyTrashed', { ok: okN, all: r.results.length }))
   cleaningDirs.value = false
   loadEmptyDirs()
 }
 
 async function undo(batchId) {
   const r = await api('undo_batch', batchId)
-  if (r.failed) message.warning(`撤销 ${r.undone} 个，失败 ${r.failed} 个`)
+  if (r.failed) message.warning(t('org.msgUndoPartial', { done: r.undone, fail: r.failed }))
   else if (r.recycle_bin) {
-    message.info(`已撤销 ${r.undone} 个；${r.recycle_bin} 个在系统回收站，需从回收站还原`)
+    message.info(t('org.msgUndone', { done: r.undone, bin: r.recycle_bin }))
   } else if (!r.undone) {
-    message.info('该批次没有可由应用撤销的操作')
-  } else message.success(`已撤销 ${r.undone} 个操作`)
+    message.info(t('org.msgUndoNone'))
+  } else message.success(t('org.msgUndoneAll', { n: r.undone }))
   loadHistory()
 }
 
 async function redo(batchId) {
   const r = await api('redo_batch', batchId)
-  if (r.failed === 0) message.success(`已重做 ${r.redone} 个操作（恢复整理后的位置）`)
-  else message.warning(`重做 ${r.redone} 个，失败 ${r.failed} 个`)
+  if (r.failed === 0) message.success(t('org.msgRedone', { n: r.redone }))
+  else message.warning(t('org.msgRedoPartial', { done: r.redone, fail: r.failed }))
   loadHistory()
 }
 
@@ -464,47 +471,47 @@ loadTemplates()
   <div class="fb-page">
     <n-tabs v-model:value="tab" type="line">
       <!-- ================= 整理 ================= -->
-      <n-tab-pane name="organize" tab="智能整理">
+      <n-tab-pane name="organize" :tab="t('org.tabOrganize')">
         <n-card>
           <n-space vertical size="large">
             <n-space align="center">
-              <n-input v-model:value="rootPath" placeholder="选择要整理的文件夹…" style="width:480px" readonly>
+              <n-input v-model:value="rootPath" :placeholder="t('org.pickPh')" style="width:480px" readonly>
                 <template #suffix>
-                  <n-button size="tiny" @click="pickFolder">浏览</n-button>
+                  <n-button size="tiny" @click="pickFolder">{{ t('org.browse') }}</n-button>
                 </template>
               </n-input>
-              <n-button type="primary" :loading="scanning" @click="scan">扫描</n-button>
+              <n-button type="primary" :loading="scanning" @click="scan">{{ t('org.scan') }}</n-button>
               <n-button v-if="scanInfo && ambiguousFiles.length > 0" :loading="aiRunning" type="warning" ghost @click="runAiClassify">
-                AI 分类（{{ ambiguousFiles.length }} 个模糊文件）
+                {{ t('org.aiClassify', { n: ambiguousFiles.length }) }}
               </n-button>
             </n-space>
 
             <n-progress v-if="aiRunning && aiProgress" :percentage="Math.round(aiProgress.i / aiProgress.n * 100)" processing>
-              <span class="mono">AI 判断 {{ aiProgress.i }}/{{ aiProgress.n }} · {{ aiProgress.name }}</span>
+              <span class="mono">{{ t('org.aiProgress', { i: aiProgress.i, n: aiProgress.n, name: aiProgress.name }) }}</span>
             </n-progress>
 
             <template v-if="scanInfo">
               <n-space align="center">
-                <n-text>共 <b>{{ scanInfo.files.length }}</b> 个文件</n-text>
-                <n-tag v-if="scanInfo.ambiguous" type="warning">规则无法归类 {{ scanInfo.ambiguous }} 个</n-tag>
+                <n-text>{{ t('org.filesN', { n: scanInfo.files.length }) }}</n-text>
+                <n-tag v-if="scanInfo.ambiguous" type="warning">{{ t('org.ambiguous', { n: scanInfo.ambiguous }) }}</n-tag>
               </n-space>
 
               <n-data-table :columns="scanColumns" :data="previewFiles" :max-height="300" size="small"
                 :row-key="(r) => r.path" virtual-scroll />
 
               <n-space align="center" item-style="display:flex;align-items:center;gap:6px">
-                <n-text>整理到：</n-text>
+                <n-text>{{ t('org.toDir') }}</n-text>
                 <n-input v-model:value="targetRoot" style="width:400px" class="mono">
                   <template #suffix>
-                    <n-button size="tiny" @click="pickFolderThenKeep">浏览</n-button>
+                    <n-button size="tiny" @click="pickFolderThenKeep">{{ t('org.browse') }}</n-button>
                   </template>
                 </n-input>
-                <n-select v-if="templates.length" :options="templates.map(t => ({ label: '模板: ' + t.name, value: t.id }))"
-                  placeholder="整理模板" size="small" style="width:170px" @update:value="(id) => applyTemplate(templates.find(t => t.id === id))" />
-                <n-button size="small" @click="showSaveTpl = true">存为模板</n-button>
+                <n-select v-if="templates.length" :options="templates.map(tp => ({ label: t('org.tplPrefix') + tp.name, value: tp.id }))"
+                  :placeholder="t('org.tplPh')" size="small" style="width:170px" @update:value="(id) => applyTemplate(templates.find(t => t.id === id))" />
+                <n-button size="small" @click="showSaveTpl = true">{{ t('org.saveTpl') }}</n-button>
               </n-space>
               <n-space>
-                <n-button type="primary" :loading="executing" @click="buildPlan">生成整理计划（预览）</n-button>
+                <n-button type="primary" :loading="executing" @click="buildPlan">{{ t('org.buildPlan') }}</n-button>
               </n-space>
             </template>
 
@@ -512,7 +519,7 @@ loadTemplates()
               <n-alert v-if="Object.keys(planData.summary).length" type="success" :bordered="false">
                 <n-space>
                   <span v-for="(v, cat) in planData.summary" :key="cat">
-                    <n-tag size="small">{{ cat }}</n-tag> {{ v.count }} 个 · {{ fmtSize(v.size) }}
+                    <n-tag size="small">{{ catLabel(cat) }}</n-tag> {{ v.count }} {{ t('files.batch.unit') }} · {{ fmtSize(v.size) }}
                   </span>
                 </n-space>
               </n-alert>
@@ -520,9 +527,9 @@ loadTemplates()
                 :max-height="320" size="small" :row-key="(r) => r.src" virtual-scroll />
               <n-space>
                 <n-button type="error" :loading="executing" :disabled="checkedKeys.length === 0" @click="execute">
-                  确认执行（移动 {{ checkedKeys.length }} 个文件）
+                  {{ t('org.confirmRun', { n: checkedKeys.length }) }}
                 </n-button>
-                <n-text depth="3">执行后可在「操作历史」中一键撤销</n-text>
+                <n-text depth="3">{{ t('org.undoHint') }}</n-text>
               </n-space>
             </template>
           </n-space>
@@ -530,27 +537,27 @@ loadTemplates()
       </n-tab-pane>
 
       <!-- ================= 重复 ================= -->
-      <n-tab-pane name="dedupe" tab="重复检测">
+      <n-tab-pane name="dedupe" :tab="t('org.tabDedupe')">
         <n-card>
           <n-space vertical size="large">
             <n-space>
               <n-button type="primary" :loading="dedupeRunning" :disabled="!scanInfo" @click="runDedupe">
-                检测重复文件
+                {{ t('org.detect') }}
               </n-button>
-              <n-text v-if="!scanInfo" depth="3">请先在「智能整理」页扫描一个文件夹</n-text>
+              <n-text v-if="!scanInfo" depth="3">{{ t('org.needScanFirst') }}</n-text>
             </n-space>
             <template v-if="dedupe">
               <n-alert v-if="dedupe.groups.length" type="warning" :bordered="false">
-                发现 {{ dedupe.groups.length }} 组重复文件，可释放约 {{ fmtSize(dedupe.total_waste) }} 空间。
-                勾选要清理的组，选择保留规则后一键移入「待清理」文件夹——<b>不删除文件</b>，随时可在「操作历史」撤销。
+                {{ t('org.dupFound', { n: dedupe.groups.length, size: fmtSize(dedupe.total_waste) }) }}
+                {{ t('org.dupHint') }}
               </n-alert>
               <n-space v-if="dedupe.groups.length">
-                <n-button size="small" @click="selectedDupGroups = dedupe.groups.map(g => g.hash)">全选</n-button>
-                <n-button size="small" @click="selectedDupGroups = []">清空</n-button>
+                <n-button size="small" @click="selectedDupGroups = dedupe.groups.map(g => g.hash)">{{ t('org.selectAll') }}</n-button>
+                <n-button size="small" @click="selectedDupGroups = []">{{ t('org.clearAll') }}</n-button>
                 <n-select v-model:value="keepRule" :options="keepRuleOptions" size="small" style="width:150px" />
                 <n-button size="small" type="warning" :loading="cleaning"
                   :disabled="!selectedDupGroups.length" @click="cleanupDuplicates">
-                  移入待清理（{{ selectedDupGroups.length }} 组）
+                  {{ t('org.moveToClean', { n: selectedDupGroups.length }) }}
                 </n-button>
               </n-space>
               <n-data-table :columns="dedupeColumnsWithSelection"
@@ -558,34 +565,34 @@ loadTemplates()
                 :checked-row-keys="selectedDupGroups"
                 @update:checked-row-keys="(keys) => (selectedDupGroups = keys)" />
             </template>
-            <n-empty v-else-if="!dedupeRunning" description="尚未检测" />
+            <n-empty v-else-if="!dedupeRunning" :description="t('org.notDetected')" />
           </n-space>
         </n-card>
       </n-tab-pane>
 
       <!-- ================= 相似图片 ================= -->
-      <n-tab-pane name="similar" tab="相似图片">
+      <n-tab-pane name="similar" :tab="t('org.tabSimilar')">
         <n-card>
           <n-space vertical size="large">
             <n-space>
               <n-button type="primary" :loading="similarRunning" :disabled="!scanInfo" @click="runSimilar">
-                检测相似图片（近似重复）
+                {{ t('org.detectSim') }}
               </n-button>
-              <n-text v-if="!scanInfo" depth="3">请先在「智能整理」页扫描一个文件夹</n-text>
-              <n-text v-else depth="3">用感知哈希找缩放版 / 重压缩 / 连拍等「看起来一样」的图</n-text>
+              <n-text v-if="!scanInfo" depth="3">{{ t('org.needScanFirst') }}</n-text>
+              <n-text v-else depth="3">{{ t('org.simHint') }}</n-text>
             </n-space>
             <template v-if="similar">
               <n-alert v-if="similar.groups.length" type="warning" :bordered="false">
-                发现 {{ similar.groups.length }} 组相似图片，可释放约 {{ fmtSize(similar.total_waste) }} 空间。
-                勾选要清理的组后移入「待清理」文件夹——<b>不删除文件</b>，可在「操作历史」撤销。
+                {{ t('org.simFound', { n: similar.groups.length, size: fmtSize(similar.total_waste) }) }}
+                {{ t('org.simHint2') }}
               </n-alert>
               <n-space v-if="similar.groups.length">
-                <n-button size="small" @click="selectedSimGroups = similar.groups.map(g => g.hash)">全选</n-button>
-                <n-button size="small" @click="selectedSimGroups = []">清空</n-button>
+                <n-button size="small" @click="selectedSimGroups = similar.groups.map(g => g.hash)">{{ t('org.selectAll') }}</n-button>
+                <n-button size="small" @click="selectedSimGroups = []">{{ t('org.clearAll') }}</n-button>
                 <n-select v-model:value="keepRule" :options="keepRuleOptions" size="small" style="width:150px" />
                 <n-button size="small" type="warning" :loading="cleaning"
                   :disabled="!selectedSimGroups.length" @click="cleanupSimilar">
-                  移入待清理（{{ selectedSimGroups.length }} 组）
+                  {{ t('org.moveToClean', { n: selectedSimGroups.length }) }}
                 </n-button>
               </n-space>
               <n-data-table :columns="simColumnsWithSelection"
@@ -593,133 +600,133 @@ loadTemplates()
                 :checked-row-keys="selectedSimGroups"
                 @update:checked-row-keys="(keys) => (selectedSimGroups = keys)" />
             </template>
-            <n-empty v-else-if="!similarRunning" description="尚未检测" />
+            <n-empty v-else-if="!similarRunning" :description="t('org.notDetected')" />
           </n-space>
         </n-card>
       </n-tab-pane>
 
       <!-- ================= 历史 ================= -->
-      <n-tab-pane name="history" tab="操作历史">
+      <n-tab-pane name="history" :tab="t('org.tabHistory')">
         <n-card>
           <n-list v-if="history.length" bordered>
             <n-list-item v-for="b in history" :key="b.batch_id">
               <n-space justify="space-between" align="center" style="width:100%">
                 <n-space align="center">
                   <n-tag :type="b.undone_n > 0 ? 'default' : 'info'" size="small">
-                    {{ b.undone_n > 0 ? '已撤销' : '已执行' }}
+                    {{ b.undone_n > 0 ? t('org.undone') : t('org.executed') }}
                   </n-tag>
                   <n-text>{{ fmtTime(b.ts) }}</n-text>
-                  <n-text depth="3">{{ b.n }} 个操作 · 批次 {{ b.batch_id }}</n-text>
+                  <n-text depth="3">{{ t('org.opsN', { n: b.n, id: b.batch_id }) }}</n-text>
                 </n-space>
                 <n-space>
-                  <n-button size="small" @click="showOps(b.batch_id)">查看明细</n-button>
-                  <n-button v-if="!b.undone_n" size="small" type="warning" ghost @click="undo(b.batch_id)">撤销此批次</n-button>
-                  <n-button v-else size="small" type="info" ghost @click="redo(b.batch_id)">重做（取消撤销）</n-button>
+                  <n-button size="small" @click="showOps(b.batch_id)">{{ t('org.viewDetail') }}</n-button>
+                  <n-button v-if="!b.undone_n" size="small" type="warning" ghost @click="undo(b.batch_id)">{{ t('org.undoBatch') }}</n-button>
+                  <n-button v-else size="small" type="info" ghost @click="redo(b.batch_id)">{{ t('org.redoBatch') }}</n-button>
                 </n-space>
               </n-space>
             </n-list-item>
           </n-list>
-          <n-empty v-else description="暂无操作记录" />
+          <n-empty v-else :description="t('org.noHistory')" />
         </n-card>
       </n-tab-pane>
 
       <!-- ================= 大文件 ================= -->
-      <n-tab-pane name="bigfiles" tab="大文件清理">
+      <n-tab-pane name="bigfiles" :tab="t('org.tabBig')">
         <n-card>
           <n-space vertical size="large">
             <n-space align="center">
               <n-select v-model:value="bigMinSize" :options="bigSizeOptions" size="small" style="width:130px" />
-              <n-button type="primary" :loading="bigRunning" @click="findBigFiles">查找大文件</n-button>
-              <n-text depth="3" style="font-size:12px">按总索引排序（无需扫描文件夹），勾选后送系统回收站</n-text>
+              <n-button type="primary" :loading="bigRunning" @click="findBigFiles">{{ t('org.findBig') }}</n-button>
+              <n-text depth="3" style="font-size:12px">{{ t('org.bigHint') }}</n-text>
             </n-space>
             <template v-if="bigFiles && bigFiles.length">
               <n-space align="center">
-                <n-text>已勾选可释放 <b>{{ fmtSize(bigWaste) }}</b></n-text>
-                <n-button size="small" @click="bigChecked = bigFiles.map((f) => f.path)">全选</n-button>
-                <n-button size="small" @click="bigChecked = []">清空</n-button>
+                <n-text>{{ t('org.canFree', { size: fmtSize(bigWaste) }) }}</n-text>
+                <n-button size="small" @click="bigChecked = bigFiles.map((f) => f.path)">{{ t('org.selectAll') }}</n-button>
+                <n-button size="small" @click="bigChecked = []">{{ t('org.clearAll') }}</n-button>
                 <n-button size="small" type="error" ghost :disabled="!bigChecked.length" @click="trashBigFiles">
-                  删除到回收站（{{ bigChecked.length }}）
+                  {{ t('org.trashN', { n: bigChecked.length }) }}
                 </n-button>
               </n-space>
               <n-data-table v-model:checked-row-keys="bigChecked" :columns="bigColumns"
                 :data="bigFiles" :max-height="420" size="small" :row-key="(r) => r.path" virtual-scroll />
             </template>
-            <n-empty v-else-if="!bigRunning && bigFiles" description="没有超过阈值的大文件" />
-            <n-empty v-else-if="!bigRunning" description="点击「查找大文件」开始" />
+            <n-empty v-else-if="!bigRunning && bigFiles" :description="t('org.noBig')" />
+            <n-empty v-else-if="!bigRunning" :description="t('org.clickFindBig')" />
           </n-space>
         </n-card>
       </n-tab-pane>
 
       <!-- ================= 冲突副本 ================= -->
-      <n-tab-pane name="conflicts" tab="冲突副本">
+      <n-tab-pane name="conflicts" :tab="t('org.tabConflicts')">
         <n-card>
           <n-space vertical size="large">
             <n-space align="center">
-              <n-button type="primary" :loading="conflictsRunning" @click="findConflicts">检测冲突副本</n-button>
+              <n-button type="primary" :loading="conflictsRunning" @click="findConflicts">{{ t('org.detectConflict') }}</n-button>
               <n-text depth="3" style="font-size:12px">
-                全索引范围：同步冲突（文件名含「冲突/conflict」）与「xxx (1).ext」编号副本（原始文件必须存在）
+                {{ t('org.conflictHint') }}
               </n-text>
             </n-space>
             <template v-if="conflicts && conflicts.length">
               <n-space align="center">
-                <n-text>共 {{ conflicts.length }} 个 · 已勾选 <b>{{ conflictChecked.length }}</b> 个</n-text>
-                <n-button size="small" @click="conflictChecked = conflicts.map((f) => f.path)">全选</n-button>
-                <n-button size="small" @click="conflictChecked = []">清空</n-button>
+                <n-text>{{ t('org.conflictSum', { n: conflicts.length, c: conflictChecked.length }) }}</n-text>
+                <n-button size="small" @click="conflictChecked = conflicts.map((f) => f.path)">{{ t('org.selectAll') }}</n-button>
+                <n-button size="small" @click="conflictChecked = []">{{ t('org.clearAll') }}</n-button>
                 <n-button size="small" type="error" ghost :disabled="!conflictChecked.length" @click="trashConflicts">
-                  删除到回收站（{{ conflictChecked.length }}）
+                  {{ t('org.trashN', { n: conflictChecked.length }) }}
                 </n-button>
               </n-space>
               <n-data-table v-model:checked-row-keys="conflictChecked" :columns="conflictColumns"
                 :data="conflicts" :max-height="420" size="small" :row-key="(r) => r.path" virtual-scroll />
             </template>
-            <n-empty v-else-if="!conflictsRunning && conflicts" description="没有发现冲突或编号副本" />
-            <n-empty v-else-if="!conflictsRunning" description="点击「检测冲突副本」开始" />
+            <n-empty v-else-if="!conflictsRunning && conflicts" :description="t('org.noConflict')" />
+            <n-empty v-else-if="!conflictsRunning" :description="t('org.clickDetectConflict')" />
           </n-space>
         </n-card>
       </n-tab-pane>
 
       <!-- ================= 空文件夹 ================= -->
-      <n-tab-pane name="emptydirs" tab="空文件夹">
+      <n-tab-pane name="emptydirs" :tab="t('org.tabEmpty')">
         <n-card>
           <n-space vertical size="large">
             <n-space align="center">
               <n-button size="small" type="primary" ghost :loading="loadingDirs" @click="loadEmptyDirs">
-                扫描空文件夹
+                {{ t('org.scanEmpty') }}
               </n-button>
               <n-button v-if="emptyDirs.length" size="small" type="error" ghost
                 :loading="cleaningDirs" @click="cleanEmptyDirs">
-                全部送入回收站（{{ emptyDirs.length }}）
+                {{ t('org.trashEmpty', { n: emptyDirs.length }) }}
               </n-button>
               <n-text depth="3" style="font-size:12px">
-                空目录送系统回收站可恢复；深层空目录也会列出
+                {{ t('org.emptyHint') }}
               </n-text>
             </n-space>
             <n-list v-if="emptyDirs.length" bordered style="max-height:420px;overflow:auto">
               <n-list-item v-for="d in emptyDirs" :key="d">
                 <n-space justify="space-between" align="center" style="width:100%">
                   <n-text class="mono" style="font-size:12px">{{ d }}</n-text>
-                  <n-button size="tiny" quaternary @click="api('open_path', d)">打开</n-button>
+                  <n-button size="tiny" quaternary @click="api('open_path', d)">{{ t('org.open') }}</n-button>
                 </n-space>
               </n-list-item>
             </n-list>
-            <n-empty v-else-if="scanned" description="没有发现空文件夹" />
+            <n-empty v-else-if="scanned" :description="t('org.noEmpty')" />
           </n-space>
         </n-card>
       </n-tab-pane>
     </n-tabs>
 
-    <n-modal v-model:show="showBatchOps" preset="card" title="批次操作明细" style="width:860px">
+    <n-modal v-model:show="showBatchOps" preset="card" :title="t('org.batchDetail')" style="width:860px">
       <n-data-table :columns="[
-        { title: '时间', key: 'ts', width: 160, render: (r) => fmtTime(r.ts) },
-        { title: '原路径', key: 'src', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.src) },
-        { title: '新路径', key: 'dst', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.dst) },
+        { title: t('org.colTime'), key: 'ts', width: 160, render: (r) => fmtTime(r.ts) },
+        { title: t('org.colSrc'), key: 'src', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.src) },
+        { title: t('org.colNewPath'), key: 'dst', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.dst) },
       ]" :data="batchOps" :max-height="480" size="small" />
     </n-modal>
 
-    <n-modal v-model:show="showSaveTpl" preset="dialog" title="保存整理模板"
-      positive-text="保存" negative-text="取消" @positive-click="saveTemplateNow">
-      模板名：<n-input v-model:value="tplName" placeholder="如：工作盘整理 / 下载目录清理" style="width:280px" />
-      <br><n-text depth="3" style="font-size:12px">保存当前「整理到」目录和图片归档设置</n-text>
+    <n-modal v-model:show="showSaveTpl" preset="dialog" :title="t('org.saveTplTitle')"
+      :positive-text="t('org.save')" :negative-text="t('org.cancel')" @positive-click="saveTemplateNow">
+      {{ t('org.tplNameLabel') }}<n-input v-model:value="tplName" :placeholder="t('org.tplNamePh')" style="width:280px" />
+      <br><n-text depth="3" style="font-size:12px">{{ t('org.tplNameHint') }}</n-text>
     </n-modal>
   </div>
 </template>

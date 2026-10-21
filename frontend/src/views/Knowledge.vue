@@ -5,8 +5,10 @@ import {
   NTabs, NTabPane, NEmpty, NAlert, NPopover, NList, NListItem, useMessage, NSpin, NModal,
 } from 'naive-ui'
 import { api, on } from '../lib/bridge'
+import { useI18n } from 'vue-i18n'
 
 const message = useMessage()
+const { t } = useI18n()
 const tab = ref('manage')
 
 // ---------- 文件夹管理 ----------
@@ -27,7 +29,7 @@ async function addFolder() {
   const p = await api('pick_folder')
   if (!p) return
   await api('kb_add_folder', p)
-  message.success('已添加，点击「索引」开始构建知识库')
+  message.success(t('kb.msgAdded'))
   loadFolders()
 }
 
@@ -35,7 +37,7 @@ async function removeFolder(id) {
   // auto 文件夹跟随监控目录，不允许在此手动移除
   const f = folders.value.find((x) => x.id === id)
   if (f && f.source === 'auto') {
-    message.warning('自动知识源跟随「设置 → 监控目录」，请在那里移除')
+    message.warning(t('kb.msgAuto'))
     return
   }
   await api('kb_remove_folder', id)
@@ -49,16 +51,16 @@ async function startIndex(id) {
 
 function fmtEta(s) {
   if (!s || s < 0) return ''
-  if (s < 60) return `${s} 秒`
+  if (s < 60) return t('kb.sec', { s })
   const m = Math.floor(s / 60), r = s % 60
-  if (m < 60) return r ? `${m} 分 ${r} 秒` : `${m} 分`
-  return `${Math.floor(m / 60)} 小时 ${m % 60} 分`
+  if (m < 60) return r ? t('kb.min', { m, r }) : t('kb.minOnly', { m })
+  return t('kb.hour', { h: Math.floor(m / 60), m: m % 60 })
 }
 
 async function cancelIndex(id) {
   const r = await api('kb_index_cancel', id)
-  if (!r.ok) message.warning(r.error || '取消失败')
-  else message.info('正在停止，处理完当前文件后生效')
+  if (!r.ok) message.warning(r.error || t('kb.msgCancelFail'))
+  else message.info(t('kb.msgCancelling'))
 }
 
 // ---------- 未能索引的文件 ----------
@@ -75,32 +77,32 @@ async function openFailed(f) {
   } catch (e) { message.error(String(e)) }
 }
 
-const folderColumns = [
-  { title: '路径', key: 'path', ellipsis: { tooltip: true }, render: (r) => h('span', null, [
+const folderColumns = computed(() => [
+  { title: t('kb.colPath'), key: 'path', ellipsis: { tooltip: true }, render: (r) => h('span', null, [
       r.source === 'auto' ? h(NTag, { size: 'tiny', type: 'info', bordered: false,
-        style: 'margin-right:6px' }, { default: () => '自动' }) : null,
+        style: 'margin-right:6px' }, { default: () => t('kb.auto') }) : null,
       r.path,
     ]) },
-  { title: '文件', key: 'n_files', width: 70 },
-  { title: '未索引', key: 'n_failed', width: 80, render: (r) => r.n_failed > 0
+  { title: t('kb.colFiles'), key: 'n_files', width: 70 },
+  { title: t('kb.colFailed'), key: 'n_failed', width: 80, render: (r) => r.n_failed > 0
       ? h(NButton, { size: 'tiny', type: 'warning', text: true, onClick: () => openFailed(r) },
-          { default: () => `${r.n_failed} 个` })
+          { default: () => t('kb.failedN', { n: r.n_failed }) })
       : h('span', { style: 'opacity:.45' }, '—') },
-  { title: '分块', key: 'n_chunks', width: 70 },
-  { title: '最近索引', key: 'last_index_at', width: 150, render: (r) => r.last_index_at ? new Date(r.last_index_at * 1000).toLocaleString() : '未索引' },
-  { title: '操作', key: 'actions', width: 220, render: (r) => {
+  { title: t('kb.colChunks'), key: 'n_chunks', width: 70 },
+  { title: t('kb.colLast'), key: 'last_index_at', width: 150, render: (r) => r.last_index_at ? new Date(r.last_index_at * 1000).toLocaleString() : t('kb.neverIndexed') },
+  { title: t('kb.colActions'), key: 'actions', width: 220, render: (r) => {
     const idx = indexing.value[r.id]
     return h_NSpace(r, idx)
   } },
-]
+])
 
 // 单独抽出来避免 render 里写太多 h()
 function h_NSpace(r, idx) {
   return h(NSpace, null, {
     default: () => [
-      h(NButton, { size: 'small', type: 'primary', secondary: true, onClick: () => startIndex(r.id), loading: !!idx }, { default: () => '索引' }),
-      h(NButton, { size: 'small', onClick: () => api('open_path', r.path) }, { default: () => '打开' }),
-      h(NButton, { size: 'small', type: 'error', ghost: true, onClick: () => removeFolder(r.id) }, { default: () => '移除' }),
+      h(NButton, { size: 'small', type: 'primary', secondary: true, onClick: () => startIndex(r.id), loading: !!idx }, { default: () => t('kb.btnIndex') }),
+      h(NButton, { size: 'small', onClick: () => api('open_path', r.path) }, { default: () => t('kb.btnOpen') }),
+      h(NButton, { size: 'small', type: 'error', ghost: true, onClick: () => removeFolder(r.id) }, { default: () => t('kb.btnRemove') }),
     ],
   })
 }
@@ -112,10 +114,10 @@ offs.push(on('kb_index_done', (p) => {
   delete indexing.value[p.folder_id]
   const r = p.result
   if (r && r.cancelled) {
-    message.info(`索引已停止：本次新增 ${r.indexed}，失败 ${r.failed}`)
+    message.info(t('kb.msgStopped', { a: r.indexed, f: r.failed }))
   } else if (r && !r.error) {
     indexResult.value = r
-    message.success(`索引完成：新增 ${r.indexed}，跳过 ${r.skipped}，清理 ${r.removed}，失败 ${r.failed}`)
+    message.success(t('kb.msgDone', { a: r.indexed, s: r.skipped, r: r.removed, f: r.failed }))
   }
   loadFolders()
 }))
@@ -227,12 +229,12 @@ loadSessions()
   <div class="fb-page">
     <n-tabs v-model:value="tab" type="line">
       <!-- ================= 文件夹管理 ================= -->
-      <n-tab-pane name="manage" tab="知识源">
+      <n-tab-pane name="manage" :tab="t('kb.tabSources')">
         <n-card>
           <n-space vertical size="large">
             <n-space>
-              <n-button type="primary" @click="addFolder">＋ 添加文件夹</n-button>
-              <n-text depth="3">支持 PDF / Word / PPT / Excel / Markdown / TXT / CSV / 代码文件</n-text>
+              <n-button type="primary" @click="addFolder">{{ t('kb.addFolder') }}</n-button>
+              <n-text depth="3">{{ t('kb.support') }}</n-text>
             </n-space>
 
             <template v-for="f in folders" :key="f.id">
@@ -242,44 +244,43 @@ loadSessions()
                   indicator-placement="inside" processing />
                 <n-space align="center" justify="space-between" size="small" style="margin-top:4px">
                   <n-text class="mono" style="font-size:12px">
-                    {{ { scan: '扫描文件', parse: '解析并向量化', done: '完成' }[indexing[f.id].stage] || '' }}
+                    {{ { scan: t('kb.stage.scan'), parse: t('kb.stage.parse'), done: t('kb.stage.done') }[indexing[f.id].stage] || '' }}
                     {{ indexing[f.id].i }}/{{ indexing[f.id].n }} {{ indexing[f.id].detail }}
-                    <span v-if="indexing[f.id].eta"> · 预计还需 {{ fmtEta(indexing[f.id].eta) }}</span>
+                    <span v-if="indexing[f.id].eta">{{ t('kb.eta', { v: fmtEta(indexing[f.id].eta) }) }}</span>
                   </n-text>
-                  <n-button size="tiny" quaternary type="error" @click="cancelIndex(f.id)">取消</n-button>
+                  <n-button size="tiny" quaternary type="error" @click="cancelIndex(f.id)">{{ t('kb.cancel') }}</n-button>
                 </n-space>
               </n-alert>
             </template>
 
             <n-data-table v-if="folders.length" :columns="folderColumns" :data="folders" size="small" />
-            <n-empty v-else description="还没有添加知识源文件夹" />
+            <n-empty v-else :description="t('kb.emptyFolders')" />
           </n-space>
         </n-card>
 
         <n-modal v-model:show="failModal" preset="card" style="width:640px"
-                 :title="`未能索引的文件（${failItems.length}）`">
+                 :title="t('kb.failTitle', { n: failItems.length })">
           <n-text depth="3" style="font-size:12.5px">
-            这些文件解析或生成向量时失败，不在问答与内容搜索里。常见原因：文件损坏、
-            加密 PDF、格式不支持，或索引时 Ollama 没在运行。重新点「索引」会再试一次。
+            {{ t('kb.failHint') }}
           </n-text>
           <n-list v-if="failItems.length" style="margin-top:10px;max-height:52vh;overflow:auto">
             <n-list-item v-for="it in failItems" :key="it.path">
               <n-space vertical size="small" style="width:100%">
                 <n-text style="font-size:12.5px;word-break:break-all">{{ it.path }}</n-text>
-                <n-button size="tiny" secondary @click="api('open_path', it.path)">打开</n-button>
+                <n-button size="tiny" secondary @click="api('open_path', it.path)">{{ t('kb.btnOpen') }}</n-button>
               </n-space>
             </n-list-item>
           </n-list>
-          <n-empty v-else description="没有失败记录" style="margin:16px 0" />
+          <n-empty v-else :description="t('kb.noFail')" style="margin:16px 0" />
         </n-modal>
       </n-tab-pane>
 
       <!-- ================= 问答 ================= -->
-      <n-tab-pane name="ask" tab="知识库问答">
+      <n-tab-pane name="ask" :tab="t('kb.tabAsk')">
         <div style="display:flex;gap:14px;height:calc(100vh - 220px)">
           <!-- 会话历史侧栏 -->
           <div style="width:210px;flex-shrink:0;border-right:1px solid var(--border-color,#e0e0e6);padding-right:10px;overflow:auto">
-            <n-button size="small" block type="primary" secondary @click="newChat">＋ 新对话</n-button>
+            <n-button size="small" block type="primary" secondary @click="newChat">{{ t('kb.newChat') }}</n-button>
             <div style="margin-top:8px">
               <div v-for="s in sessions" :key="s.id"
                 @click="openSession(s)"
@@ -289,11 +290,11 @@ loadSessions()
                   background: currentSession === s.id ? 'rgba(24,160,88,.12)' : 'transparent',
                 }">
                 <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                  :title="s.title">{{ s.title || '对话' }}</div>
+                  :title="s.title">{{ s.title || t('kb.nullTitle') }}</div>
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                  <span style="color:#999;font-size:11px">{{ s.n_msgs }} 条</span>
+                  <span style="color:#999;font-size:11px">{{ t('kb.msgs', { n: s.n_msgs }) }}</span>
                   <span style="color:#d99;font-size:11px;cursor:pointer"
-                    @click.stop="deleteSession(s)">删除</span>
+                    @click.stop="deleteSession(s)">{{ t('kb.del') }}</span>
                 </div>
               </div>
             </div>
@@ -302,11 +303,11 @@ loadSessions()
           <n-card style="flex:1" content-style="display:flex;flex-direction:column;height:100%">
             <div ref="chatBox" class="chat-scroll">
               <n-empty v-if="messages.length === 0" style="margin-top:60px"
-                description="基于你的本地文档回答问题，回答附带来源引用；对话自动保存" />
+                :description="t('kb.askEmpty')" />
               <div v-for="(m, i) in messages" :key="i" class="chat-bubble" :class="m.role">
                 {{ m.content }}<span v-if="m.streaming" class="blink">▍</span>
                 <div v-if="m.sources && m.sources.length" style="margin-top:8px;border-top:1px dashed #ddd;padding-top:6px">
-                  <n-text depth="3" style="font-size:12px">引用来源：</n-text><br>
+                  <n-text depth="3" style="font-size:12px">{{ t('kb.sources') }}</n-text><br>
                   <span v-for="s in m.sources" :key="s.index" class="src-tag mono"
                     @click="openFile(s.file)" :title="s.snippet">
                     [{{ s.index }}] {{ s.file.split(/[\\/]/).pop() }}<template v-if="s.score"> · {{ s.score }}</template>
@@ -315,21 +316,21 @@ loadSessions()
               </div>
             </div>
             <n-space style="padding-top:12px" :wrap="false">
-              <n-input v-model:value="question" placeholder="问问你的知识库…（Enter 发送）"
+              <n-input v-model:value="question" :placeholder="t('kb.askPh')"
                 :disabled="asking" @keyup.enter="doAsk" />
-              <n-button type="primary" :loading="asking" @click="doAsk">提问</n-button>
-              <n-button :disabled="asking || !question.trim()" @click="doSearch">仅搜索</n-button>
+              <n-button type="primary" :loading="asking" @click="doAsk">{{ t('kb.ask') }}</n-button>
+              <n-button :disabled="asking || !question.trim()" @click="doSearch">{{ t('kb.searchOnly') }}</n-button>
             </n-space>
           </n-card>
         </div>
       </n-tab-pane>
 
       <!-- ================= 搜索结果 ================= -->
-      <n-tab-pane v-if="searchResults" name="results" tab="搜索结果">
+      <n-tab-pane v-if="searchResults" name="results" :tab="t('kb.tabResults')">
         <n-card>
           <n-alert :type="searchResults.mode === 'vector' ? 'success' : 'warning'" :bordered="false">
-            {{ searchResults.mode === 'vector' ? '语义检索' : '关键词检索（向量模型不可用时的降级模式）' }} ·
-            {{ searchResults.results.length }} 条结果
+            {{ searchResults.mode === 'vector' ? t('kb.vector') : t('kb.keyword') }} ·
+            {{ t('kb.results', { n: searchResults.results.length }) }}
           </n-alert>
           <n-list style="margin-top:12px">
             <n-list-item v-for="(r, i) in searchResults.results" :key="i">

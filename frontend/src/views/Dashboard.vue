@@ -7,8 +7,11 @@ import {
 import { FolderOpenOutline } from '@vicons/ionicons5'
 import { api, resetBridge } from '../lib/bridge'
 import { useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 
 const message = useMessage()
+const { t, locale } = useI18n()
+void locale
 const status = ref(null)
 const loading = ref(true)
 const report = ref(null)
@@ -23,8 +26,8 @@ async function saveReport() {
   savingReport.value = true
   try {
     const r = await api('save_weekly_report')
-    if (r.ok) message.success('周报已保存：' + r.path.split(/[\\/]/).pop())
-    else message.error(r.error || '保存失败')
+    if (r.ok) message.success(t('dashboard.weekSaved', { n: r.path.split(/[\\/]/).pop() }))
+    else message.error(r.error || t('dashboard.saveFail'))
   } catch (e) {
     message.error(String(e))
   }
@@ -56,16 +59,16 @@ onMounted(refresh)
 
 const greeting = computed(() => {
   const h = new Date().getHours()
-  if (h < 6) return '夜深了'
-  if (h < 12) return '早上好'
-  if (h < 14) return '中午好'
-  if (h < 18) return '下午好'
-  return '晚上好'
+  if (h < 6) return t('dashboard.greet.night')
+  if (h < 12) return t('dashboard.greet.morning')
+  if (h < 14) return t('dashboard.greet.noon')
+  if (h < 18) return t('dashboard.greet.afternoon')
+  return t('dashboard.greet.evening')
 })
 const dateStr = computed(() => {
   const d = new Date()
-  const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()]
-  return `${d.getMonth() + 1}月${d.getDate()}日 星期${wd}`
+  const wd = t('dashboard.weekNames').split(',')[d.getDay()]
+  return t('dashboard.weekDay', { m: d.getMonth() + 1, d: d.getDate(), w: wd })
 })
 
 function fmtSize(n) {
@@ -79,7 +82,7 @@ function fmtSize(n) {
 // 大数字缩写：854614 → 85 万（成熟产品的仪表盘读法，避免一长串数字）
 function fmtCount(n) {
   if (n == null) return '—'
-  if (n >= 10000) return (n / 10000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '') + ' 万'
+  if (n >= 10000) return (n / 10000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '') + ' ' + t('dashboard.wan')
   return String(n)
 }
 
@@ -99,31 +102,31 @@ function pct(n) {
       <div class="fb-hello">
         <div class="fb-hello-main">
           <h2 class="fb-hello-title">
-            {{ greeting }}，一切尽在本地
-            <span class="fb-hello-badge" v-if="status.llm?.mode === 'api'">云端 API</span>
-            <span class="fb-hello-badge" v-else>本地模式</span>
+            {{ t('dashboard.hello', { g: greeting }) }}
+            <span class="fb-hello-badge" v-if="status.llm?.mode === 'api'">{{ t('dashboard.badgeApi') }}</span>
+            <span class="fb-hello-badge" v-else>{{ t('dashboard.badgeLocal') }}</span>
           </h2>
           <div class="fb-hello-sub">
             {{ dateStr }} ·
             {{ status.llm?.mode === 'api'
-              ? '云端 API 出答案 · 你的文件始终留在本机'
-              : '无需 API Key，数据零上传（可在设置切换云端 API）' }}
+              ? t('dashboard.subApi')
+              : t('dashboard.subLocal') }}
           </div>
         </div>
         <div class="fb-hello-stats">
           <div class="fb-hello-stat">
-            <b>{{ fmtCount(status.library.files) }}</b><span>已编目文件</span>
+            <b>{{ fmtCount(status.library.files) }}</b><span>{{ t('dashboard.statFiles') }}</span>
           </div>
           <div class="fb-hello-stat">
-            <b>{{ report?.data?.new_count ?? '—' }}</b><span>本周新增</span>
+            <b>{{ report?.data?.new_count ?? '—' }}</b><span>{{ t('dashboard.statNew') }}</span>
           </div>
           <div class="fb-hello-stat">
-            <b>{{ fmtCount(status.kb.chunks) }}</b><span>知识库分块</span>
+            <b>{{ fmtCount(status.kb.chunks) }}</b><span>{{ t('dashboard.statChunks') }}</span>
           </div>
           <div class="fb-hello-stat">
             <b :class="status.llm?.chat?.ok ? 'fb-hello-online' : 'fb-hello-offline'">
-              {{ status.llm?.chat?.ok ? '在线' : '离线' }}
-            </b><span>AI 模型</span>
+              {{ status.llm?.chat?.ok ? t('dashboard.online') : t('dashboard.offline') }}
+            </b><span>{{ t('dashboard.statModel') }}</span>
           </div>
         </div>
       </div>
@@ -133,32 +136,32 @@ function pct(n) {
         <n-gi>
           <n-card class="fb-hoverable" size="medium">
             <template #header>
-              模型接入
+              {{ t('dashboard.llmTitle') }}
               <n-tag size="small" round style="margin-left:8px"
                 :type="status.llm?.mode === 'api' ? 'info' : 'success'">
-                {{ status.llm?.mode === 'api' ? '云端 API' : '本地 Ollama' }}
+                {{ status.llm?.mode === 'api' ? t('dashboard.llmCloud') : t('dashboard.llmLocal') }}
               </n-tag>
             </template>
             <n-space vertical size="large">
               <n-space>
                 <n-tag :type="status.llm?.chat?.ok ? 'success' : 'error'" round size="small">
-                  对话：{{ status.llm?.chat?.reason || '未知' }}
+                  {{ t('dashboard.chat', { v: status.llm?.chat?.reason || t('dashboard.unknown') }) }}
                 </n-tag>
                 <n-tag :type="status.llm?.embed?.ok ? 'success' : 'warning'" round size="small">
-                  向量：{{ status.llm?.embed?.reason || '未配置' }}
+                  {{ t('dashboard.embed', { v: status.llm?.embed?.reason || t('dashboard.notSet') }) }}
                 </n-tag>
               </n-space>
               <n-text depth="3" class="mono" style="font-size:12px">
-                {{ status.llm?.mode === 'api' ? (status.llm.api_base || '未配置服务地址') : status.ollama.host }}
+                {{ status.llm?.mode === 'api' ? (status.llm.api_base || t('dashboard.noBase')) : status.ollama.host }}
               </n-text>
               <n-space>
                 <n-button v-if="!status.llm?.chat?.ok || !status.llm?.embed?.ok"
                   type="primary" size="small" round @click="goto('settings')">
-                  前往设置处理
+                  {{ t('dashboard.goFix') }}
                 </n-button>
                 <n-button v-else size="small" quaternary type="primary" round
                   @click="goto('settings')">
-                  切换接入方式
+                  {{ t('dashboard.switchMode') }}
                 </n-button>
               </n-space>
             </n-space>
@@ -167,16 +170,16 @@ function pct(n) {
 
         <!-- 文件库 -->
         <n-gi>
-          <n-card class="fb-hoverable" title="本地文件库（自动扫描）" size="medium">
+          <n-card class="fb-hoverable" :title="t('dashboard.libTitle')" size="medium">
             <n-space vertical size="large">
               <n-space size="large">
                 <div class="fb-stat-ico">
                   <n-icon :component="FolderOpenOutline" size="19" style="color:var(--fb-accent)" />
                 </div>
                 <n-space vertical :size="2">
-                  <n-text strong style="font-size:17px">{{ status.library.files }} 个文件</n-text>
+                  <n-text strong style="font-size:17px">{{ t('dashboard.libFiles', { n: status.library.files }) }}</n-text>
                   <n-text depth="3" style="font-size:12.5px">
-                    共 {{ fmtSize(status.library.total_size) }} · 监控 {{ status.watching }} 个目录
+                    {{ t('dashboard.libSub', { size: fmtSize(status.library.total_size), n: status.watching }) }}
                   </n-text>
                 </n-space>
               </n-space>
@@ -187,7 +190,7 @@ function pct(n) {
                 </n-tag>
               </n-space>
               <n-button size="small" quaternary type="primary" @click="goto('files')">
-                打开文件搜索 →
+                {{ t('dashboard.openSearch') }}
               </n-button>
             </n-space>
           </n-card>
@@ -195,25 +198,25 @@ function pct(n) {
 
         <!-- 周报 -->
         <n-gi :span="2">
-          <n-card class="fb-hoverable" title="本周文件动态" size="medium">
+          <n-card class="fb-hoverable" :title="t('dashboard.weekTitle')" size="medium">
             <template #header-extra>
               <n-space size="small" align="center">
-                <n-text v-if="report && report.data" depth="3" style="font-size:12px">周起始 {{ report.week_start }}</n-text>
+                <n-text v-if="report && report.data" depth="3" style="font-size:12px">{{ t('dashboard.weekStart', { d: report.week_start }) }}</n-text>
                 <n-button v-if="report && report.data" size="tiny" type="primary" ghost :loading="savingReport" @click="saveReport">
-                  保存 HTML
+                  {{ t('dashboard.saveHtml') }}
                 </n-button>
               </n-space>
             </template>
             <n-spin v-if="loadingReport" :show="true" size="small">
               <div style="height:64px"></div>
             </n-spin>
-            <n-text v-else-if="!report || !report.data" depth="3">周报生成中，稍后自动显示</n-text>
+            <n-text v-else-if="!report || !report.data" depth="3">{{ t('dashboard.weekPending') }}</n-text>
             <template v-else>
             <n-grid :cols="4" :x-gap="12">
-              <n-gi><n-statistic label="本周新增/变更" :value="report.data.new_count" /></n-gi>
-              <n-gi><n-statistic label="新增体积" :value="fmtSize(report.data.new_size)" /></n-gi>
-              <n-gi><n-statistic label="编目总数" :value="report.data.total_files" /></n-gi>
-              <n-gi><n-statistic label="总体积" :value="fmtSize(report.data.total_size)" /></n-gi>
+              <n-gi><n-statistic :label="t('dashboard.newCount')" :value="report.data.new_count" /></n-gi>
+              <n-gi><n-statistic :label="t('dashboard.newSize')" :value="fmtSize(report.data.new_size)" /></n-gi>
+              <n-gi><n-statistic :label="t('dashboard.totalFiles')" :value="report.data.total_files" /></n-gi>
+              <n-gi><n-statistic :label="t('dashboard.totalSize')" :value="fmtSize(report.data.total_size)" /></n-gi>
             </n-grid>
             <n-space v-if="report.data.by_category && Object.keys(report.data.by_category).length"
               style="margin-top:14px">
@@ -223,7 +226,7 @@ function pct(n) {
             </n-space>
 
             <template v-if="report.data.new_sample && report.data.new_sample.length">
-              <div class="fb-sub-title">本周新增</div>
+              <div class="fb-sub-title">{{ t('dashboard.newList') }}</div>
               <n-list :show-divider="false">
                 <n-list-item v-for="f in report.data.new_sample.slice(0, 5)" :key="f.path"
                   style="padding:5px 0;cursor:pointer" @click="api('open_path', f.path)">
@@ -237,7 +240,7 @@ function pct(n) {
 
             <template v-if="report.data.big_files && report.data.big_files.length">
               <hr class="fb-sub-divider" />
-              <div class="fb-sub-title">体积排行 TOP</div>
+              <div class="fb-sub-title">{{ t('dashboard.topSize') }}</div>
               <n-list :show-divider="false">
                 <n-list-item v-for="f in report.data.big_files.slice(0, 3)" :key="f.path"
                   style="padding:5px 0;cursor:pointer" @click="api('open_path', f.path)">
@@ -254,17 +257,17 @@ function pct(n) {
 
         <!-- 空间占用 -->
         <n-gi :span="2">
-          <n-card class="fb-hoverable" title="空间占用" size="medium">
+          <n-card class="fb-hoverable" :title="t('dashboard.spaceTitle')" size="medium">
             <template #header-extra>
-              <n-text v-if="space && space.total" depth="3" style="font-size:12px">共 {{ fmtSize(space.total) }}</n-text>
+              <n-text v-if="space && space.total" depth="3" style="font-size:12px">{{ t('dashboard.spaceTotal', { size: fmtSize(space.total) }) }}</n-text>
             </template>
             <n-spin v-if="loadingSpace" :show="true" size="small">
               <div style="height:64px"></div>
             </n-spin>
-            <n-text v-else-if="!space" depth="3">空间统计中，稍后自动显示</n-text>
+            <n-text v-else-if="!space" depth="3">{{ t('dashboard.spacePending') }}</n-text>
             <n-space v-else vertical size="large">
               <div v-if="space.by_category && space.by_category.length">
-                <div class="fb-sub-title">按类别</div>
+                <div class="fb-sub-title">{{ t('dashboard.byCategory') }}</div>
                 <div v-for="c in space.by_category" :key="c.category" class="fb-space-row">
                   <span class="fb-space-label">{{ c.category }}</span>
                   <div class="fb-space-bar">
@@ -274,7 +277,7 @@ function pct(n) {
                 </div>
               </div>
               <div v-if="space.by_dir && space.by_dir.length">
-                <div class="fb-sub-title">占用 TOP 目录</div>
+                <div class="fb-sub-title">{{ t('dashboard.topDirs') }}</div>
                 <n-list :show-divider="false">
                   <n-list-item v-for="d in space.by_dir.slice(0, 8)" :key="d.dir"
                     style="padding:4px 0;cursor:pointer" @click="api('open_path', d.dir)">
@@ -291,26 +294,26 @@ function pct(n) {
       </n-grid>
 
       <div class="fb-footnote">
-        所有文件操作均经「预览 → 确认」并记录日志，支持一键撤销 · 累计 {{ status.kb.operations }} 次操作
-        · 数据库 {{ status.kb.db_path }}
+        {{ t('dashboard.audit', { n: status.kb.operations }) }}
+        {{ t('dashboard.dbLine', { p: status.kb.db_path }) }}
       </div>
     </n-spin>
   </div>
   <div class="fb-page" v-else-if="loading">
     <n-spin :show="true" size="large">
       <div class="fb-dash-loading">
-        <div>正在加载概览…</div>
-        <div class="fb-dash-loading-sub">首次进入需等待模型状态检测，请稍候</div>
+        <div>{{ t('dashboard.loading') }}</div>
+        <div class="fb-dash-loading-sub">{{ t('dashboard.loadingSub') }}</div>
       </div>
     </n-spin>
   </div>
   <div class="fb-page" v-else-if="status && status.error">
-    <n-result status="error" title="首屏加载失败"
-      :description="`无法连接 FileButler 后端服务。\n模型状态：${status.llm?.chat?.ok === false ? 'Ollama 离线' : '后端未就绪'}。\n\n请确认：本应用窗口未被防火墙拦截、Ollama（如已安装）是否需要启动。\n\n错误：${status.error}`">
+    <n-result status="error" :title="t('dashboard.failTitle')"
+      :description="t('dashboard.failDesc', { llm: status.llm?.chat?.ok === false ? t('dashboard.ollamaOff') : t('dashboard.notReady'), err: status.error })">
       <template #footer>
         <n-space>
-          <n-button type="primary" @click="retry">重试</n-button>
-          <n-button quaternary @click="goto('settings')">打开设置</n-button>
+          <n-button type="primary" @click="retry">{{ t('dashboard.retry') }}</n-button>
+          <n-button quaternary @click="goto('settings')">{{ t('dashboard.openSettings') }}</n-button>
         </n-space>
       </template>
     </n-result>

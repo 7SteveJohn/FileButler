@@ -49,7 +49,7 @@ async function loadTags() {
   try {
     const r = await api('list_tags')
     tagList.value = r.tags || []
-    tagOptions.value = (r.tags || []).map((t) => ({ label: t.name, value: t.id }))
+    tagOptions.value = (r.tags || []).map((tg) => ({ label: tg.name, value: tg.id }))
   } catch (e) { /* 忽略 */ }
 }
 
