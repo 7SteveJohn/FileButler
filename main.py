@@ -575,6 +575,11 @@ def main():
         t.start()
         t.join(0.4)
         _release_single_lock()
+        # Ollama 回收必须在主线程同步做完：下面 os._exit(0) 会连 daemon 线程一起
+        # 带走，放进 _cleanup() 就等于没执行（这正是"退出后 ollama 还在"的原因）。
+        # taskkill /T /F 实测约 0.5s，且必须 /T——llama-server 是 ollama 的子进程，
+        # 不连带杀会变孤儿。
+        api.shutdown_ollama()
 
         def _cleanup():
             _teardown()

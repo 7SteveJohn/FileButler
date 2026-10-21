@@ -2142,17 +2142,20 @@ class Api:
         return {"ok": True}
 
     def shutdown_ollama(self):
-        """退出收尾：只回收「应用自己拉起」的 serve，用户手动开的 Ollama 不动。"""
+        """退出收尾：只回收「应用自己拉起」的 serve，用户手动开的 Ollama 不动。
+        Ollama 用 llama-server.exe 跑模型，子进程不会随父进程退出，必须 taskkill /T。"""
         try:
             if db.get_setting("stop_ollama_on_exit", "1") != "1":
                 return
             proc = getattr(self, "_ollama_proc", None)
-            if proc is not None and proc.poll() is None:
-                proc.terminate()   # ollama serve 是单进程，terminate 足够
-                try:
-                    proc.wait(timeout=5)
-                except Exception:
-                    proc.kill()
+            if proc is None or proc.poll() is not None:
+                return
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                               creationflags=0x08000000, timeout=6,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                proc.terminate()
         except Exception:
             pass
 
