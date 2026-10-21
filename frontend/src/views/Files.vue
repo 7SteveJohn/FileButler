@@ -57,20 +57,20 @@ async function loadTags() {
 const showTagMgr = ref(false)
 const tagList = ref([])         // {id, name, c}
 
-async function deleteTag(t) {
-  if (!window.confirm(`删除标签「${t.name}」？\n将从所有文件上移除（文件本身不受影响）。`)) return
-  await api('delete_tag', t.id)
-  tagList.value = tagList.value.filter((x) => x.id !== t.id)
-  tagOptions.value = tagOptions.value.filter((o) => o.value !== t.id)
-  message.success('标签已删除')
+async function deleteTag(tg) {
+  if (!window.confirm(t('files.confirmMsg.delTag', { name: tg.name }))) return
+  await api('delete_tag', tg.id)
+  tagList.value = tagList.value.filter((x) => x.id !== tg.id)
+  tagOptions.value = tagOptions.value.filter((o) => o.value !== tg.id)
+  message.success(t('files.msg.tagDeleted'))
 }
 
-async function renameTag(t) {
-  const name = window.prompt('新的标签名：', t.name)
-  if (!name || !name.trim() || name.trim() === t.name) return
-  await api('rename_tag', t.id, name.trim())
+async function renameTag(tg) {
+  const name = window.prompt(t('files.confirmMsg.newTagName'), tg.name)
+  if (!name || !name.trim() || name.trim() === tg.name) return
+  await api('rename_tag', tg.id, name.trim())
   loadTags()
-  message.success('标签已重命名')
+  message.success(t('files.msg.tagRenamed'))
 }
 
 async function saveTags(r) {
@@ -79,10 +79,10 @@ async function saveTags(r) {
   if (ok && ok.ok !== false) {
     const names = tagOptions.value.filter((o) => ids.includes(o.value)).map((o) => o.label)
     r.tags = names.length ? names.join('|') : null
-    message.success(names.length ? '标签已保存' : '已清除标签')
+    message.success(names.length ? t('files.msg.tagSaved') : t('files.msg.tagCleared'))
     loadTags()
   } else {
-    message.error('保存失败')
+    message.error(t('files.msg.saveFailed'))
   }
 }
 
@@ -103,17 +103,17 @@ async function loadSavedSearches() {
 
 async function saveCurrentSearch() {
   const q = query.value.trim()
-  if (!q) return message.warning('先在搜索框输入筛选条件（支持 size:>100mb 等语法）')
+  if (!q) return message.warning(t('files.msg.needQuery'))
   const name = saveSearchName.value.trim()
-  if (!name) return message.warning('请给筛选起个名字')
+  if (!name) return message.warning(t('files.msg.needName'))
   const r = await api('save_search', name, q)
   if (r.ok) {
-    message.success('筛选已保存')
+    message.success(t('files.msg.filterSaved'))
     showSaveSearch.value = false
     saveSearchName.value = ''
     loadSavedSearches()
   } else {
-    message.error(r.error || '保存失败')
+    message.error(r.error || t('files.msg.saveFailed'))
   }
 }
 
@@ -145,26 +145,26 @@ async function toggleFav(row) {
     await api('remove_favorite', row.path)
     favSet.value = new Set([...favSet.value].filter((p) => p !== row.path))
     favList.value = favList.value.filter((x) => x.path !== row.path)
-    message.info('已取消收藏')
+    message.info(t('files.msg.unfav'))
   } else {
     await api('add_favorite', row.path)
     favSet.value = new Set([...favSet.value, row.path])
     favList.value = [...favList.value, { path: row.path, note: '' }]
-    message.success('已收藏')
+    message.success(t('files.msg.fav'))
   }
 }
 
 function openFav(p) { api('open_path', p) }
 
 async function editFavNote(f) {
-  const v = window.prompt('备注（留空清除）：', f.note || '')
+  const v = window.prompt(t('files.confirmMsg.notePrompt'), f.note || '')
   if (v === null) return
   const note = v.trim()
   if (note === (f.note || '')) return
   const r = await api('set_favorite_note', f.path, note)
-  if (r && r.ok === false) { message.error(r.error || '保存失败'); return }
+  if (r && r.ok === false) { message.error(r.error || t('files.msg.saveFailed')); return }
   f.note = note
-  message.success(note ? '备注已保存' : '已清除备注')
+  message.success(note ? t('files.msg.noteSaved') : t('files.msg.noteCleared'))
 }
 
 async function removeFav(p) {
@@ -177,7 +177,7 @@ async function removeFav(p) {
 const checkedRows = ref([])
 const renameModal = ref(false)
 const renameMode = ref('seq')
-const renamePrefix = ref('文件')
+const renamePrefix = ref(t('files.defaultPrefix'))
 const renameStart = ref(1)
 const renameFind = ref('')
 const renameReplace = ref('')
@@ -208,9 +208,9 @@ async function aiSuggest() {
     const r = await api('ai_rename', JSON.parse(JSON.stringify(checkedRowObjs())))
     if (r.suggestions.length) {
       renameRows.value = r.suggestions
-      message.success(`AI 已生成 ${r.suggestions.length} 个建议名，可手动修改`)
+      message.success(t('files.msg.aiNames', { n: r.suggestions.length }))
     } else {
-      message.warning('AI 未返回结果（模型未就绪或输出无法解析）')
+      message.warning(t('files.msg.aiEmpty'))
     }
   } catch (e) { message.error(String(e)) }
   renameLoading.value = false
@@ -249,10 +249,10 @@ async function doRename() {
   const rows = renameRows.value
     .filter((r) => r.new_name && r.new_name.trim() && r.new_name.trim() !== baseName(r.src))
     .map((r) => ({ src: r.src, new_name: r.new_name.trim() }))
-  if (!rows.length) return message.warning('没有需要重命名的文件')
+  if (!rows.length) return message.warning(t('files.msg.renameNone'))
   const r = await api('rename_files', JSON.parse(JSON.stringify(rows)))
   const ok = r.results.filter((x) => x.ok).length
-  message.success(`重命名完成：${ok}/${r.results.length} 个`)
+  message.success(t('files.msg.renamed', { ok, all: r.results.length }))
   renameModal.value = false
   checkedRows.value = []
   refresh()
@@ -262,11 +262,11 @@ async function trashSelected(paths = null) {
   const fromChecked = !paths
   paths = paths || [...checkedRows.value]  // checkedRows 存的就是路径
   if (!paths.length) return
-  const ok = window.confirm(`将 ${paths.length} 个文件/文件夹移入系统回收站（可随时恢复）？`)
+  const ok = window.confirm(t('files.confirmMsg.trash', { n: paths.length }))
   if (!ok) return
   const r = await api('trash_files', JSON.parse(JSON.stringify(paths)))
   const okN = r.results.filter((x) => x.ok).length
-  message.success(`已移入回收站 ${okN}/${paths.length}`)
+  message.success(t('files.msg.trashed', { ok: okN, all: paths.length }))
   if (fromChecked) checkedRows.value = []
   refresh()
 }
@@ -285,10 +285,12 @@ async function transferFiles(mode, paths = null) {
     const ok = r.results.filter((x) => x.ok).length
     const fail = r.results.length - ok
     if (fail === 0) {
-      const tip = mode === 'move' ? '（可在「文件整理 → 操作历史」一键撤销）' : ''
-      message.success(`${mode === 'move' ? '已移动' : '已复制'} ${ok} 个文件${tip}`)
+      const tip = mode === 'move' ? t('files.msg.undoHint') : ''
+      message.success(mode === 'move'
+      ? t('files.msg.moved', { n: ok, tip })
+      : t('files.msg.copied', { n: ok, tip }))
     } else {
-      message.warning(`${mode === 'move' ? '移动' : '复制'} ${ok} 个成功 / ${fail} 个失败`)
+      message.warning(t(mode === 'move' ? 'files.msg.partialMove' : 'files.msg.partialCopy', { ok, fail }))
     }
     if (fromChecked) checkedRows.value = []
     refresh()
@@ -300,8 +302,8 @@ async function copyPaths() {
   const text = [...checkedRows.value].join('\n')  // checkedRows 存的就是路径
   try {
     await navigator.clipboard.writeText(text)
-    message.success('已复制路径')
-  } catch (e) { message.error('复制失败') }
+    message.success(t('files.msg.pathCopied'))
+  } catch (e) { message.error(t('files.msg.copyFailed')) }
 }
 
 // ---------- 右键菜单（右键行在勾选集合内 = 作用于全部勾选，否则作用于该行） ----------
@@ -326,29 +328,29 @@ const menuOptions = computed(() => {
     const off = ocrSt.value && !ocrSt.value.available
     tools.push(off
       ? {
-          label: 'OCR 取字（不可用）',
+          label: t('files.menu.ocrOff'),
           key: 'ocr',
           disabled: true,
           title: `${ocrSt.value.reason}${ocrSt.value.hint ? '。' + ocrSt.value.hint : ''}`
         }
-      : { label: 'OCR 取字', key: 'ocr' })
+      : { label: t('files.menu.ocr'), key: 'ocr' })
   }
-  tools.push({ label: '哈希校验 (SHA-256)', key: 'hash' })
+  tools.push({ label: t('files.menu.hash'), key: 'hash' })
   return [
     ...(many ? [] : [
-      { label: '打开', key: 'open' },
-      { label: '快速预览', key: 'preview' },
-      { label: '在所在位置显示', key: 'location' },
+      { label: t('files.menu.open'), key: 'open' },
+      { label: t('files.menu.preview'), key: 'preview' },
+      { label: t('files.menu.location'), key: 'location' },
       { type: 'divider', key: 'd1' },
     ]),
-    { label: favSet.value.has(row.path) ? '取消收藏' : '收藏', key: 'fav' },
-    { label: '复制路径' + (many ? n : ''), key: 'copypath' },
-    { label: '移动到…' + (many ? n : ''), key: 'move' },
-    { label: '复制到…' + (many ? n : ''), key: 'copy' },
+    { label: favSet.value.has(row.path) ? t('files.menu.unstar') : t('files.menu.star'), key: 'fav' },
+    { label: t('files.menu.copyPath') + (many ? n : ''), key: 'copypath' },
+    { label: t('files.menu.move') + (many ? n : ''), key: 'move' },
+    { label: t('files.menu.copy') + (many ? n : ''), key: 'copy' },
     { type: 'divider', key: 'd2' },
-    ...(many ? [] : [{ label: '重命名', key: 'rename' },
-      { label: '工具', key: 'tools', children: tools }]),
-    { label: '删除到回收站' + (many ? n : ''), key: 'trash' },
+    ...(many ? [] : [{ label: t('files.menu.rename'), key: 'rename' },
+      { label: t('files.menu.tools'), key: 'tools', children: tools }]),
+    { label: t('files.menu.trash') + (many ? n : ''), key: 'trash' },
   ]
 })
 
@@ -380,8 +382,8 @@ async function onMenuSelect(key) {
   else if (key === 'copypath') {
     try {
       await navigator.clipboard.writeText(paths.join('\n'))
-      message.success('已复制路径')
-    } catch (e) { message.error('复制失败') }
+      message.success(t('files.msg.pathCopied'))
+    } catch (e) { message.error(t('files.msg.copyFailed')) }
   }
   else if (key === 'move') transferFiles('move', paths)
   else if (key === 'copy') transferFiles('copy', paths)
@@ -395,26 +397,26 @@ const toolModal = ref(null)   // {title, loading, text}
 
 function openTool(kind, path) {
   toolModal.value = {
-    title: kind === 'ocr' ? 'OCR 取字' : '哈希校验 (SHA-256)',
+    title: kind === 'ocr' ? t('files.menu.ocr') : t('files.menu.hash'),
     loading: true, text: '',
   }
   const call = kind === 'ocr' ? api('ocr_extract', path) : api('file_hash', path, 'sha256')
   call.then((r) => {
     toolModal.value = {
       ...toolModal.value, loading: false,
-      text: r.ok ? (kind === 'ocr' ? (r.text || '（未识别到文字）')
-        : `${r.algo.toUpperCase()}: ${r.hash}`) : ('失败：' + r.error),
+      text: r.ok ? (kind === 'ocr' ? (r.text || t('files.msg.ocrEmpty'))
+        : `${r.algo.toUpperCase()}: ${r.hash}`) : t('files.msg.failed', { e: r.error }),
     }
   }).catch((e) => {
-    toolModal.value = { ...toolModal.value, loading: false, text: '失败：' + String(e) }
+    toolModal.value = { ...toolModal.value, loading: false, text: t('files.msg.failed', { e: String(e) }) }
   })
 }
 
 async function copyToolText() {
   try {
     await navigator.clipboard.writeText(toolModal.value.text)
-    message.success('已复制')
-  } catch (e) { message.error('复制失败') }
+    message.success(t('files.msg.copied'))
+  } catch (e) { message.error(t('files.msg.copyFailed')) }
 }
 
 let searchTimer = null
@@ -424,7 +426,7 @@ offs.push(on('lib_scan_progress', (p) => { scanning.value = p }))
 offs.push(on('lib_scan_done', (p) => {
   scanning.value = null
   if (p.result && p.result.added != null) {
-    message.success(`文件库已更新：新增 ${p.result.added} · 更新 ${p.result.updated} · 清理 ${p.result.removed}（共 ${p.stats.files} 个文件）`)
+    message.success(t('files.msg.indexUpdated', { a: p.result.added, u: p.result.updated, r: p.result.removed, t: p.stats.files }))
   }
   refresh()
 }))
@@ -575,7 +577,7 @@ function pickTimeRange(k) {
   refresh()
 }
 
-const WEEK_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+const weekNames = computed(() => t('files.week').split(','))
 function fmtClock(mtime) {
   const d = new Date((mtime || 0) * 1000)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -590,12 +592,12 @@ function onCustomRange(v) {
 function dayLabel(d) {
   const s = _startOfDay(d)
   const diff = Math.round((+(_startOfDay(new Date())) - +s) / 86400000)
-  const date = `${s.getMonth() + 1} 月 ${s.getDate()} 日`
-  const w = WEEK_CN[s.getDay()]
-  if (diff === 0) return `今天 · ${date} ${w}`
-  if (diff === 1) return `昨天 · ${date} ${w}`
-  if (diff > 1 && diff <= 7) return `${diff} 天前 · ${date} ${w}`
-  return `${s.getFullYear()} 年 ${date} ${w}`
+  const date = t('files.dayMd', { m: s.getMonth() + 1, d: s.getDate() })
+  const w = weekNames.value[s.getDay()] || ''
+  if (diff === 0) return t('files.dayToday', { date, w })
+  if (diff === 1) return t('files.dayYesterday', { date, w })
+  if (diff > 1 && diff <= 7) return t('files.dayAgo', { n: diff, date, w })
+  return t('files.dayYear', { y: s.getFullYear(), date, w })
 }
 
 // 按本地日期分组（时间线视图用）；items 已由后端按 mtime 倒序返回
@@ -622,7 +624,7 @@ async function exportCsv() {
   exporting.value = true
   try {
     const r = await api('export_csv', query.value || null, category.value, sortBy.value, sortOrder.value)
-    if (!r.count) { message.warning('当前筛选没有可导出的文件'); return }
+    if (!r.count) { message.warning(t('files.msg.exportNone')); return }
     const blob = new Blob([r.csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -630,8 +632,8 @@ async function exportCsv() {
     a.download = `文件清单-${new Date().toISOString().slice(0, 10)}.csv`
     a.click()
     URL.revokeObjectURL(url)
-    message.success(`已导出 ${r.count} 条`)
-  } catch (e) { message.error('导出失败：' + e) }
+    message.success(t('files.msg.exported', { n: r.count }))
+  } catch (e) { message.error(t('files.msg.exportFailed', { e })) }
   exporting.value = false
 }
 
@@ -654,7 +656,7 @@ async function refresh() {
   } catch (e) {
     // SQLite 错误（IntegrityError 等）通常是临时状态，只 console 不打扰用户
     console.error('refresh failed:', e)
-    message.warning('列表加载失败，请稍后重试')
+    message.warning(t('files.msg.listFail'))
   }
   loading.value = false
 }
@@ -666,6 +668,12 @@ function pickCategory(c) {
 }
 
 const CATEGORIES = ['文档', '图片', '视频', '音频', '压缩包', '安装包', '代码', '数据', '字体', '其他']
+// 分类值是后端返回的中文常量，只翻译显示，筛选仍按原值传
+const CAT_KEY = {
+  文档: 'doc', 图片: 'image', 视频: 'video', 音频: 'audio', 压缩包: 'archive',
+  安装包: 'installer', 代码: 'code', 数据: 'data', 字体: 'font', 其他: 'other',
+}
+const catLabel = (c) => (CAT_KEY[c] ? t('files.cat.' + CAT_KEY[c]) : c)
 
 const isImg = (it) => ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'ico', 'svg', 'tiff', 'heic'].includes(it.ext)
 
@@ -722,9 +730,9 @@ async function copySummary() {
   if (!summaryText.value?.summary) return
   try {
     await navigator.clipboard.writeText(summaryText.value.summary)
-    message.success('已复制到剪贴板')
+    message.success(t('files.msg.clipCopied'))
   } catch (e) {
-    message.error('复制失败：' + String(e))
+    message.error(t('files.msg.exportFailed', { e: String(e) }))
   }
 }
 
@@ -952,19 +960,19 @@ const columns = computed(() => [
         style: 'cursor:pointer;font-size:12px;color:#5a9cf8;display:inline-block;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
         title: t('files.tag.editHint'),
       }, r.tags ? ('🏷 ' + r.tags.split('|').slice(0, 2).join('、')
-          + (r.tags.split('|').length > 2 ? '…' : '')) : '＋ 打标签'),
+          + (r.tags.split('|').length > 2 ? '…' : '')) : t('files.tag.add')),
       default: () => h('div', { style: 'width:230px' }, [
         h(NSelect, {
           multiple: true, tag: true, filterable: true,
           value: tagSel.value[r.path] || [], options: tagOptions.value,
-          placeholder: '选择或输入新标签，回车创建',
+          placeholder: t('files.tag.addHint'),
           onCreate: createTag,
           onUpdateValue: (v) => { tagSel.value[r.path] = v },
         }),
         h(NButton, {
           size: 'small', type: 'primary', style: 'margin-top:10px;width:100%',
           onClick: () => saveTags(r),
-        }, { default: () => '保存标签' }),
+        }, { default: () => t('files.tag.save') }),
       ]),
     }) },
   { title: t('files.col.path'), key: 'path', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.path) },
@@ -1086,7 +1094,7 @@ refresh()
         <n-space class="fb-chips">
           <n-tag v-for="c in CATEGORIES" :key="c" size="medium" round
             :type="category === c ? 'primary' : 'default'" style="cursor:pointer"
-            @click="pickCategory(c)">{{ c }}</n-tag>
+            @click="pickCategory(c)">{{ catLabel(c) }}</n-tag>
           <n-tag size="medium" round :type="!category && !currentDir ? 'primary' : 'default'"
             style="cursor:pointer" @click="pickCategory(null); pickDir(null)">{{ t('files.stat.all') }}</n-tag>
           <n-text depth="3" style="align-self:center">
