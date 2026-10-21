@@ -6,6 +6,7 @@
   <p><b>把杂乱的硬盘，变成能搜索、能提问的私人资料库。</b></p>
   <p>
     <a href="https://github.com/7SteveJohn/FileButler/releases/latest"><img src="https://img.shields.io/github/v/release/7SteveJohn/FileButler?color=4f8cff&label=release" alt="release"></a>
+    <a href="https://github.com/7SteveJohn/FileButler/actions/workflows/ci.yml"><img src="https://github.com/7SteveJohn/FileButler/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white" alt="platform">
     <img src="https://img.shields.io/badge/data-local%20first-2ea44f" alt="local first">
     <img src="https://img.shields.io/badge/LLM-Ollama%20%2F%20OpenAI%20compatible-4f8cff" alt="llm backends">

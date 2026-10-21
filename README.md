@@ -6,6 +6,7 @@
   <p><b>Turn a messy drive into a private library you can search — and ask questions to.</b></p>
   <p>
     <a href="https://github.com/7SteveJohn/FileButler/releases/latest"><img src="https://img.shields.io/github/v/release/7SteveJohn/FileButler?color=4f8cff&label=release" alt="release"></a>
+    <a href="https://github.com/7SteveJohn/FileButler/actions/workflows/ci.yml"><img src="https://github.com/7SteveJohn/FileButler/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f" alt="license"></a>
     <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white" alt="platform">
     <img src="https://img.shields.io/badge/data-local%20first-2ea44f" alt="local first">
