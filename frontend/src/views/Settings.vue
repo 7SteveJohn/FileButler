@@ -8,8 +8,18 @@ import {
 import { EyeOutline, EyeOffOutline } from '@vicons/ionicons5'
 import { api, on } from '../lib/bridge'
 import { THEMES, AUTO_KEY, loadThemeKey, saveThemeKey } from '../lib/theme'
+import { useI18n } from 'vue-i18n'
+import { LANGS, setLocale, currentLocale } from '../lib/i18n'
 
 const message = useMessage()
+const { t } = useI18n()
+
+// ---------- 界面语言 ----------
+const lang = ref(currentLocale())
+function pickLang(k) {
+  setLocale(k)
+  lang.value = k
+}
 
 // ---------- 外观/主题 ----------
 const themeKey = ref(loadThemeKey())
@@ -922,34 +932,41 @@ onMounted(() => {
               </div>
             </div>
             <div class="theme-card-body">
-              <b>跟随系统</b>
-              <span>亮暗随 Windows 自动切换</span>
+              <b>{{ t('theme.auto') }}</b>
+              <span>{{ t('theme.autoDesc') }}</span>
               <n-tag v-if="themeKey === AUTO_KEY" size="tiny" round type="primary"
-                style="margin-top:4px; width: fit-content;">当前使用</n-tag>
+                style="margin-top:4px; width: fit-content;">{{ t('theme.current') }}</n-tag>
             </div>
           </div>
-          <div v-for="t in themeList" :key="t.key" class="theme-card"
-            :class="{ active: themeKey === t.key }" @click="pickTheme(t.key)">
-            <div class="theme-preview" :style="{ background: t.naive.common.bodyColor }">
-              <div class="tp-side" :style="{ background: t.vars['--fb-sidebar-bg'] }">
-                <div class="tp-logo" :style="{ background: t.swatch }"></div>
+          <div v-for="th in themeList" :key="th.key" class="theme-card"
+            :class="{ active: themeKey === th.key }" @click="pickTheme(th.key)">
+            <div class="theme-preview" :style="{ background: th.naive.common.bodyColor }">
+              <div class="tp-side" :style="{ background: th.vars['--fb-sidebar-bg'] }">
+                <div class="tp-logo" :style="{ background: th.swatch }"></div>
                 <div class="tp-menu"></div>
                 <div class="tp-menu"></div>
                 <div class="tp-menu"></div>
               </div>
               <div class="tp-main">
-                <div class="tp-hero" :style="{ background: t.swatch }"></div>
+                <div class="tp-hero" :style="{ background: th.swatch }"></div>
                 <div class="tp-line"></div>
                 <div class="tp-line short"></div>
               </div>
             </div>
             <div class="theme-card-body">
-              <b>{{ t.name }}</b>
-              <span>{{ t.desc }}</span>
-              <n-tag v-if="themeKey === t.key" size="tiny" round type="primary"
-                style="margin-top:4px; width: fit-content;">当前使用</n-tag>
+              <b>{{ t('theme.' + th.key) }}</b>
+              <span>{{ t('theme.' + th.key + 'Desc') }}</span>
+              <n-tag v-if="themeKey === th.key" size="tiny" round type="primary"
+                style="margin-top:4px; width: fit-content;">{{ t('theme.current') }}</n-tag>
             </div>
           </div>
+        </n-space>
+        <div style="border-top:1px solid var(--fb-border,#e8e8e8);margin:18px 0 14px"></div>
+        <n-space align="center" :size="10">
+          <n-text style="font-size:13px">{{ t('lang.label') }}</n-text>
+          <n-select :value="lang" :options="LANGS.map(l => ({ label: l.label, value: l.key }))"
+                    size="small" style="width:150px" @update:value="pickLang" />
+          <n-text depth="3" style="font-size:12px">{{ t('lang.hint') }}</n-text>
         </n-space>
       </n-card>
 

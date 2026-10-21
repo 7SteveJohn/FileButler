@@ -3,10 +3,12 @@ import { h, ref, computed, watch, watchEffect, nextTick, onUnmounted, onMounted 
 import {
   NConfigProvider, NMessageProvider, NLayout, NLayoutSider, NLayoutContent,
   NMenu, NText, NButton, NIcon, NDropdown, NModal,
-  zhCN, dateZhCN, darkTheme,
+  zhCN, dateZhCN, enUS, dateEnUS, darkTheme,
 } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { HomeOutline, FolderOpenOutline, BookOutline, SettingsOutline, ImagesOutline } from '@vicons/ionicons5'
 import { THEMES, AUTO_KEY, loadThemeKey, saveThemeKey, resolveThemeKey, systemPrefersDark, onSystemThemeChange } from './lib/theme'
+import { setLocale } from './lib/i18n'
 import logoUrl from './assets/logo.png'
 import QuickLauncher from './components/QuickLauncher.vue'
 import Dashboard from './views/Dashboard.vue'
@@ -18,6 +20,11 @@ import Settings from './views/Settings.vue'
 const _VIEWS = ['dashboard', 'files', 'organizer', 'knowledge', 'settings']
 const view = ref('dashboard')
 const collapsed = ref(false)
+
+// 界面语言：naive-ui 自带组件（日期、空状态等）跟着一起切
+const { t, locale } = useI18n()
+const naiveLocale = computed(() => (locale.value === 'en' ? enUS : zhCN))
+const naiveDateLocale = computed(() => (locale.value === 'en' ? dateEnUS : dateZhCN))
 
 // 侧栏版本号：从后端读取（不再硬编码，避免发版忘改）
 import { api, on } from './lib/bridge'
@@ -36,6 +43,7 @@ const naiveTheme = computed(() => (themeDef.value.dark ? darkTheme : null))
 // 后端恢复 + 变更持久化
 api('get_ui_state').then(({ state }) => {
   if (!state) return
+  if (state.lang) setLocale(state.lang, false)
   if (state.theme) themeKey.value = state.theme
   if (state.last_view && _VIEWS.includes(state.last_view)) view.value = state.last_view
   if (state.sider_collapsed != null) collapsed.value = state.sider_collapsed === '1'
@@ -136,33 +144,31 @@ function renderThemeLabel(option) {
   ])
 }
 
-const themeOptions = [
+const themeOptions = computed(() => [
   { key: AUTO_KEY, swatch: 'linear-gradient(135deg,#f4f6f4 50%,#0b0e13 50%)',
-    name: '跟随系统', desc: '自动切换明暗', label: '跟随系统 · 自动切换明暗' },
-  ...Object.values(THEMES).map((t) => ({
-    key: t.key,
-    swatch: t.swatch,
-    name: t.name,
-    desc: t.desc,
-    label: `${t.name} · ${t.desc}`,
+    name: t('theme.auto'), desc: t('theme.autoDesc') },
+  ...Object.values(THEMES).map((th) => ({
+    key: th.key,
+    swatch: th.swatch,
+    name: t(`theme.${th.key}`),
+    desc: t(`theme.${th.key}Desc`),
   })),
-]
+])
 
 function renderIcon(icon) {
   return () => h(NIcon, null, { default: () => h(icon) })
 }
 
-const menuOptions = [
-  { label: '概览', key: 'dashboard', icon: renderIcon(HomeOutline) },
-  { label: '文件', key: 'files', icon: renderIcon(ImagesOutline) },
-  { label: '文件整理', key: 'organizer', icon: renderIcon(FolderOpenOutline) },
-  { label: '知识库', key: 'knowledge', icon: renderIcon(BookOutline) },
-  { label: '设置', key: 'settings', icon: renderIcon(SettingsOutline) },
-]
+const menuOptions = computed(() => ([
+  { label: t('nav.dashboard'), key: 'dashboard', icon: renderIcon(HomeOutline) },
+  { label: t('nav.files'), key: 'files', icon: renderIcon(ImagesOutline) },
+  { label: t('nav.organizer'), key: 'organizer', icon: renderIcon(FolderOpenOutline) },
+  { label: t('nav.knowledge'), key: 'knowledge', icon: renderIcon(BookOutline) },
+  { label: t('nav.settings'), key: 'settings', icon: renderIcon(SettingsOutline) },
+]))
 
 // 标题栏面包屑：当前页面名
-const VIEW_LABELS = { dashboard: '概览', files: '文件', organizer: '文件整理', knowledge: '知识库', settings: '设置' }
-const viewLabel = computed(() => VIEW_LABELS[view.value] || 'FileButler')
+const viewLabel = computed(() => _VIEWS.includes(view.value) ? t('nav.' + view.value) : 'FileButler')
 
 const components = { dashboard: Dashboard, files: Files, organizer: Organizer, knowledge: Knowledge, settings: Settings }
 
@@ -181,14 +187,14 @@ window.__fbSendToIngest = (names) => {
   if (!Array.isArray(names) || !names.length) return
   window.dispatchEvent(new CustomEvent('fb-goto', { detail: 'files' }))
   const text = names.length === 1
-    ? '已加入文件库：' + names[0]
-    : `已加入 ${names.length} 个文件到文件库`
+    ? t('toast.addedOne') + names[0]
+    : t('toast.addedMany', { n: names.length })
   window.dispatchEvent(new CustomEvent('fb-toast', { detail: { type: 'success', text } }))
 }
 </script>
 
 <template>
-  <n-config-provider :locale="zhCN" :date-locale="dateZhCN"
+  <n-config-provider :locale="naiveLocale" :date-locale="naiveDateLocale"
     :theme="naiveTheme" :theme-overrides="themeDef.naive" style="height:100%">
     <n-message-provider>
       <div class="fb-root" :class="{ 'fb-dark': themeDef.dark }"
@@ -197,8 +203,8 @@ window.__fbSendToIngest = (names) => {
              刻意不放 logo：侧栏品牌区已有同一个图标 + 应用名，frameless 窗口里两处并排会重复 -->
         <div class="fb-titlebar pywebview-drag-region" @dblclick="onTitleDblclick">
           <div class="fb-tb-left">
-            <span v-if="scanning" class="fb-tb-activity" title="正在后台编目文件库">
-              <span class="fb-tb-spin"></span>编目中
+            <span v-if="scanning" class="fb-tb-activity" :title="t('scanning.background')">
+              <span class="fb-tb-spin"></span>{{ t('scanning.short') }}
             </span>
           </div>
           <div class="fb-tb-center">
@@ -211,7 +217,7 @@ window.__fbSendToIngest = (names) => {
           <div class="fb-tb-right">
             <n-dropdown :value="themeKey" :options="themeOptions" :render-label="renderThemeLabel"
               trigger="click" :show-arrow="false" @select="(k) => setTheme(k)">
-              <button class="fb-tb-btn" :title="'主题：' + themeDef.name">
+              <button class="fb-tb-btn" :title="t('theme.label')">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                   <path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c.9 0 1.4-.6 1.4-1.3 0-.4-.2-.7-.4-1-.2-.3-.4-.6-.4-1 0-.7.6-1.3 1.4-1.3h1.6a2.9 2.9 0 0 0 2.9-2.9A6.2 6.2 0 0 0 8 1.8Z" stroke="currentColor" stroke-width="1.2" />
                   <circle cx="5.2" cy="6.4" r="1" fill="currentColor" />
@@ -221,10 +227,10 @@ window.__fbSendToIngest = (names) => {
               </button>
             </n-dropdown>
             <span class="fb-tb-sep"></span>
-            <button class="fb-tb-btn fb-win-btn" title="最小化" @click="winMin">
+            <button class="fb-tb-btn fb-win-btn" :title="t('win.minimize')" @click="winMin">
               <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1" /></svg>
             </button>
-            <button class="fb-tb-btn fb-win-btn" :title="maximized ? '还原' : '最大化'" @click="winToggleMax">
+            <button class="fb-tb-btn fb-win-btn" :title="maximized ? t('win.restore') : t('win.maximize')" @click="winToggleMax">
               <svg v-if="!maximized" width="10" height="10" viewBox="0 0 10 10">
                 <rect x="0.5" y="0.5" width="9" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1" />
               </svg>
@@ -233,7 +239,7 @@ window.__fbSendToIngest = (names) => {
                 <path d="M2.5 2.5v-2h7v7h-2" fill="none" stroke="currentColor" stroke-width="1" />
               </svg>
             </button>
-            <button class="fb-tb-btn fb-win-btn fb-win-close" title="隐藏到托盘" @click="winClose">
+            <button class="fb-tb-btn fb-win-btn fb-win-close" :title="t('win.hideToTray')" @click="winClose">
               <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1" /></svg>
             </button>
           </div>
@@ -255,7 +261,7 @@ window.__fbSendToIngest = (names) => {
               <img :src="logoUrl" class="fb-logo-img" alt="FileButler" />
               <div v-if="!collapsed">
                 <div class="fb-brand-name">FileButler</div>
-                <div class="fb-brand-sub">本地智能文件管家</div>
+                <div class="fb-brand-sub">{{ t('brand.tagline') }}</div>
               </div>
             </div>
             <n-menu
@@ -268,7 +274,7 @@ window.__fbSendToIngest = (names) => {
               @update:value="(k) => (view = k)"
             />
             <div class="fb-side-footer">
-              <span v-if="!collapsed" class="fb-version">v{{ appVer }} · 全本地</span>
+              <span v-if="!collapsed" class="fb-version">v{{ appVer }} · {{ t('brand.localOnly') }}</span>
             </div>
           </n-layout-sider>
           <n-layout-content content-style="height:100%;overflow:auto" style="background:transparent">
@@ -289,38 +295,38 @@ window.__fbSendToIngest = (names) => {
 
         <!-- 首次运行引导 -->
         <n-modal :show="showOnboarding" preset="card" style="width:520px"
-          :mask-closable="false" :closable="false" title="欢迎使用 FileButler">
+          :mask-closable="false" :closable="false" :title="t('onboarding.title')">
           <n-space vertical size="large">
             <n-space align="center">
               <img :src="logoUrl" style="width:44px;height:44px;border-radius:12px" alt="" />
-              <n-text style="font-size:14px">本地智能文件管家 —— 自动编目、秒级搜索、AI 整理与问答</n-text>
+              <n-text style="font-size:14px">{{ t('onboarding.subtitle') }}</n-text>
             </n-space>
             <n-space vertical size="small">
-              <n-text depth="2">· 自动编目：默认索引所有盘符与常用目录，实时监控新增</n-text>
-              <n-text depth="2">· AI 能力：配合本机 Ollama 或云端 API，语义搜索与知识库问答</n-text>
-              <n-text depth="2">· 一切本地：文件数据零上传，可随时在设置中迁移与备份</n-text>
+              <n-text depth="2">· {{ t('onboarding.bullet1') }}</n-text>
+              <n-text depth="2">· {{ t('onboarding.bullet2') }}</n-text>
+              <n-text depth="2">· {{ t('onboarding.bullet3') }}</n-text>
             </n-space>
             <div>
-              <n-text depth="3" style="font-size:12px">先挑一个顺眼的主题（可在左下角随时更换）：</n-text>
+              <n-text depth="3" style="font-size:12px">{{ t('onboarding.pickTheme') }}</n-text>
               <n-space :size="10" style="margin-top:8px">
-                <div v-for="t in themeList" :key="t.key" class="theme-card"
-                  style="width:140px" :class="{ active: themeKey === t.key }" @click="setTheme(t.key)">
-                  <div class="theme-preview" :style="{ background: t.naive.common.bodyColor }">
-                    <div class="tp-side" :style="{ background: t.vars['--fb-sidebar-bg'] }">
-                      <div class="tp-logo" :style="{ background: t.swatch }"></div>
+                <div v-for="th in themeList" :key="th.key" class="theme-card"
+                  style="width:140px" :class="{ active: themeKey === th.key }" @click="setTheme(th.key)">
+                  <div class="theme-preview" :style="{ background: th.naive.common.bodyColor }">
+                    <div class="tp-side" :style="{ background: th.vars['--fb-sidebar-bg'] }">
+                      <div class="tp-logo" :style="{ background: th.swatch }"></div>
                       <div class="tp-menu"></div>
                       <div class="tp-menu"></div>
                     </div>
                     <div class="tp-main">
-                      <div class="tp-hero" :style="{ background: t.swatch }"></div>
+                      <div class="tp-hero" :style="{ background: th.swatch }"></div>
                       <div class="tp-line"></div>
                     </div>
                   </div>
-                  <div class="theme-card-body"><b>{{ t.name }}</b></div>
+                  <div class="theme-card-body"><b>{{ t('theme.' + th.key) }}</b></div>
                 </div>
               </n-space>
             </div>
-            <n-button type="primary" block @click="finishOnboarding">开始使用</n-button>
+            <n-button type="primary" block @click="finishOnboarding">{{ t('onboarding.start') }}</n-button>
           </n-space>
         </n-modal>
       </div>
