@@ -35,7 +35,7 @@ AI 默认跑在你本机的 [Ollama](https://ollama.com) 开源模型上——�
 
 ## 30 秒上手
 
-1. 到 [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) 下载 `FileButler-Setup-1.3.0.exe`（约 45 MB），双击安装——**不需要管理员权限**，装在当前用户目录下
+1. 到 [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) 下载 `FileButler-Setup-1.3.0.exe`（约 60 MB），双击安装——**不需要管理员权限**，装在当前用户目录下
 2. 首次启动自动扫描桌面 / 文档 / 下载 / 图片等用户目录，几秒后就能搜到东西
 3. 想要「问答」和「按意思搜」：装 [Ollama](https://ollama.com)，设置页按显卡推荐一键下载模型（`qwen3` 系列 + 向量模型 `bge-m3`）
 4. 已经有 LM Studio 或云端 API？设置页「模型接入方式」直接切，不必装 Ollama
