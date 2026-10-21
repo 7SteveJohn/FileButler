@@ -80,10 +80,31 @@ def list_folders():
         rows = conn.execute(
             "SELECT f.id, f.path, f.last_index_at, COALESCE(f.source,'manual') AS source, "
             "(SELECT COUNT(*) FROM kb_files k WHERE k.folder_id=f.id) AS n_files, "
+            "(SELECT COUNT(*) FROM kb_files k WHERE k.folder_id=f.id "
+            " AND k.status='parse_failed') AS n_failed, "
             "(SELECT COUNT(*) FROM chunks c JOIN kb_files k ON k.id=c.file_id "
             " WHERE k.folder_id=f.id) AS n_chunks "
             "FROM kb_folders f ORDER BY f.id").fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def list_failed(folder_id=None):
+    """解析/嵌入失败的文件（kb_files.status='parse_failed'）。
+
+    index_files 失败时把行改写成 parse_failed，但界面一直没入口，
+    用户只会觉得"这个文件怎么搜不到"。mtime 用来在列表里显示新旧。
+    """
+    conn = db.get_conn()
+    try:
+        sql = ("SELECT k.path, k.folder_id, k.mtime FROM kb_files k "
+               "WHERE k.status='parse_failed'")
+        args = ()
+        if folder_id is not None:
+            sql += " AND k.folder_id=?"
+            args = (folder_id,)
+        return [dict(r) for r in conn.execute(sql + " ORDER BY k.path", args).fetchall()]
     finally:
         conn.close()
 

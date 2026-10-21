@@ -1527,6 +1527,10 @@ class Api:
         row = indexer.add_folder(path)
         return {"ok": True, "folder": row}
 
+    def kb_failed_files(self, folder_id=None):
+        """知识库里没能解析/嵌入成功的文件：回答"为什么这个文件搜不到"。"""
+        return {"ok": True, "items": indexer.list_failed(folder_id)}
+
     def kb_remove_folder(self, folder_id):
         indexer.remove_folder(folder_id)
         return {"ok": True}

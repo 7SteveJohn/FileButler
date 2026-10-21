@@ -2,7 +2,7 @@
 import { ref, computed, nextTick, onUnmounted, h } from 'vue'
 import {
   NCard, NButton, NSpace, NInput, NText, NTag, NDataTable, NProgress,
-  NTabs, NTabPane, NEmpty, NAlert, NPopover, NList, NListItem, useMessage, NSpin,
+  NTabs, NTabPane, NEmpty, NAlert, NPopover, NList, NListItem, useMessage, NSpin, NModal,
 } from 'naive-ui'
 import { api, on } from '../lib/bridge'
 
@@ -47,6 +47,20 @@ async function startIndex(id) {
   if (r.started) indexing.value[id] = { stage: 'scan', i: 0, n: 0, detail: '' }
 }
 
+// ---------- 未能索引的文件 ----------
+const failModal = ref(false)
+const failItems = ref([])
+const failFolder = ref(null)
+async function openFailed(f) {
+  failFolder.value = f
+  failItems.value = []
+  try {
+    const r = await api('kb_failed_files', f.id)
+    failItems.value = r.items || []
+    failModal.value = true
+  } catch (e) { message.error(String(e)) }
+}
+
 const folderColumns = [
   { title: '路径', key: 'path', ellipsis: { tooltip: true }, render: (r) => h('span', null, [
       r.source === 'auto' ? h(NTag, { size: 'tiny', type: 'info', bordered: false,
@@ -54,6 +68,10 @@ const folderColumns = [
       r.path,
     ]) },
   { title: '文件', key: 'n_files', width: 70 },
+  { title: '未索引', key: 'n_failed', width: 80, render: (r) => r.n_failed > 0
+      ? h(NButton, { size: 'tiny', type: 'warning', text: true, onClick: () => openFailed(r) },
+          { default: () => `${r.n_failed} 个` })
+      : h('span', { style: 'opacity:.45' }, '—') },
   { title: '分块', key: 'n_chunks', width: 70 },
   { title: '最近索引', key: 'last_index_at', width: 150, render: (r) => r.last_index_at ? new Date(r.last_index_at * 1000).toLocaleString() : '未索引' },
   { title: '操作', key: 'actions', width: 220, render: (r) => {
@@ -217,6 +235,23 @@ loadSessions()
             <n-empty v-else description="还没有添加知识源文件夹" />
           </n-space>
         </n-card>
+
+        <n-modal v-model:show="failModal" preset="card" style="width:640px"
+                 :title="`未能索引的文件（${failItems.length}）`">
+          <n-text depth="3" style="font-size:12.5px">
+            这些文件解析或生成向量时失败，不在问答与内容搜索里。常见原因：文件损坏、
+            加密 PDF、格式不支持，或索引时 Ollama 没在运行。重新点「索引」会再试一次。
+          </n-text>
+          <n-list v-if="failItems.length" style="margin-top:10px;max-height:52vh;overflow:auto">
+            <n-list-item v-for="it in failItems" :key="it.path">
+              <n-space vertical size="small" style="width:100%">
+                <n-text style="font-size:12.5px;word-break:break-all">{{ it.path }}</n-text>
+                <n-button size="tiny" secondary @click="api('open_path', it.path)">打开</n-button>
+              </n-space>
+            </n-list-item>
+          </n-list>
+          <n-empty v-else description="没有失败记录" style="margin:16px 0" />
+        </n-modal>
       </n-tab-pane>
 
       <!-- ================= 问答 ================= -->
