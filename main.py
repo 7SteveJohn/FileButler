@@ -266,6 +266,10 @@ def main():
 
     _handle_sendto_args()
 
+    # 崩溃日志：必须在 Api() 之前就位，启动期异常才有地方落
+    from backend import applog
+    applog.setup(_version())
+
     dev = "--dev" in sys.argv
     tray_start = "--tray" in sys.argv  # 开机自启：静默启动到托盘，不弹主窗口
     if "--disable-gpu" in sys.argv:
