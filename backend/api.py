@@ -113,6 +113,7 @@ class Api:
         self._scan_thread = None     # 在飞的全量扫描线程（配合 _scan_stop 等它退出）
         self._quit_handler = None    # main.py 注入：退出应用（自动更新装完后用）
         self._updating = False       # 自动更新下载中（防重入）
+        self._kb_cancel = {}         # folder_id -> Event（知识库索引可取消）
 
     def set_window(self, window):
         self._window = window
@@ -1600,25 +1601,42 @@ class Api:
         return {"ok": True}
 
     def kb_index(self, folder_id):
-        """索引（后台线程，进度走事件 kb_index_*）。"""
+        """索引（后台线程，进度走事件 kb_index_*）。可取消，进度带 ETA。"""
         def worker():
+            t0 = time.time()
+            cancel = threading.Event()
+            self._kb_cancel[folder_id] = cancel
             try:
                 self._emit("kb_index_start", {"folder_id": folder_id})
 
                 def cb(stage, i, n, detail):
+                    eta = 0
+                    if stage == "parse" and i > 0 and n > i:
+                        # 逐文件处理（解析 + 嵌入），用平均速率估算剩余
+                        eta = int((time.time() - t0) / i * (n - i))
                     self._emit("kb_index_progress",
                                {"folder_id": folder_id, "stage": stage, "i": i, "n": n,
-                                "detail": detail})
+                                "detail": detail, "eta": eta})
 
-                result = indexer.index_folder(folder_id, cb)
+                result = indexer.index_folder(folder_id, cb, cancel=cancel)
                 self._emit("kb_index_done", {"folder_id": folder_id, "result": result})
             except OllamaNotRunning as e:
                 self._emit("kb_index_error", str(e))
             except Exception as e:
                 self._emit("kb_index_error", str(e))
+            finally:
+                self._kb_cancel.pop(folder_id, None)
 
         threading.Thread(target=worker, daemon=True).start()
         return {"started": True}
+
+    def kb_index_cancel(self, folder_id):
+        """停止索引：置位后处理完当前文件即退出，已入库的保留。"""
+        ev = self._kb_cancel.get(folder_id)
+        if ev is None:
+            return {"ok": False, "error": "该文件夹没有正在进行的索引"}
+        ev.set()
+        return {"ok": True}
 
     def search(self, query, k=8):
         return rag.search(query, k)

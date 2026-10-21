@@ -50,7 +50,8 @@ jobs:
             "test_contentver", "test_rel_sort", "test_parse_chunk", "test_maint",
             "test_hybrid", "test_pinyin", "test_llm_robust", "test_kb_followup",
             "test_rerank", "test_update", "test_applog", "test_kb_failed",
-            "test_datadir", "test_hardening", "test_session_followups"
+            "test_kb_cancel", "test_datadir", "test_hardening",
+            "test_session_followups"
           )
           $failed = @()
           # 少数套件按目录名做门禁：test_datadir 要求含 fb_datadir，

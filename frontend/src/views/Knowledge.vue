@@ -47,6 +47,20 @@ async function startIndex(id) {
   if (r.started) indexing.value[id] = { stage: 'scan', i: 0, n: 0, detail: '' }
 }
 
+function fmtEta(s) {
+  if (!s || s < 0) return ''
+  if (s < 60) return `${s} 秒`
+  const m = Math.floor(s / 60), r = s % 60
+  if (m < 60) return r ? `${m} 分 ${r} 秒` : `${m} 分`
+  return `${Math.floor(m / 60)} 小时 ${m % 60} 分`
+}
+
+async function cancelIndex(id) {
+  const r = await api('kb_index_cancel', id)
+  if (!r.ok) message.warning(r.error || '取消失败')
+  else message.info('正在停止，处理完当前文件后生效')
+}
+
 // ---------- 未能索引的文件 ----------
 const failModal = ref(false)
 const failItems = ref([])
@@ -97,7 +111,9 @@ offs.push(on('kb_index_progress', (p) => { indexing.value[p.folder_id] = p }))
 offs.push(on('kb_index_done', (p) => {
   delete indexing.value[p.folder_id]
   const r = p.result
-  if (r && !r.error) {
+  if (r && r.cancelled) {
+    message.info(`索引已停止：本次新增 ${r.indexed}，失败 ${r.failed}`)
+  } else if (r && !r.error) {
     indexResult.value = r
     message.success(`索引完成：新增 ${r.indexed}，跳过 ${r.skipped}，清理 ${r.removed}，失败 ${r.failed}`)
   }
@@ -224,10 +240,14 @@ loadSessions()
                 <n-progress
                   :percentage="indexing[f.id].n ? Math.round(indexing[f.id].i / indexing[f.id].n * 100) : 0"
                   indicator-placement="inside" processing />
-                <n-text class="mono" style="font-size:12px">
-                  {{ { scan: '扫描文件', parse: '解析文档', embed: '生成向量', done: '完成' }[indexing[f.id].stage] || '' }}
-                  {{ indexing[f.id].i }}/{{ indexing[f.id].n }} {{ indexing[f.id].detail }}
-                </n-text>
+                <n-space align="center" justify="space-between" size="small" style="margin-top:4px">
+                  <n-text class="mono" style="font-size:12px">
+                    {{ { scan: '扫描文件', parse: '解析并向量化', done: '完成' }[indexing[f.id].stage] || '' }}
+                    {{ indexing[f.id].i }}/{{ indexing[f.id].n }} {{ indexing[f.id].detail }}
+                    <span v-if="indexing[f.id].eta"> · 预计还需 {{ fmtEta(indexing[f.id].eta) }}</span>
+                  </n-text>
+                  <n-button size="tiny" quaternary type="error" @click="cancelIndex(f.id)">取消</n-button>
+                </n-space>
               </n-alert>
             </template>
 

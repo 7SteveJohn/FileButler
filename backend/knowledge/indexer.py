@@ -109,11 +109,12 @@ def list_failed(folder_id=None):
         conn.close()
 
 
-def index_folder(folder_id, progress_cb=None):
+def index_folder(folder_id, progress_cb=None, cancel=None):
     """
     增量索引一个文件夹。progress_cb(stage, i, n, detail)：
-      stage: scan/parse/embed/done/clean
-    返回 {"indexed": n, "skipped": n, "removed": n, "failed": n}
+      stage: scan/parse/done/cancelled
+    cancel: threading.Event，置位后处理完当前文件即停（已入库的保留）。
+    返回 {"indexed": n, "skipped": n, "removed": n, "failed": n, "cancelled": bool}
     """
     conn = db.get_conn()
     try:
@@ -162,6 +163,11 @@ def index_folder(folder_id, progress_cb=None):
     finally:
         conn.close()
     for i, fi in enumerate(todo):
+        if cancel is not None and cancel.is_set():
+            if progress_cb:
+                progress_cb("cancelled", i, len(todo), "")
+            return {"indexed": indexed, "skipped": skipped, "removed": 0,
+                    "failed": failed, "cancelled": True}
         if progress_cb:
             progress_cb("parse", i + 1, len(todo), fi["name"])
         status_one = _index_file_into_kb(client, fi, _folder_id_of(fi["path"], folder_rows))
