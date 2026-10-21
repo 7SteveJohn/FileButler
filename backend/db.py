@@ -920,16 +920,25 @@ def get_setting(key, default=None):
 
 
 def set_setting(key, value):
-    conn = get_conn()
-    try:
-        conn.execute(
-            "INSERT INTO settings(key,value) VALUES(?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    """写设置（带短重试）。
+    后台扫描/索引持写锁时，busy_timeout(15s) 仍可能超时报 locked——主题、语言、
+    各种开关的写入不该因为"正好在扫描"就丢掉，重试三次（0.2/0.4s）。"""
+    for attempt in range(3):
+        conn = get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+            conn.commit()
+            return
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e).lower() or attempt == 2:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+        finally:
+            conn.close()
 
 
 # ---------- 规则 ----------

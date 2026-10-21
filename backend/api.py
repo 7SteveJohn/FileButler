@@ -905,7 +905,12 @@ class Api:
     def set_ui_state(self, key, value):
         if key not in self._UI_STATE_KEYS:
             return {"ok": False, "error": "未知的状态项"}
-        db.set_setting("ui_" + key, str(value))
+        try:
+            db.set_setting("ui_" + key, str(value))
+        except Exception as e:
+            # 纯 UI 偏好（列宽/排序/视图），写不进去下次再写即可，不要弹错打断操作
+            print(f"[ui_state] skip {key}: {e}")
+            return {"ok": False, "error": "busy"}
         return {"ok": True}
 
     # ---------- 文件工具（右键菜单「工具」） ----------
