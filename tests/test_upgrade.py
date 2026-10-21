@@ -1,8 +1,20 @@
-"""本轮升级功能测试：批量 embed、批量 AI 分类、自动知识库、图片语义、模型管理、自启。"""
+"""本轮升级功能测试：批量 embed、批量 AI 分类、自动知识库、图片语义、模型管理、自启。
+
+运行方式：APPDATA 由脚本自己隔离（一次性目录），不需要外部设置。
+"""
 import os
 import shutil
 import sys
+import tempfile
 import time
+import atexit
+
+# 必须在导入 backend 前隔离 APPDATA：本套件要写 watch_roots / kb_folders /
+# settings，直连真实库会让结果随用户当前 LLM 配置漂移（实测用户库里
+# llm_mode=api 指向余额耗尽的云端，批量分类 0/6 假失败），也会污染真实数据。
+_SANDBOX = tempfile.mkdtemp(prefix="fb_captest_upgrade_")
+os.environ["APPDATA"] = _SANDBOX
+atexit.register(shutil.rmtree, _SANDBOX, True)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
