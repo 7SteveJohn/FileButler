@@ -8,8 +8,10 @@ import {
 import { SearchOutline } from '@vicons/ionicons5'
 import { api, on } from '../lib/bridge'
 import { CATEGORY_HUES } from '../lib/theme'
+import { useI18n } from 'vue-i18n'
 
 const message = useMessage()
+const { t } = useI18n()
 
 // ---------- 状态 ----------
 const query = ref('')
@@ -27,17 +29,17 @@ const lastEvent = ref(null)
 const exporting = ref(false)
 const sortBy = ref('mtime')
 const sortOrder = ref('desc')
-const sortOptions = [
-  { label: '修改时间', value: 'mtime' },
-  { label: '名称', value: 'name' },
-  { label: '大小', value: 'size' },
-  { label: '类型', value: 'ext' },
-  { label: '相关度', value: 'relevance' },   // 仅文本 FTS 搜索有效，其余场景后端安全回退 mtime
-]
-const orderOptions = [
-  { label: '降序', value: 'desc' },
-  { label: '升序', value: 'asc' },
-]
+const sortOptions = computed(() => [
+  { label: t('files.sort.mtime'), value: 'mtime' },
+  { label: t('files.sort.name'), value: 'name' },
+  { label: t('files.sort.size'), value: 'size' },
+  { label: t('files.sort.ext'), value: 'ext' },
+  { label: t('files.sort.relevance'), value: 'relevance' },   // 仅文本 FTS 搜索有效，其余场景后端安全回退 mtime
+])
+const orderOptions = computed(() => [
+  { label: t('files.sort.desc'), value: 'desc' },
+  { label: t('files.sort.asc'), value: 'asc' },
+])
 // ---------- 标签 ----------
 const tagOptions = ref([])      // {label, value:id}
 const tagFilter = ref([])       // 筛选选中的标签 id
@@ -524,13 +526,13 @@ function setViewMode(m) {
 // ---------- 时间线（区间走后端 mtime 过滤；注意这是修改时间，不是创建时间） ----------
 const timeRange = ref('all')          // all | today | week | month | custom
 const customRange = ref(null)         // [ms, ms]，n-date-picker daterange
-const timeChips = [
-  { key: 'all', label: '不限' },
-  { key: 'today', label: '今天' },
-  { key: 'week', label: '本周' },
-  { key: 'month', label: '本月' },
-  { key: 'custom', label: '自定义' },
-]
+const timeChips = computed(() => [
+  { key: 'all', label: t('files.time.all') },
+  { key: 'today', label: t('files.time.today') },
+  { key: 'week', label: t('files.time.week') },
+  { key: 'month', label: t('files.time.month') },
+  { key: 'custom', label: t('files.time.custom') },
+])
 
 function _startOfDay(d) {
   const x = new Date(d)
@@ -921,7 +923,7 @@ function openPreviewByPath(p) {
 const _HUES = CATEGORY_HUES
 
 // 列表列
-const columns = [
+const columns = computed(() => [
   { title: ' ', key: 'thumb', width: 56,
     render: (r) => isImg(r)
       ? h('div', { class: 'fb-row-thumb' },
@@ -935,20 +937,20 @@ const columns = [
     render: (r) => h('span', {
       style: 'cursor:pointer;font-size:15px;color:' +
         (favSet.value.has(r.path) ? '#f0a020' : 'rgba(127,127,127,.35)'),
-      title: favSet.value.has(r.path) ? '取消收藏' : '收藏',
+      title: favSet.value.has(r.path) ? t('files.fav.unstar') : t('files.fav.star'),
       onClick: (e) => { e.stopPropagation(); toggleFav(r) },
       onDblclick: (e) => e.stopPropagation(),
     }, favSet.value.has(r.path) ? '★' : '☆') },
-  { title: '文件名', key: 'name', ellipsis: { tooltip: true },
+  { title: t('files.col.name'), key: 'name', ellipsis: { tooltip: true },
     render: (r) => h('span', { style: 'cursor:pointer', onClick: () => previewFile(r),
-      title: '单击预览 · 双击打开所在位置' }, r.name) },
-  { title: '类别', key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
-  { title: '大小', key: 'size', width: 100, render: (r) => fmtSize(r.size) },
-  { title: '修改时间', key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
-  { title: '标签', key: 'tags', width: 140, render: (r) => h(NPopover, { trigger: 'click', placement: 'left' }, {
+      title: t('files.col.nameHint') }, r.name) },
+  { title: t('files.col.category'), key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
+  { title: t('files.col.size'), key: 'size', width: 100, render: (r) => fmtSize(r.size) },
+  { title: t('files.col.mtime'), key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
+  { title: t('files.col.tags'), key: 'tags', width: 140, render: (r) => h(NPopover, { trigger: 'click', placement: 'left' }, {
       trigger: () => h('span', {
         style: 'cursor:pointer;font-size:12px;color:#5a9cf8;display:inline-block;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
-        title: '点击编辑标签',
+        title: t('files.tag.editHint'),
       }, r.tags ? ('🏷 ' + r.tags.split('|').slice(0, 2).join('、')
           + (r.tags.split('|').length > 2 ? '…' : '')) : '＋ 打标签'),
       default: () => h('div', { style: 'width:230px' }, [
@@ -965,10 +967,10 @@ const columns = [
         }, { default: () => '保存标签' }),
       ]),
     }) },
-  { title: '路径', key: 'path', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.path) },
-]
+  { title: t('files.col.path'), key: 'path', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.path) },
+])
 
-const batchColumns = [{ type: 'selection' }, ...columns]
+const batchColumns = computed(() => [{ type: 'selection' }, ...columns.value])
 
 function fmtSize(n) {
   if (n == null) return '-'
@@ -989,7 +991,7 @@ refresh()
         <n-space :wrap="false" align="center" class="fb-search">
           <n-auto-complete v-model:value="query" :options="historyOptions" size="large"
             :style="{ flex: 1 }" clearable round
-            placeholder="搜索文件… Enter 打开第一项 · Shift+Enter 搜内容 · 支持 ext:pdf size:>100mb dm:week（Ctrl+F 聚焦）"
+            :placeholder="t('files.ph.search')"
             @select="pickHistory" @update:value="onQueryInput"
             @keydown.enter="onSearchEnter">
             <template #prefix>
@@ -1001,28 +1003,28 @@ refresh()
           <n-select v-model:value="sortOrder" :options="orderOptions" size="small" style="width:88px"
             @update:value="() => { page = 1; refresh() }" />
           <n-select v-model:value="tagFilter" :options="tagOptions" multiple size="small"
-            style="width:150px" placeholder="按标签筛选" clearable
+            style="width:150px" :placeholder="t('files.ph.tagFilter')" clearable
             @update:value="() => { page = 1; refresh() }" />
           <n-popover trigger="click" placement="bottom" :width="300" v-model:show="showTagMgr">
             <template #trigger>
               <n-button size="small" secondary>🏷</n-button>
             </template>
             <div v-if="tagList.length" style="max-height:300px;overflow:auto">
-              <div v-for="t in tagList" :key="t.id"
+              <div v-for="tg in tagList" :key="tg.id"
                 style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed rgba(127,127,127,.2)">
                 <span style="flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                  {{ t.name }}<n-text depth="3" style="font-size:11px">（{{ t.c }}）</n-text>
+                  {{ tg.name }}<n-text depth="3" style="font-size:11px">（{{ tg.c }}）</n-text>
                 </span>
-                <n-button size="tiny" quaternary @click="renameTag(t)">改名</n-button>
-                <n-button size="tiny" quaternary type="error" @click="deleteTag(t)">删除</n-button>
+                <n-button size="tiny" quaternary @click="renameTag(tg)">{{ t('files.tag.rename') }}</n-button>
+                <n-button size="tiny" quaternary type="error" @click="deleteTag(tg)">{{ t('files.tag.del') }}</n-button>
               </div>
             </div>
-            <n-empty v-else size="small" description="暂无标签" style="padding:14px 0" />
+            <n-empty v-else size="small" :description="t('files.tag.empty')" style="padding:14px 0" />
           </n-popover>
           <n-popover trigger="click" placement="bottom-end" :width="460">
             <template #trigger>
               <n-button size="small" secondary>
-                ★ 收藏{{ favList.length ? ' ' + favList.length : '' }}
+                {{ t('files.fav.title') }}{{ favList.length ? ' ' + favList.length : '' }}
               </n-button>
             </template>
             <div v-if="favList.length" style="max-height:320px;overflow:auto">
@@ -1030,23 +1032,23 @@ refresh()
                 style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed rgba(127,127,127,.2)">
                 <div style="flex:1;min-width:0">
                   <div class="mono" style="cursor:pointer;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                    :title="'打开 ' + f.path" @click="openFav(f.path)">{{ f.path }}</div>
+                    :title="f.path" @click="openFav(f.path)">{{ f.path }}</div>
                   <div v-if="f.note" style="font-size:11.5px;opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                     :title="f.note">{{ f.note }}</div>
                 </div>
-                <n-button size="tiny" quaternary @click="editFavNote(f)">备注</n-button>
-                <n-button size="tiny" quaternary @click="removeFav(f.path)">移除</n-button>
+                <n-button size="tiny" quaternary @click="editFavNote(f)">{{ t('files.fav.note') }}</n-button>
+                <n-button size="tiny" quaternary @click="removeFav(f.path)">{{ t('files.fav.remove') }}</n-button>
               </div>
             </div>
-            <n-empty v-else size="small" description="暂无收藏——在文件列表点 ☆ 收藏常用文件" style="padding:18px 0" />
+            <n-empty v-else size="small" :description="t('files.fav.empty')" style="padding:18px 0" />
           </n-popover>
           <n-button size="small" secondary :loading="exporting" @click="exportCsv">
-            导出 CSV
+            {{ t('files.toolbar.exportCsv') }}
           </n-button>
           <n-radio-group :value="viewMode" size="small" @update:value="setViewMode">
-            <n-radio-button value="list">列表</n-radio-button>
-            <n-radio-button value="grid">网格</n-radio-button>
-            <n-radio-button value="timeline">时间线</n-radio-button>
+            <n-radio-button value="list">{{ t('files.toolbar.list') }}</n-radio-button>
+            <n-radio-button value="grid">{{ t('files.toolbar.grid') }}</n-radio-button>
+            <n-radio-button value="timeline">{{ t('files.toolbar.timeline') }}</n-radio-button>
           </n-radio-group>
         </n-space>
 
@@ -1055,7 +1057,7 @@ refresh()
           <n-progress :percentage="scanning.n ? Math.round(scanning.i / scanning.n * 100) : 0"
             indicator-placement="inside" processing />
           <n-text class="mono" style="font-size:12px">
-            {{ { scan: '扫描目录', index: '写入索引', clean: '清理失效记录', done: '完成' }[scanning.stage] }}
+            {{ { scan: t('files.scan.scan'), index: t('files.scan.index'), clean: t('files.scan.clean'), done: t('files.scan.done') }[scanning.stage] }}
             {{ scanning.i }}/{{ scanning.n }} {{ scanning.detail }}
           </n-text>
         </n-alert>
@@ -1068,13 +1070,13 @@ refresh()
           </n-tag>
           <n-popover trigger="click" :width="300" v-model:show="showSaveSearch">
             <template #trigger>
-              <n-tag size="small" round :bordered="false" style="cursor:pointer">＋ 保存当前筛选</n-tag>
+              <n-tag size="small" round :bordered="false" style="cursor:pointer">{{ t('files.toolbar.saveFilter') }}</n-tag>
             </template>
             <n-space vertical size="small">
-              <n-input v-model:value="saveSearchName" size="small" placeholder="筛选名称，如：本周改的 PDF"
+              <n-input v-model:value="saveSearchName" size="small" :placeholder="t('files.ph.saveName')"
                 @keyup.enter="saveCurrentSearch" />
               <n-button size="tiny" type="primary" block @click="saveCurrentSearch">
-                保存当前搜索
+                {{ t('files.toolbar.saveSearch') }}
               </n-button>
             </n-space>
           </n-popover>
@@ -1086,17 +1088,17 @@ refresh()
             :type="category === c ? 'primary' : 'default'" style="cursor:pointer"
             @click="pickCategory(c)">{{ c }}</n-tag>
           <n-tag size="medium" round :type="!category && !currentDir ? 'primary' : 'default'"
-            style="cursor:pointer" @click="pickCategory(null); pickDir(null)">全部</n-tag>
+            style="cursor:pointer" @click="pickCategory(null); pickDir(null)">{{ t('files.stat.all') }}</n-tag>
           <n-text depth="3" style="align-self:center">
-            共 {{ total }}{{ totalCapped ? '+' : '' }} 个文件{{ category ? ' · ' + category : '' }}{{ currentDir ? ' · ' + currentDir : '' }}
-            <template v-if="lastEvent"> · 最近动态：{{ lastEvent.kind === 'added' ? '新增' : '移除' }} {{ lastEvent.path.split(/[\\/]/).pop() }}</template>
+            {{ t('files.stat.count', { n: total + (totalCapped ? '+' : '') }) }}{{ category ? ' · ' + category : '' }}{{ currentDir ? ' · ' + currentDir : '' }}
+            <template v-if="lastEvent">{{ t('files.stat.recent') }}{{ lastEvent.kind === 'added' ? t('files.stat.added') : t('files.stat.removed') }} {{ lastEvent.path.split(/[\\/]/).pop() }}</template>
           </n-text>
         </n-space>
 
         <!-- 目录树（可折叠） -->
         <div class="fb-dirtree-wrap">
           <n-button size="tiny" quaternary @click="toggleDirTree">
-            {{ dirExpanded ? '▾ 收起目录树' : '▸ 目录树' }}
+            {{ dirExpanded ? t('files.stat.treeExpand') : t('files.stat.tree') }}
             <template v-if="currentDir"> · {{ currentDir }}</template>
           </n-button>
           <!-- 取消 default-expand-all：大库（万级文件）展开整棵会卡。改为只展开第 1 层 + 搜索过滤 -->
@@ -1107,21 +1109,21 @@ refresh()
             style="max-height:260px;overflow:auto;margin-top:6px"
             @update:selected-keys="(k) => k.length && pickDir(k[0])" />
           <n-space v-if="dirExpanded && currentDir" size="small" style="margin-top:4px">
-            <n-button size="tiny" quaternary @click="pickDir(null)">↺ 全部（清除目录过滤）</n-button>
+            <n-button size="tiny" quaternary @click="pickDir(null)">{{ t('files.stat.clearDir') }}</n-button>
           </n-space>
         </div>
 
         <!-- 批量操作栏（列表/网格多选后出现）。此前写作 view === 'list'，
              但 view 并非本组件的变量（永远 undefined），批量栏从未显示过 -->
         <n-space v-if="checkedRows.length" align="center" class="fb-batchbar">
-          <n-text>已选 <b>{{ checkedRows.length }}</b> 个</n-text>
-          <n-button size="small" type="primary" ghost :loading="transferring" @click="transferFiles('move')">移动到…</n-button>
-          <n-button size="small" type="primary" ghost :loading="transferring" @click="transferFiles('copy')">复制到…</n-button>
-          <n-button size="small" type="primary" ghost @click="openRename">重命名</n-button>
-          <n-button size="small" type="error" ghost @click="trashSelected">删除到回收站</n-button>
-          <n-button size="small" @click="copyPaths">复制路径</n-button>
-          <n-button size="small" quaternary @click="checkedRows = []">清空选择</n-button>
-          <n-text depth="3" style="font-size:11.5px">快捷键：Ctrl+A 全选 · Space 预览 · F2 重命名 · Delete 删除 · Enter 打开 · Ctrl+K 全局搜索</n-text>
+          <n-text>{{ t('files.batch.selected') }} <b>{{ checkedRows.length }}</b> {{ t('files.batch.unit') }}</n-text>
+          <n-button size="small" type="primary" ghost :loading="transferring" @click="transferFiles('move')">{{ t('files.batch.moveTo') }}</n-button>
+          <n-button size="small" type="primary" ghost :loading="transferring" @click="transferFiles('copy')">{{ t('files.batch.copyTo') }}</n-button>
+          <n-button size="small" type="primary" ghost @click="openRename">{{ t('files.batch.rename') }}</n-button>
+          <n-button size="small" type="error" ghost @click="trashSelected">{{ t('files.batch.trash') }}</n-button>
+          <n-button size="small" @click="copyPaths">{{ t('files.batch.copyPath') }}</n-button>
+          <n-button size="small" quaternary @click="checkedRows = []">{{ t('files.batch.clear') }}</n-button>
+          <n-text depth="3" style="font-size:11.5px">{{ t('files.batch.hint') }}</n-text>
         </n-space>
 
         <!-- 时间线：按修改时间区间筛选，结果按天分组 -->
@@ -1132,7 +1134,7 @@ refresh()
               @click="pickTimeRange(c.key)">{{ c.label }}</n-tag>
             <n-date-picker v-if="timeRange === 'custom'" :value="customRange" type="daterange"
               size="small" :clearable="false" style="width:262px" @update:value="onCustomRange" />
-            <n-text depth="3" style="font-size:11.5px">按「修改时间」统计，不是创建时间</n-text>
+            <n-text depth="3" style="font-size:11.5px">{{ t('files.timeline.byMtime') }}</n-text>
           </n-space>
           <n-spin :show="loading">
             <div class="fb-timeline" style="min-height:180px">
@@ -1140,13 +1142,13 @@ refresh()
                 <div class="fb-tlday-head">
                   <span class="fb-tldot"></span>
                   <b>{{ g.label }}</b>
-                  <n-text depth="3" style="font-size:12px">{{ g.items.length }} 个</n-text>
+                  <n-text depth="3" style="font-size:12px">{{ g.items.length }} {{ t('files.batch.unit') }}</n-text>
                 </div>
                 <div v-for="r in g.items" :key="r.path" class="fb-tlrow"
                   :class="{ sel: isChecked(r.path) }" :title="r.path"
                   @click="(e) => { if (e.detail === 1) isImg(r) ? openPreview(r) : previewFile(r) }"
                   @dblclick="openItem(r)">
-                  <div class="fb-grid-check" :class="{ on: isChecked(r.path) }" title="选择"
+                  <div class="fb-grid-check" :class="{ on: isChecked(r.path) }" :title="t('files.grid.select')"
                     @click.stop="toggleCheck(r.path)">{{ isChecked(r.path) ? '✓' : '' }}</div>
                   <span class="fb-tltime mono">{{ fmtClock(r.mtime) }}</span>
                   <img v-if="isImg(r)" :src="thumbUrl(r)" class="fb-tlthumb" loading="lazy" alt="" />
@@ -1158,7 +1160,7 @@ refresh()
                   <span class="mono fb-tlsize">{{ fmtSize(r.size) }}</span>
                 </div>
               </div>
-              <n-empty v-if="!items.length" description="该时间段内没有文件" style="padding:40px 0" />
+              <n-empty v-if="!items.length" :description="t('files.timeline.empty')" style="padding:40px 0" />
             </div>
           </n-spin>
         </div>
@@ -1170,8 +1172,8 @@ refresh()
             :title="r.path"
             @click="(e) => { if (e.detail === 1) isImg(r) ? openPreview(r) : previewFile(r) }"
             @dblclick="openItem(r)">
-            <div class="fb-grid-check" :class="{ on: isChecked(r.path) }" title="选择"
-              @click.stop="toggleCheck(r.path)">{{ isChecked(r.path) ? '✓' : '' }}</div>
+                  <div class="fb-grid-check" :class="{ on: isChecked(r.path) }" :title="t('files.grid.select')"
+                    @click.stop="toggleCheck(r.path)">{{ isChecked(r.path) ? '✓' : '' }}</div>
             <img v-if="isImg(r)" :src="thumbUrl(r)" loading="lazy" alt="" />
             <div v-else class="fb-ext-badge fb-grid-badge"
               :style="{ '--h': String(_HUES[r.category] || 220) }">
@@ -1182,7 +1184,7 @@ refresh()
               <span class="mono" style="opacity:.55;flex-shrink:0">{{ fmtSize(r.size) }}</span>
             </div>
           </div>
-          <n-empty v-if="!items.length" description="没有匹配的文件" style="grid-column:1/-1;padding:40px 0" />
+          <n-empty v-if="!items.length" :description="t('files.grid.empty')" style="grid-column:1/-1;padding:40px 0" />
           </div>
         </n-spin>
 
@@ -1198,10 +1200,10 @@ refresh()
 
         <!-- 内容搜索结果（文档 + 图片语义，融合展示） -->
         <n-card v-if="contentResults && (contentResults.results.length || contentResults.images.length)"
-          size="small" title="内容匹配（文档正文 + 知识库 + 图片语义）">
+          size="small" :title="t('files.content.title')">
           <template #header-extra>
             <n-tag size="small" :type="contentResults.mode === 'vector' ? 'success' : 'warning'">
-              {{ contentResults.mode === 'vector' ? '语义' : '关键词' }}
+              {{ contentResults.mode === 'vector' ? t('files.content.semantic') : t('files.content.keyword') }}
             </n-tag>
           </template>
           <!-- 图片语义命中 -->
@@ -1223,27 +1225,26 @@ refresh()
           </div>
         </n-card>
         <n-card v-else-if="contentResults && contentLoading === false && query" size="small">
-          <n-empty :description="contentResults.fulltext_reason
-            || '没有正文命中——正文级搜索需先在 设置 → 全盘内容索引 建立索引；也可把文件夹加入「知识库」做语义搜索'" />
+          <n-empty :description="contentResults.fulltext_reason || t('files.content.empty')" />
         </n-card>
       </n-space>
     </n-card>
 
     <!-- 键盘速查 -->
-    <n-modal v-model:show="showKeys" preset="card" title="键盘快捷键" style="width:440px">
+    <n-modal v-model:show="showKeys" preset="card" :title="t('files.keys.title')" style="width:440px">
         <div class="fb-keys">
-        <div class="fb-key-row"><span class="mono">Ctrl+K</span><span>全局快速唤起（搜文件 / 跳页面 / 切主题）</span></div>
-        <div class="fb-key-row"><span class="mono">Ctrl+F</span><span>聚焦搜索框</span></div>
-        <div class="fb-key-row"><span class="mono">Enter</span><span>搜索后打开第一项结果</span></div>
-        <div class="fb-key-row"><span class="mono">Shift+Enter</span><span>搜索文件内容（知识库/语义）</span></div>
-        <div class="fb-key-row"><span class="mono">Ctrl+A</span><span>全选本页文件</span></div>
-        <div class="fb-key-row"><span class="mono">Space</span><span>快速预览选中文件 / 再按关闭</span></div>
-        <div class="fb-key-row"><span class="mono">Enter</span><span>打开选中的文件</span></div>
-        <div class="fb-key-row"><span class="mono">F2</span><span>重命名（单个就地改 / 多个进批量）</span></div>
-        <div class="fb-key-row"><span class="mono">Delete</span><span>删除到回收站</span></div>
-        <div class="fb-key-row"><span class="mono">Ctrl+C</span><span>复制路径</span></div>
-        <div class="fb-key-row"><span class="mono">← →</span><span>灯箱内翻页</span></div>
-        <div class="fb-key-row"><span class="mono">Esc</span><span>关闭预览 / 弹窗</span></div>
+        <div class="fb-key-row"><span class="mono">Ctrl+K</span><span>{{ t('files.keys.global') }}</span></div>
+        <div class="fb-key-row"><span class="mono">Ctrl+F</span><span>{{ t('files.keys.focus') }}</span></div>
+        <div class="fb-key-row"><span class="mono">Enter</span><span>{{ t('files.keys.openFirst') }}</span></div>
+        <div class="fb-key-row"><span class="mono">Shift+Enter</span><span>{{ t('files.keys.content') }}</span></div>
+        <div class="fb-key-row"><span class="mono">Ctrl+A</span><span>{{ t('files.keys.selectAll') }}</span></div>
+        <div class="fb-key-row"><span class="mono">Space</span><span>{{ t('files.keys.preview') }}</span></div>
+        <div class="fb-key-row"><span class="mono">Enter</span><span>{{ t('files.keys.open') }}</span></div>
+        <div class="fb-key-row"><span class="mono">F2</span><span>{{ t('files.keys.rename') }}</span></div>
+        <div class="fb-key-row"><span class="mono">Delete</span><span>{{ t('files.keys.trash') }}</span></div>
+        <div class="fb-key-row"><span class="mono">Ctrl+C</span><span>{{ t('files.keys.copyPath') }}</span></div>
+        <div class="fb-key-row"><span class="mono">← →</span><span>{{ t('files.keys.arrows') }}</span></div>
+        <div class="fb-key-row"><span class="mono">Esc</span><span>{{ t('files.keys.esc') }}</span></div>
       </div>
     </n-modal>
 
@@ -1251,12 +1252,12 @@ refresh()
     <n-modal :show="!!toolModal" preset="card" :title="toolModal?.title" style="width:560px"
       @update:show="(v) => { if (!v) toolModal = null }">
       <n-spin :show="!!toolModal?.loading">
-        <pre class="mono" style="white-space:pre-wrap;word-break:break-all;min-height:80px;max-height:50vh;overflow:auto;margin:0">{{ toolModal?.text || '处理中…' }}</pre>
+        <pre class="mono" style="white-space:pre-wrap;word-break:break-all;min-height:80px;max-height:50vh;overflow:auto;margin:0">{{ toolModal?.text || t('common.processing') }}</pre>
       </n-spin>
       <template #footer>
         <n-space justify="end">
-          <n-button size="small" type="primary" :disabled="toolModal?.loading || !toolModal?.text" @click="copyToolText">复制</n-button>
-          <n-button size="small" @click="toolModal = null">关闭</n-button>
+          <n-button size="small" type="primary" :disabled="toolModal?.loading || !toolModal?.text" @click="copyToolText">{{ t('files.preview.copy') }}</n-button>
+          <n-button size="small" @click="toolModal = null">{{ t('files.tool.close') }}</n-button>
         </n-space>
       </template>
     </n-modal>
@@ -1268,73 +1269,73 @@ refresh()
     <!-- 大图预览灯箱：点空白处/ESC 关闭，右上角关闭钮，底部悬浮操作条 -->
     <teleport to="body">
       <transition name="fade">
-        <div v-if="preview" class="lightbox" @click.self="preview = null" title="点击空白处关闭">
+        <div v-if="preview" class="lightbox" @click.self="preview = null" :title="t('files.lightbox.closeHint')">
           <img :src="preview.url" class="lightbox-img" alt="" />
-          <button class="lightbox-close" @click="preview = null" title="关闭 (Esc)">✕</button>
+          <button class="lightbox-close" @click="preview = null" :title="t('files.lightbox.closeEsc')">✕</button>
           <div class="lightbox-bar">
-            <button class="lightbox-btn" @click.stop="stepPreview(-1)">‹ 上一张</button>
+            <button class="lightbox-btn" @click.stop="stepPreview(-1)">{{ t('files.lightbox.prev') }}</button>
             <span class="lightbox-name" :title="preview.path">
               {{ preview.path.split(/[\\/]/).pop() }}
               <span v-if="imgItems.length" class="lightbox-count">
                 {{ (preview.index ?? 0) + 1 }} / {{ imgItems.length }}
               </span>
             </span>
-            <button class="lightbox-btn" @click.stop="stepPreview(1)">下一张 ›</button>
+            <button class="lightbox-btn" @click.stop="stepPreview(1)">{{ t('files.lightbox.next') }}</button>
             <button class="lightbox-btn" @click="api('open_path', preview.path)">
-              📂 打开
+              {{ t('files.lightbox.open') }}
             </button>
-            <button class="lightbox-btn primary" @click="preview = null">关 闭</button>
+            <button class="lightbox-btn primary" @click="preview = null">{{ t('files.lightbox.close') }}</button>
           </div>
         </div>
       </transition>
     </teleport>
 
     <!-- 批量重命名 -->
-    <n-modal v-model:show="renameModal" preset="card" title="批量重命名"
+    <n-modal v-model:show="renameModal" preset="card" :title="t('files.rename.title')"
       style="width:720px" content-style="max-height:70vh;overflow:auto">
       <n-space vertical>
         <n-radio-group :value="renameMode" @update:value="(v) => { renameMode = v; genRenameRows() }">
-          <n-radio-button value="seq">序列编号</n-radio-button>
-          <n-radio-button value="replace">查找替换</n-radio-button>
-          <n-radio-button value="ai">AI 建议</n-radio-button>
-          <n-radio-button v-if="renameMode === 'single'" value="single">单个</n-radio-button>
+          <n-radio-button value="seq">{{ t('files.rename.seq') }}</n-radio-button>
+          <n-radio-button value="replace">{{ t('files.rename.replace') }}</n-radio-button>
+          <n-radio-button value="ai">{{ t('files.rename.ai') }}</n-radio-button>
+          <n-radio-button v-if="renameMode === 'single'" value="single">{{ t('files.rename.single') }}</n-radio-button>
         </n-radio-group>
 
         <n-space v-if="renameMode === 'seq'" align="center">
-          <n-input v-model:value="renamePrefix" placeholder="前缀，如 旅行照片" style="width:200px" />
+          <n-input v-model:value="renamePrefix" :placeholder="t('files.ph.renamePrefix')" style="width:200px" />
           <n-input-number v-model:value="renameStart" :min="0" :max="99999" style="width:110px" />
-          <n-button size="small" @click="genRenameRows">生成</n-button>
+          <n-button size="small" @click="genRenameRows">{{ t('files.rename.gen') }}</n-button>
         </n-space>
 
         <n-space v-else-if="renameMode === 'replace'" align="center">
-          <n-input v-model:value="renameFind" placeholder="查找" style="width:200px" />
-          <n-input v-model:value="renameReplace" placeholder="替换为" style="width:200px" />
-          <n-button size="small" @click="genRenameRows">生成</n-button>
+          <n-input v-model:value="renameFind" :placeholder="t('files.ph.find')" style="width:200px" />
+          <n-input v-model:value="renameReplace" :placeholder="t('files.ph.replace')" style="width:200px" />
+          <n-button size="small" @click="genRenameRows">{{ t('files.rename.gen') }}</n-button>
         </n-space>
 
         <n-space v-else-if="renameMode === 'ai'" align="center">
-          <n-text depth="3">用本地模型按内容/名称理解批量起名</n-text>
+          <n-text depth="3">{{ t('files.rename.aiHint') }}</n-text>
           <n-button size="small" type="primary" ghost :loading="renameLoading" @click="aiSuggest">
-            AI 一键起名
+            {{ t('files.rename.aiRun') }}
           </n-button>
         </n-space>
         <n-text v-else-if="renameMode === 'single'" depth="3" style="font-size:12px">
-          在下方表格里直接修改新文件名，确认后执行
+          {{ t('files.rename.tip') }}
         </n-text>
 
         <n-data-table v-if="renameRows.length" :columns="[
-          { title: '原文件名', key: 'src', ellipsis: { tooltip: true },
+          { title: t('files.rename.colSrc'), key: 'src', ellipsis: { tooltip: true },
             render: (r) => h('span', { class: 'mono' }, baseName(r.src)) },
-          { title: '新文件名', key: 'new_name', render: (r) => h('input', {
+          { title: t('files.rename.colNew'), key: 'new_name', render: (r) => h('input', {
               class: 'fb-rename-input', value: r.new_name,
               onInput: (e) => { r.new_name = e.target.value },
             }) },
         ]" :data="renameRows" :max-height="380" size="small" :row-key="(r) => r.src" />
 
         <n-space justify="end">
-          <n-button @click="renameModal = false">取消</n-button>
+          <n-button @click="renameModal = false">{{ t('files.rename.cancel') }}</n-button>
           <n-button type="primary" :disabled="!renameRows.length" @click="doRename">
-            执行重命名（{{ renameRows.length }} 个）
+            {{ t('files.rename.run', { n: renameRows.length }) }}
           </n-button>
         </n-space>
       </n-space>
@@ -1342,15 +1343,15 @@ refresh()
 
     <!-- 文件预览（文本/Markdown/PDF） -->
     <n-modal :show="!!filePreview" @update:show="(v) => { if (!v) { filePreview = null; summaryText = null } }"
-      preset="card" style="width:860px" :title="filePreview?.name || '预览'"
+      preset="card" style="width:860px" :title="filePreview?.name || t('files.preview.title')"
       content-style="max-height:78vh;overflow:auto">
       <n-spin :show="previewLoading">
         <n-alert v-if="summaryText" :type="summaryText.ok ? 'success' : 'error'"
           style="margin-bottom:12px">
           <template #header>
             <n-space align="center" :wrap="false">
-              <span>{{ summaryText.ok ? 'AI 摘要' : '总结失败' }}</span>
-              <n-button v-if="summaryText.ok" size="tiny" quaternary @click="copySummary">复制</n-button>
+              <span>{{ summaryText.ok ? t('files.preview.aiSummary') : t('files.preview.summaryFail') }}</span>
+              <n-button v-if="summaryText.ok" size="tiny" quaternary @click="copySummary">{{ t('files.preview.copy') }}</n-button>
             </n-space>
           </template>
           <span style="white-space:pre-wrap">{{ summaryText.ok ? summaryText.summary : summaryText.error }}</span>
@@ -1368,15 +1369,15 @@ refresh()
         <div v-else-if="filePreview?.type === 'image'" class="fb-modal-image">
           <img :src="filePreview.url" :alt="filePreview.name" />
         </div>
-        <n-empty v-else-if="filePreview?.type === 'unknown'" description="该格式暂不支持内置预览，可点击文件名或使用系统打开" />
+        <n-empty v-else-if="filePreview?.type === 'unknown'" :description="t('files.preview.unsupported')" />
       </n-spin>
       <template #footer>
         <n-space>
           <n-button v-if="canSummarize" size="small" type="primary" ghost :loading="summarizing"
-            @click="summarizeFile">🤖 AI 总结</n-button>
-          <n-button size="small" @click="api('open_path', filePreview?.path)">系统打开</n-button>
-          <n-button size="small" @click="api('open_location', filePreview?.path)">打开所在位置</n-button>
-          <n-button size="small" @click="filePreview = null">关闭</n-button>
+            @click="summarizeFile">{{ t('files.preview.aiSummarize') }}</n-button>
+          <n-button size="small" @click="api('open_path', filePreview?.path)">{{ t('files.preview.openSystem') }}</n-button>
+          <n-button size="small" @click="api('open_location', filePreview?.path)">{{ t('files.preview.openLocation') }}</n-button>
+          <n-button size="small" @click="filePreview = null">{{ t('files.preview.close') }}</n-button>
         </n-space>
       </template>
     </n-modal>

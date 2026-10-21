@@ -1,5 +1,6 @@
 // English. Keep the same key structure as zh-CN.js.
 export default {
+  common: { processing: 'Working…' },
   nav: {
     dashboard: 'Overview',
     files: 'Files',
@@ -45,6 +46,88 @@ export default {
     bullet3: 'Stays local: files never leave your machine; migrate or back up anytime in Settings',
     pickTheme: 'Pick a theme (changeable from the bottom-left corner later):',
     start: 'Get started',
+  },
+  files: {
+    ph: {
+      search: 'Search files… Enter opens the first hit · Shift+Enter searches content · supports ext:pdf size:>100mb dm:week (Ctrl+F to focus)',
+      tagFilter: 'Filter by tag',
+      saveName: 'Filter name, e.g. PDFs changed this week',
+      renamePrefix: 'Prefix, e.g. Trip photos',
+      find: 'Find',
+      replace: 'Replace with',
+    },
+    tag: { rename: 'Rename', del: 'Delete', empty: 'No tags yet', editHint: 'Click to edit tags' },
+    col: {
+      name: 'Name', category: 'Category', size: 'Size', mtime: 'Modified',
+      tags: 'Tags', path: 'Path', nameHint: 'Click to preview · double-click to show in folder',
+    },
+    sort: {
+      mtime: 'Modified time', name: 'Name', size: 'Size', ext: 'Type', relevance: 'Relevance',
+      desc: 'Descending', asc: 'Ascending',
+    },
+    time: { all: 'Any', today: 'Today', week: 'This week', month: 'This month', custom: 'Custom' },
+    fav: {
+      title: '★ Starred', note: 'Note', remove: 'Remove', star: 'Star', unstar: 'Unstar',
+      empty: 'No starred files yet — click ☆ in the file list to star one',
+    },
+    toolbar: {
+      exportCsv: 'Export CSV', list: 'List', grid: 'Grid', timeline: 'Timeline',
+      saveFilter: '＋ Save current filter', saveSearch: 'Save current search',
+    },
+    scan: { scan: 'Scanning folders', index: 'Writing index', clean: 'Removing stale entries', done: 'Done' },
+    stat: {
+      all: 'All', count: '{n} files',
+      added: 'added', removed: 'removed', recent: ' · recent: ',
+      treeExpand: '▾ Hide folder tree', tree: '▸ Folder tree',
+      clearDir: '↺ All (clear folder filter)',
+    },
+    batch: {
+      selected: 'Selected', unit: 'items',
+      moveTo: 'Move to…', copyTo: 'Copy to…', rename: 'Rename',
+      trash: 'Move to Recycle Bin', copyPath: 'Copy path', clear: 'Clear selection',
+      hint: 'Shortcuts: Ctrl+A select all · Space preview · F2 rename · Delete trash · Enter open · Ctrl+K launcher',
+    },
+    timeline: { byMtime: 'Grouped by modified time, not created time', empty: 'Nothing in this period' },
+    grid: { select: 'Select', empty: 'No matching files' },
+    content: {
+      title: 'Content matches (document text + knowledge base + image captions)',
+      semantic: 'semantic', keyword: 'keyword',
+      empty: 'No content hits — build the full-disk content index in Settings → Content index first, or add folders to the knowledge base for semantic search',
+    },
+    keys: {
+      title: 'Keyboard shortcuts',
+      global: 'Global launcher (search files / jump pages / switch theme)',
+      focus: 'Focus the search box',
+      openFirst: 'Open the first result',
+      content: 'Search file contents (knowledge base / semantic)',
+      selectAll: 'Select all files on this page',
+      preview: 'Quick preview of the selected file / press again to close',
+      open: 'Open the selected file',
+      rename: 'Rename (inline for one, batch for many)',
+      trash: 'Move to Recycle Bin',
+      copyPath: 'Copy path',
+      arrows: 'Page through the lightbox',
+      esc: 'Close preview / dialog',
+    },
+    tool: { close: 'Close' },
+    lightbox: {
+      closeHint: 'Click empty space to close', closeEsc: 'Close (Esc)',
+      prev: '‹ Previous', next: 'Next ›', open: '📂 Open', close: 'Close',
+    },
+    rename: {
+      title: 'Batch rename',
+      seq: 'Numbering', replace: 'Find & replace', ai: 'AI suggestions', single: 'Single file',
+      gen: 'Generate', aiHint: 'Ask the local model to name files by content or name',
+      aiRun: 'AI name them',
+      tip: 'Edit the new names in the table below, then confirm',
+      colSrc: 'Original name', colNew: 'New name',
+      cancel: 'Cancel', run: 'Rename {n} files',
+    },
+    preview: {
+      title: 'Preview', aiSummary: 'AI summary', summaryFail: 'Summary failed', copy: 'Copy',
+      unsupported: 'This format has no built-in preview — click the file name to open it with the system app',
+      aiSummarize: '🤖 AI summary', openSystem: 'Open with system', openLocation: 'Show in folder', close: 'Close',
+    },
   },
   lang: {
     label: 'Language',

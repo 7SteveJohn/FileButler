@@ -1,5 +1,6 @@
 // 简体中文（默认语言）。新增文案从这里加，再补 en.js 同名 key。
 export default {
+  common: { processing: '处理中…' },
   nav: {
     dashboard: '概览',
     files: '文件',
@@ -45,6 +46,88 @@ export default {
     bullet3: '一切本地：文件数据零上传，可随时在设置中迁移与备份',
     pickTheme: '先挑一个顺眼的主题（可在左下角随时更换）：',
     start: '开始使用',
+  },
+  files: {
+    ph: {
+      search: '搜索文件… Enter 打开第一项 · Shift+Enter 搜内容 · 支持 ext:pdf size:>100mb dm:week（Ctrl+F 聚焦）',
+      tagFilter: '按标签筛选',
+      saveName: '筛选名称，如：本周改的 PDF',
+      renamePrefix: '前缀，如 旅行照片',
+      find: '查找',
+      replace: '替换为',
+    },
+    tag: { rename: '改名', del: '删除', empty: '暂无标签', editHint: '点击编辑标签' },
+    col: {
+      name: '文件名', category: '类别', size: '大小', mtime: '修改时间',
+      tags: '标签', path: '路径', nameHint: '单击预览 · 双击打开所在位置',
+    },
+    sort: {
+      mtime: '修改时间', name: '名称', size: '大小', ext: '类型', relevance: '相关度',
+      desc: '降序', asc: '升序',
+    },
+    time: { all: '不限', today: '今天', week: '本周', month: '本月', custom: '自定义' },
+    fav: {
+      title: '★ 收藏', note: '备注', remove: '移除', star: '收藏', unstar: '取消收藏',
+      empty: '暂无收藏——在文件列表点 ☆ 收藏常用文件',
+    },
+    toolbar: {
+      exportCsv: '导出 CSV', list: '列表', grid: '网格', timeline: '时间线',
+      saveFilter: '＋ 保存当前筛选', saveSearch: '保存当前搜索',
+    },
+    scan: { scan: '扫描目录', index: '写入索引', clean: '清理失效记录', done: '完成' },
+    stat: {
+      all: '全部', count: '共 {n} 个文件',
+      added: '新增', removed: '移除', recent: ' · 最近动态：',
+      treeExpand: '▾ 收起目录树', tree: '▸ 目录树',
+      clearDir: '↺ 全部（清除目录过滤）',
+    },
+    batch: {
+      selected: '已选', unit: '个',
+      moveTo: '移动到…', copyTo: '复制到…', rename: '重命名',
+      trash: '删除到回收站', copyPath: '复制路径', clear: '清空选择',
+      hint: '快捷键：Ctrl+A 全选 · Space 预览 · F2 重命名 · Delete 删除 · Enter 打开 · Ctrl+K 全局唤起',
+    },
+    timeline: { byMtime: '按「修改时间」统计，不是创建时间', empty: '该时间段内没有文件' },
+    grid: { select: '选择', empty: '没有匹配的文件' },
+    content: {
+      title: '内容匹配（文档正文 + 知识库 + 图片语义）',
+      semantic: '语义', keyword: '关键词',
+      empty: '没有正文命中——正文级搜索需先在 设置 → 全盘内容索引 建立索引；也可把文件夹加入「知识库」做语义搜索',
+    },
+    keys: {
+      title: '键盘快捷键',
+      global: '全局快速唤起（搜文件 / 跳页面 / 切主题）',
+      focus: '聚焦搜索框',
+      openFirst: '搜索后打开第一项结果',
+      content: '搜索文件内容（知识库/语义）',
+      selectAll: '全选本页文件',
+      preview: '快速预览选中文件 / 再按关闭',
+      open: '打开选中的文件',
+      rename: '重命名（单个就地改 / 多个进批量）',
+      trash: '删除到回收站',
+      copyPath: '复制路径',
+      arrows: '灯箱内翻页',
+      esc: '关闭预览 / 弹窗',
+    },
+    tool: { close: '关闭' },
+    lightbox: {
+      closeHint: '点击空白处关闭', closeEsc: '关闭 (Esc)',
+      prev: '‹ 上一张', next: '下一张 ›', open: '📂 打开', close: '关 闭',
+    },
+    rename: {
+      title: '批量重命名',
+      seq: '序列编号', replace: '查找替换', ai: 'AI 建议', single: '单个',
+      gen: '生成', aiHint: '用本地模型按内容/名称理解批量起名',
+      aiRun: 'AI 一键起名',
+      tip: '在下方表格里直接修改新文件名，确认后执行',
+      colSrc: '原文件名', colNew: '新文件名',
+      cancel: '取消', run: '执行重命名（{n} 个）',
+    },
+    preview: {
+      title: '预览', aiSummary: 'AI 摘要', summaryFail: '总结失败', copy: '复制',
+      unsupported: '该格式暂不支持内置预览，可点击文件名或使用系统打开',
+      aiSummarize: '🤖 AI 总结', openSystem: '系统打开', openLocation: '打开所在位置', close: '关闭',
+    },
   },
   lang: {
     label: '界面语言',
