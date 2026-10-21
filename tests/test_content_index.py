@@ -1,11 +1,16 @@
 """全盘内容索引（backend/contentindex.py）回归测试。
 
-运行方式（APPDATA 必须指向一次性目录）：
-    APPDATA='C:\\tmp\\fb_captest' python tests/test_content_index.py
+运行：.venv/Scripts/python tests/test_content_index.py
+（APPDATA 由本文件自隔离到一次性目录，防止污染真实用户库。）
 """
 import os
 import sys
+import tempfile
 import time
+
+# 必须在导入 backend 前隔离 APPDATA（db 模块在 import 时读取）
+_SANDBOX = tempfile.mkdtemp(prefix="fb_captest_content_")
+os.environ["APPDATA"] = _SANDBOX
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -186,7 +191,9 @@ def main():
     finally:
         conn.close()
     import shutil
+    db.close_all_conns()
     shutil.rmtree(os.path.join(os.path.dirname(BASE)), ignore_errors=True)
+    shutil.rmtree(_SANDBOX, ignore_errors=True)
     print(f"\n{'ALL PASS' if FAIL == 0 else 'FAILURES: ' + str(FAIL)} "
           f"({PASS} passed, {FAIL} failed)")
     return 1 if FAIL else 0

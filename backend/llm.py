@@ -9,7 +9,7 @@ import time
 import requests
 
 from backend import db
-from backend.ollama_client import OllamaClient, http_error_detail
+from backend.ollama_client import OllamaClient, http_error_detail, post_retry
 
 # 常见 OpenAI 兼容服务商（填到 /v1 或等价路径为止）
 # models: 该服务商在售推荐模型（name 用于自动填充，note 为说明）
@@ -152,22 +152,52 @@ class OpenAICompatClient:
 
     # ---- 对话 ----
 
-    def chat(self, messages, stream_cb=None, options=None, think=False):
+    def chat(self, messages, stream_cb=None, options=None, think=False, format=None):
+        """format: JSON Schema dict 时发送 response_format（json_schema 模式）做
+        结构化输出；服务端 400 不支持时自动去掉该字段重试一次（仅非流式——流式
+        只用于对话 UI、结构化输出走分类器的非流式路径，故流式原样透传不降级）。"""
         payload = {"model": self._chat_model, "messages": messages,
                    "stream": bool(stream_cb)}
+        if format is not None:
+            # 优先 json_schema（连 category 枚举都能强约束）；不预先退到宽松的
+            # json_object——那样枚举约束就没了，兼容性问题交给 400 降级兜底
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "result", "schema": format},
+            }
         if options:
             if "temperature" in options:
                 payload["temperature"] = options["temperature"]
             if "num_predict" in options:
                 payload["max_tokens"] = options["num_predict"]
-        r = _session_for(self.base).post(_norm_endpoint(self.base, "/chat/completions"),
-                                         headers=self._headers(), json=payload,
-                                         stream=bool(stream_cb), timeout=(10, 600))
-        try:
-            r.raise_for_status()
-        except requests.HTTPError as e:
-            # 把服务端的错误说明带出来（模型名/参数/密钥哪错了，body 里写得明白）
-            raise requests.HTTPError(http_error_detail(e)) from e
+        url = _norm_endpoint(self.base, "/chat/completions")
+        s = _session_for(self.base)
+        if stream_cb:
+            # 流式不重试（只对幂等调用重试，见 ollama_client.post_retry）：
+            # 断流重发会把已回调给 stream_cb 的 token 重复输出
+            r = s.post(url, headers=self._headers(), json=payload,
+                       stream=True, timeout=(10, 600))
+            try:
+                r.raise_for_status()
+            except requests.HTTPError as e:
+                raise requests.HTTPError(http_error_detail(e)) from e
+        else:
+            try:
+                r = post_retry(s.post, url, headers=self._headers(), json=payload,
+                               timeout=(10, 600))
+            except requests.HTTPError as e:
+                if (payload.get("response_format") is not None
+                        and e.response is not None and e.response.status_code == 400):
+                    # 服务端不认 response_format/json_schema：去掉该字段重试一次，
+                    # 输出格式约束退回提示词 + 解析层正则/json.loads 兜底
+                    payload.pop("response_format")
+                    try:
+                        r = post_retry(s.post, url, headers=self._headers(),
+                                       json=payload, timeout=(10, 600))
+                    except requests.HTTPError as e2:
+                        raise requests.HTTPError(http_error_detail(e2)) from e2
+                else:
+                    raise requests.HTTPError(http_error_detail(e)) from e
         if not stream_cb:
             data = r.json()
             return data["choices"][0]["message"].get("content") or ""
@@ -194,15 +224,17 @@ class OpenAICompatClient:
     # ---- 向量化 ----
 
     def embed(self, texts, batch=32):
+        # 只对幂等调用重试（embed 无副作用）：连接错误/超时/5xx/429 退避重试，
+        # 其余 4xx 直接报错
+        s = _session_for(self.base)
         vectors = []
         for i in range(0, len(texts), batch):
-            r = _session_for(self.base).post(_norm_endpoint(self.base, "/embeddings"),
-                                             headers=self._headers(),
-                                             json={"model": self._embed_model,
-                                                   "input": texts[i:i + batch]},
-                                             timeout=(10, 300))
             try:
-                r.raise_for_status()
+                r = post_retry(s.post, _norm_endpoint(self.base, "/embeddings"),
+                               headers=self._headers(),
+                               json={"model": self._embed_model,
+                                     "input": texts[i:i + batch]},
+                               timeout=(10, 300))
             except requests.HTTPError as e:
                 raise requests.HTTPError(http_error_detail(e)) from e
             data = r.json()["data"]

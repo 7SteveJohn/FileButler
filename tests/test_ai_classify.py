@@ -1,11 +1,18 @@
-"""AI 分类实测（需 Ollama 运行）。"""
+"""AI 分类实测（需 Ollama 运行）。导入 backend 前自隔离一次性 APPDATA——
+classifier 内部读写 settings（分类缓存），先建库再跑，绝不碰真实用户库。"""
 import os
 import sys
 import tempfile
 import time
 
+_SANDBOX = tempfile.mkdtemp(prefix="fb_captest_aiclassify_")
+os.environ["APPDATA"] = _SANDBOX
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from backend import db
 from backend.core import classifier
+
+db.init_db()
 
 sb = tempfile.mkdtemp(prefix="fb_ai_")
 # (文件名, 期望类别, 内容)
@@ -33,3 +40,5 @@ for name, expected, _ in tests:
     ok += cat == expected
     print(f"{mark} {name} -> {cat} ({reason[:50]})")
 print(f"耗时 {time.time()-t0:.1f}s，{ok}/{len(tests)} 符合预期")
+
+db.close_all_conns()

@@ -32,6 +32,7 @@ const sortOptions = [
   { label: '名称', value: 'name' },
   { label: '大小', value: 'size' },
   { label: '类型', value: 'ext' },
+  { label: '相关度', value: 'relevance' },   // 仅文本 FTS 搜索有效，其余场景后端安全回退 mtime
 ]
 const orderOptions = [
   { label: '降序', value: 'desc' },

@@ -12,6 +12,12 @@ DEFAULT_HOST = "http://127.0.0.1:11434"
 CHAT_MODELS = ["qwen2.5:7b", "qwen2.5:3b", "qwen2.5:14b", "qwen2.5:1.5b"]
 EMBED_MODEL = "bge-m3"
 
+# 幂等请求重试：只对无副作用的幂等调用（embed / 非流式 chat）重试；流式对话
+# 已经吐出去的 token 无法撤回，重发会重复输出，故流式一律不重试。
+# 4xx（429 除外）是确定性失败（模型名/参数/密钥错），重试也不会成功。
+RETRY_TIMES = 2      # 失败后最多再试次数（不含首次请求）
+RETRY_BASE = 0.5     # 退避基数（秒）：0.5 → 1.5（×3 指数退避），测试可改小加速
+
 # 本机 Ollama 直连 session：trust_env=False 关键——系统代理（HTTP_PROXY/
 # 系统级代理软件）会把 127.0.0.1 的请求也转给代理，探测要等满超时甚至失败，
 # 用户感知为「连接 Ollama 等半天」。远程主机则继续走 requests 默认（可被代理）。
@@ -27,6 +33,30 @@ def _session_for(host):
 
 class OllamaNotRunning(Exception):
     pass
+
+
+def _retryable(exc):
+    """连接错误、超时、5xx、429 视为瞬时故障可重试；其余（含非 429 的 4xx）不重试。"""
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    resp = getattr(exc, "response", None)
+    return (isinstance(exc, requests.HTTPError) and resp is not None
+            and (resp.status_code == 429 or resp.status_code >= 500))
+
+
+def post_retry(post, *args, **kwargs):
+    """幂等 POST + raise_for_status：连接错误/超时/5xx/429 最多再试 RETRY_TIMES
+    次，按 RETRY_BASE×3^n 指数退避。只对幂等调用使用（embed / 非流式 chat）；
+    流式请求不适用——断流重发会把已给用户的 token 再输出一遍。"""
+    for attempt in range(RETRY_TIMES + 1):
+        try:
+            r = post(*args, **kwargs)
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            if attempt >= RETRY_TIMES or not _retryable(e):
+                raise
+            time.sleep(RETRY_BASE * (3 ** attempt))
 
 
 def http_error_detail(e):
@@ -157,10 +187,29 @@ class OllamaClient:
         可用设置项 ollama_keep_alive 覆盖（如 "5m"、"1h"、"-1" 永久）。"""
         return db.get_setting("ollama_keep_alive", "30m") or "30m"
 
-    def chat(self, messages, stream_cb=None, options=None, think=False, model=None):
+    def _num_ctx(self):
+        """对话请求显式下发的上下文窗口（token 数）。
+
+        v1.3.0 把问答上下文扩到 1200 字符 × 8 块、再加多轮历史，prompt 可达
+        5~8K token，而 Ollama 默认按模型的 num_ctx（2048/4096，随 Modelfile
+        而异）**静默截断**——截掉的内容模型「没看到」也不报错，上下文扩容
+        等于白做。这里默认下发 8192；设置项 ollama_num_ctx 可覆盖
+        （如 "16384"），设 "0" 表示不干预（低配纯 CPU 机器省 KV cache 内存）。
+        """
+        raw = (db.get_setting("ollama_num_ctx", "8192") or "8192").strip()
+        try:
+            n = int(raw)
+        except ValueError:
+            return 8192
+        return n if n > 0 else None
+
+    def chat(self, messages, stream_cb=None, options=None, think=False, model=None,
+             format=None):
         """同步对话；stream_cb(token) 逐 token 回调，返回完整文本。
         think=False 关闭思考模式（qwen3 系模型思考会吃掉 num_predict 配额）。
-        model: 覆盖默认对话模型（VL 模型 OCR 时需要指定为 qwen2.5vl）。"""
+        model: 覆盖默认对话模型（VL 模型 OCR 时需要指定为 qwen2.5vl）。
+        format: JSON Schema dict 时写入请求 format 字段（Ollama 0.5+ 结构化输出，
+        解码层强约束模型只输出合规 JSON）；None 不传该字段，行为不变。"""
         payload = {
             "model": model or self.chat_model(),
             "messages": messages,
@@ -168,23 +217,54 @@ class OllamaClient:
             "think": bool(think),
             "keep_alive": self._keep_alive(),
         }
-        if options:
-            payload["options"] = options
+        if format is not None:
+            payload["format"] = format
+        opts = dict(options) if options else {}
+        if "num_ctx" not in opts:
+            nctx = self._num_ctx()
+            # 带图片的请求（VL OCR 等视觉调用）跳过：视觉模型本就吃显存，
+            # 抬高 KV cache 在低配机有 OOM 风险，且其 prompt 短、无截断之虞
+            if nctx and not any(
+                    isinstance(m, dict) and m.get("images") for m in messages):
+                opts["num_ctx"] = nctx
+        if opts:
+            payload["options"] = opts
         s = _session_for(self.host)
         try:
-            r = s.post(f"{self.host}/api/chat", json=payload,
-                       stream=bool(stream_cb), timeout=(5, 600))
-            r.raise_for_status()
+            if stream_cb:
+                # 流式不重试（幂等重试只用于非流式，见 post_retry）：断流重发会
+                # 把已回调给 stream_cb 的 token 重复输出
+                r = s.post(f"{self.host}/api/chat", json=payload,
+                           stream=True, timeout=(5, 600))
+                r.raise_for_status()
+            else:
+                r = post_retry(s.post, f"{self.host}/api/chat", json=payload,
+                               timeout=(5, 600))
         except requests.HTTPError as e:
             if "think" in payload and e.response is not None and e.response.status_code == 400:
-                # 老版本/不支持 think 的模型：去掉参数重试
+                # 老版本/不支持 think 的模型：去掉参数重试（发生在任何输出之前，
+                # 重发无副作用；这是参数兼容性重试，不走幂等退避计数）
                 payload.pop("think")
                 r = s.post(f"{self.host}/api/chat", json=payload,
                            stream=bool(stream_cb), timeout=(5, 600))
                 try:
                     r.raise_for_status()
                 except requests.HTTPError as e2:
-                    raise requests.HTTPError(http_error_detail(e2)) from e2
+                    if "format" in payload and e2.response is not None \
+                            and e2.response.status_code == 400:
+                        # 更老的服务端连 schema 对象 format 也不认（结构化输出需
+                        # Ollama 0.5+）：再去掉 format 重试一次，输出格式约束
+                        # 退回提示词 + 解析层正则/json.loads 兜底（与 OpenAI 路径
+                        # backend/llm.py 的 response_format 降级同款）。
+                        payload.pop("format")
+                        r = s.post(f"{self.host}/api/chat", json=payload,
+                                   stream=bool(stream_cb), timeout=(5, 600))
+                        try:
+                            r.raise_for_status()
+                        except requests.HTTPError as e3:
+                            raise requests.HTTPError(http_error_detail(e3)) from e3
+                    else:
+                        raise requests.HTTPError(http_error_detail(e2)) from e2
             else:
                 raise requests.HTTPError(http_error_detail(e)) from e
         if not stream_cb:
@@ -210,30 +290,31 @@ class OllamaClient:
     # ---------- 向量化 ----------
 
     def embed(self, texts, batch=32):
-        """文本列表 → 向量列表。优先用 /api/embed 批量端点，失败降级逐个。"""
+        """文本列表 → 向量列表。优先用 /api/embed 批量端点，失败降级逐个。
+        向量化是幂等调用，连接错误/超时/5xx/429 走 post_retry 退避重试。"""
         s = _session_for(self.host)
         vectors = []
         for i in range(0, len(texts), batch):
             chunk = texts[i:i + batch]
             try:
-                r = s.post(
+                r = post_retry(
+                    s.post,
                     f"{self.host}/api/embed",
                     json={"model": self.embed_model(), "input": chunk,
                           "keep_alive": self._keep_alive()},
                     timeout=(5, 600),
                 )
-                r.raise_for_status()
                 vectors.extend(r.json()["embeddings"])
             except Exception:
                 for t in chunk:  # 老版本 Ollama 无 /api/embed
-                    r = s.post(
-                        f"{self.host}/api/embeddings",
-                        json={"model": self.embed_model(), "prompt": t,
-                              "keep_alive": self._keep_alive()},
-                        timeout=(5, 300),
-                    )
                     try:
-                        r.raise_for_status()
+                        r = post_retry(
+                            s.post,
+                            f"{self.host}/api/embeddings",
+                            json={"model": self.embed_model(), "prompt": t,
+                                  "keep_alive": self._keep_alive()},
+                            timeout=(5, 300),
+                        )
                     except requests.HTTPError as e:
                         raise requests.HTTPError(http_error_detail(e)) from e
                     vectors.append(r.json()["embedding"])

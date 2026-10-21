@@ -1,7 +1,10 @@
 """SQLite 存储层：文件索引、知识库分块向量、操作日志、规则、设置。
 
-向量检索用 numpy 暴力余弦（个人规模 <10 万分块为毫秒级），
-不依赖 sqlite-vec 扩展，打包更可靠。
+向量检索用 numpy 暴力余弦（float32 矩阵，个人规模 <10 万分块为毫秒级）。
+不用 sqlite-vec：P0 spike（tests/spikes/spike_sqlite_vec.py，2026-10-01）
+实测其 KNN 在 10 万 x 1024 维上 662ms/次，比 numpy float32 暴力（26ms）慢
+26 倍——它的 C 实现无 SIMD；且 numpy float16 路径无 BLAS 同样不可取
+（505ms/次），故矩阵一律 float32。
 
 数据目录可迁移：默认 %APPDATA%/FileButler，其中 datadir.txt 指针文件
 指向实际数据目录（数据库 + 缩略图缓存随迁）。
@@ -146,13 +149,15 @@ CREATE TABLE IF NOT EXISTS kb_files (
     mtime REAL,
     size INTEGER,
     hash TEXT,
-    status TEXT DEFAULT 'ok'
+    status TEXT DEFAULT 'ok',
+    parse_ver TEXT       -- 解析管线版本（parsers.PARSE_VER），不一致则下次索引自动重解析
 );
 CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id INTEGER NOT NULL,
     seq INTEGER,
     text TEXT,
+    btext TEXT,         -- CJK 二元切分文本（chunk_fts 索引源，见 chunk_btext）
     vec BLOB,
     FOREIGN KEY(file_id) REFERENCES kb_files(id) ON DELETE CASCADE
 );
@@ -246,7 +251,12 @@ def _connect():
     # WAL + busy_timeout 解决多线程写竞争（watcher 实时 upsert + rescan 后台 + 用户 query）
     # busy_timeout=15000ms：SQLite 写锁竞争等 15s 才报 OperationalError
     # （大库后台批量写入的单批事务在慢盘上也可能超过 5s，5s 阈值实测会误伤前台写入）
-    conn.execute("PRAGMA journal_mode=WAL")
+    # journal_mode 是持久属性（写在库头），只有还不是 WAL 时才发切换请求。
+    # 无条件 PRAGMA journal_mode=WAL 会让每条新连接都申请一次模式切换，
+    # 与并发写事务相撞时对方会拿到 SQLITE_READONLY（启动期 FTS 一致性检查
+    # 线程 + 首次写库实测约 1/3 概率复现），先读后切避免无谓的切换尝试。
+    if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+        conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=15000")
     conn.execute("PRAGMA synchronous=NORMAL")  # WAL 模式下折中（FULL=安全，NORMAL=性能+安全平衡）
@@ -562,9 +572,23 @@ def init_db():
             icols = {r[1] for r in conn.execute("PRAGMA table_info(img_index)")}
             if "ocr" not in icols:
                 conn.execute("ALTER TABLE img_index ADD COLUMN ocr TEXT")
+            # 知识库块 FTS（P1 混合检索）：btext 列 + 旧数据回填 + chunk_fts 索引
+            ccols = {r[1] for r in conn.execute("PRAGMA table_info(chunks)")}
+            if "btext" not in ccols:
+                conn.execute("ALTER TABLE chunks ADD COLUMN btext TEXT")
+            kcols = {r[1] for r in conn.execute("PRAGMA table_info(kb_files)")}
+            if "parse_ver" not in kcols:
+                conn.execute("ALTER TABLE kb_files ADD COLUMN parse_ver TEXT")
+            conn.executemany(
+                "UPDATE chunks SET btext=? WHERE id=?",
+                [(chunk_btext(r["text"]), r["id"]) for r in conn.execute(
+                    "SELECT id, text FROM chunks "
+                    "WHERE btext IS NULL AND text IS NOT NULL").fetchall()])
             conn.commit()
             _ensure_fts(conn)
+            _ensure_chunk_fts(conn)
             conn.commit()
+            _check_chunk_fts_consistency(conn)
         finally:
             conn.close()
 
@@ -589,28 +613,45 @@ def _ensure_fts(conn):
     即报 database disk image is malformed）。这里统一迁移为独立表：
     - 触发器用显式 DELETE（不依赖 content 表同步）
     - 一致性重建逐行 INSERT（不用 'rebuild' 特殊命令）
+
+    v1.3.0 拼音列：file_index 增加 pinyin / pinyin_ini / photo_time 三列，
+    file_fts 同步带 pinyin 两列（fts5 不能加列，检测到旧结构整体重建）。
     """
     try:
+        # 拼音/拍摄时间列：旧库补列（触发器与搜索都引用，必须先于触发器创建）。
+        # cols 为空说明 file_index 还没建（全新安装 init_db 先行），跳过由
+        # ensure_default_roots 建表后重入本函数
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(file_index)")}
+        if cols:
+            if "pinyin" not in cols:
+                conn.execute("ALTER TABLE file_index ADD COLUMN pinyin TEXT")
+            if "pinyin_ini" not in cols:
+                conn.execute("ALTER TABLE file_index ADD COLUMN pinyin_ini TEXT")
+            if "photo_time" not in cols:
+                conn.execute("ALTER TABLE file_index ADD COLUMN photo_time REAL")
         row = conn.execute(
             "SELECT sql FROM sqlite_master WHERE name='file_fts'").fetchone()
-        if row and "content=" in (row["sql"] or ""):
-            # 旧式外部内容表 → 迁移为独立表
+        if row and ("content=" in (row["sql"] or "")
+                    or "pinyin" not in (row["sql"] or "")):
+            # 旧式外部内容表，或无拼音列的旧独立表 → 重建（fts5 不能加列）
             conn.execute("DROP TABLE IF EXISTS file_fts")
             conn.execute("DROP TRIGGER IF EXISTS fi_ai")
             conn.execute("DROP TRIGGER IF EXISTS fi_ad")
             conn.execute("DROP TRIGGER IF EXISTS fi_au")
         conn.executescript("""
 CREATE VIRTUAL TABLE IF NOT EXISTS file_fts USING fts5(
-    name, path, tokenize='trigram');
+    name, path, pinyin, pinyin_ini, tokenize='trigram');
 CREATE TRIGGER IF NOT EXISTS fi_ai AFTER INSERT ON file_index BEGIN
-    INSERT INTO file_fts(rowid, name, path) VALUES (new.id, new.name, new.path);
+    INSERT INTO file_fts(rowid, name, path, pinyin, pinyin_ini)
+    VALUES (new.id, new.name, new.path, new.pinyin, new.pinyin_ini);
 END;
 CREATE TRIGGER IF NOT EXISTS fi_ad AFTER DELETE ON file_index BEGIN
     DELETE FROM file_fts WHERE rowid = old.id;
 END;
 CREATE TRIGGER IF NOT EXISTS fi_au AFTER UPDATE ON file_index BEGIN
     DELETE FROM file_fts WHERE rowid = old.id;
-    INSERT INTO file_fts(rowid, name, path) VALUES (new.id, new.name, new.path);
+    INSERT INTO file_fts(rowid, name, path, pinyin, pinyin_ini)
+    VALUES (new.id, new.name, new.path, new.pinyin, new.pinyin_ini);
 END;
 """)
         # 一致性检查：数量不一致（进程被杀导致触发器中断等）时后台重建。
@@ -707,14 +748,159 @@ def _fts_resync(conn, batch=5000):
         conn.execute("BEGIN IMMEDIATE")
         try:
             rows = conn.execute(
-                "SELECT id, name, path FROM file_index WHERE id>? "
+                "SELECT id, name, path, pinyin, pinyin_ini FROM file_index WHERE id>? "
                 "ORDER BY id LIMIT ?", (last, batch)).fetchall()
             if not rows:
                 conn.commit()
                 break
             conn.executemany(
-                "INSERT OR REPLACE INTO file_fts(rowid, name, path) VALUES(?,?,?)",
-                [(r["id"], r["name"], r["path"]) for r in rows])
+                "INSERT OR REPLACE INTO file_fts(rowid, name, path, pinyin, pinyin_ini) "
+                "VALUES(?,?,?,?,?)",
+                [(r["id"], r["name"], r["path"], r["pinyin"], r["pinyin_ini"])
+                 for r in rows])
+            last = rows[-1]["id"]
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# ---------- 知识库块 FTS（P1 混合检索的词法通道） ----------
+# 用 unicode61 + CJK 二元切分实现中文检索（Lucene CJK 分析器的同款思路）：
+# trigram 对「问法与原文分词不同」的中文天然失配（「运费怎么结算」
+# 与「运费结算周期」无共享三元组），二元组则能对上。零外部依赖。
+
+
+def chunk_btext(text):
+    """chunk 原文 → 索引与查询共用的二元切分文本。
+    CJK 连续段输出重叠二元组（「运费结算」→「运费 费结 结算」），连续 ASCII
+    字母数字保留整词并归一小写（「2025」「XQ」），其余字符作分隔。
+    索引与查询必须用同一函数，两侧词元才对得上。"""
+    out = []
+    buf = []    # 连续 CJK 字符
+    word = []   # 连续 ASCII 字母数字
+
+    def _flush_cjk():
+        for i in range(len(buf) - 1):
+            out.append(buf[i] + buf[i + 1])
+        if len(buf) == 1:
+            out.append(buf[0])
+        del buf[:]
+
+    def _flush_word():
+        if word:
+            out.append("".join(word))
+            del word[:]
+
+    for ch in text:
+        o = ord(ch)
+        if (0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF
+                or 0x3040 <= o <= 0x30FF or 0xF900 <= o <= 0xFAFF):
+            _flush_word()
+            buf.append(ch)
+        elif ch.isalnum() and o < 128:
+            _flush_cjk()
+            word.append(ch.lower())
+        else:
+            _flush_cjk()
+            _flush_word()
+    _flush_cjk()
+    _flush_word()
+    return " ".join(out)
+
+
+def chunk_fts_expr(query):
+    """查询 → FTS MATCH 表达式（二元词元 OR + bm25 排名）。
+    OR 而非 AND：提问与原文共享的二元组通常只有几个，AND 会全军覆没；
+    相关性靠 bm25 的 IDF 权重排出来（命中「UPS」的块排在只命中「什么」的块前面）。"""
+    toks = [t for t in chunk_btext(query or "").split(" ") if t]
+    if not toks:
+        return ""
+    return " OR ".join('"' + t.replace('"', '""') + '"' for t in toks[:24])
+
+
+_SQL_CHUNK_FTS = ("SELECT rowid AS id FROM chunk_fts WHERE chunk_fts MATCH ? "
+                  "ORDER BY rank LIMIT ?")
+
+
+def chunk_fts_search(query, k=24):
+    """词法通道：返回按 bm25 相关性降序的 chunk id 列表。FTS 不可用返回 []。"""
+    expr = chunk_fts_expr(query)
+    if not expr:
+        return []
+    conn = get_conn()
+    try:
+        try:
+            rows = conn.execute(_SQL_CHUNK_FTS, (expr, k)).fetchall()
+        except sqlite3.OperationalError:
+            return []   # 表缺失/损坏等：词法通道静默缺席，调用方走单路降级
+        return [r["id"] for r in rows]
+    finally:
+        conn.close()
+
+
+def _ensure_chunk_fts(conn):
+    """chunk_fts（独立表 + 显式触发器，形态同 file_fts——external content +
+    rebuild 在本机 SQLite 3.50.4 实测会坏库，见 ROADMAP 🔧 节）。"""
+    try:
+        conn.executescript("""
+CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
+    btext, tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS cf_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunk_fts(rowid, btext) VALUES (new.id, new.btext);
+END;
+CREATE TRIGGER IF NOT EXISTS cf_ad AFTER DELETE ON chunks BEGIN
+    DELETE FROM chunk_fts WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS cf_au AFTER UPDATE ON chunks BEGIN
+    DELETE FROM chunk_fts WHERE rowid = old.id;
+    INSERT INTO chunk_fts(rowid, btext) VALUES (new.id, new.btext);
+END;
+""")
+    except Exception as e:
+        print("chunk FTS init skipped:", e)
+
+
+def _check_chunk_fts_consistency(conn):
+    """chunk_fts 与 chunks 数量不一致（进程被杀中断等）就逐行重建。
+    chunks 规模小（知识库文档级），同步做即可，不必像 file_fts 那样上后台线程。"""
+    try:
+        n_c = conn.execute("SELECT COUNT(*) AS c FROM chunks").fetchone()["c"]
+        n_f = conn.execute("SELECT COUNT(*) AS c FROM chunk_fts").fetchone()["c"]
+        if n_c != n_f:
+            _chunk_fts_resync(conn)
+    except Exception as e:
+        print("chunk FTS consistency check skipped:", e)
+
+
+def _chunk_fts_resync(conn, batch=5000):
+    """把 chunk_fts 全量对齐到 chunks（两阶段分批短事务，形态同 _fts_resync）。"""
+    while True:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            cur = conn.execute(
+                "DELETE FROM chunk_fts WHERE rowid IN "
+                "(SELECT rowid FROM chunk_fts LIMIT ?)", (batch,))
+            done = cur.rowcount == 0
+            conn.commit()
+            if done:
+                break
+        except Exception:
+            conn.rollback()
+            raise
+    last = 0
+    while True:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = conn.execute(
+                "SELECT id, btext FROM chunks WHERE id>? AND btext IS NOT NULL "
+                "ORDER BY id LIMIT ?", (last, batch)).fetchall()
+            if not rows:
+                conn.commit()
+                break
+            conn.executemany(
+                "INSERT OR REPLACE INTO chunk_fts(rowid, btext) VALUES(?,?)",
+                [(r["id"], r["btext"]) for r in rows])
             last = rows[-1]["id"]
             conn.commit()
         except Exception:
@@ -835,8 +1021,12 @@ def mark_undone(batch_id):
 # ---------- 向量检索 ----------
 
 class VectorIndex:
-    """内存缓存全部向量，余弦相似度检索。写入后调用 invalidate()。
-    select_sql 需返回 (id, vec) 两列。"""
+    """内存缓存全部向量（float32 归一化），余弦相似度检索。写入后调用 invalidate()。
+    select_sql 需返回 (id, vec) 两列。
+
+    精度必须是 float32：float16 矩阵乘法在 numpy 里没有 BLAS 路径，
+    实测比 float32 慢 30 倍以上（2 万块 103ms vs 2.8ms，见 UPGRADE_PLAN P0 基线）；
+    内存换速度是正确取舍——个人知识库规模下 float32 常驻内存通常 < 100MB。"""
 
     def __init__(self, select_sql):
         self._select_sql = select_sql
@@ -861,18 +1051,17 @@ class VectorIndex:
                 conn.close()
             if not rows:
                 self._ids = np.array([], dtype=np.int64)
-                self._matrix = np.zeros((0, 1), dtype=np.float16)
+                self._matrix = np.zeros((0, 1), dtype=np.float32)
                 return
             ids = np.array([r["id"] for r in rows], dtype=np.int64)
             vecs = np.stack([np.frombuffer(r["vec"], dtype=np.float32) for r in rows])
             norms = np.linalg.norm(vecs, axis=1, keepdims=True)
             norms[norms == 0] = 1.0
             self._ids = ids
-            # float16 存储：向量矩阵内存减半（余弦排序精度损失可忽略）
-            self._matrix = (vecs / norms).astype(np.float16)
+            self._matrix = vecs / norms
 
     def search(self, query_vec, k=8):
-        """返回 [(id, score)]，按相似度降序。分块 float16 点积：内存恒定。"""
+        """返回 [(id, score)]，按相似度降序。float32 走 BLAS，分块控制峰值内存。"""
         import numpy as np
         self._ensure_loaded()
         with self._lock:
@@ -884,7 +1073,7 @@ class VectorIndex:
             n = np.linalg.norm(q)
             if n == 0:
                 return []
-            q = (q / n).astype(np.float16)
+            q = q / n
             k = min(k, len(ids))
             best = []
             step = 8192

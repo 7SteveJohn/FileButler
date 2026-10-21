@@ -30,6 +30,32 @@ SINGLE_PROMPT = """你是文件整理助手。根据文件信息判断它属于�
 
 只输出一个 JSON 对象：{{"category": "类别", "reason": "一句话理由"}}"""
 
+# 结构化输出 schema：把「只许输出 JSON、category 必须是合法类别」从提示词
+# 约定升级为解码层约束（Ollama format / OpenAI response_format）。
+# 下面的正则 + json.loads 解析保留作兜底：服务端不支持结构化输出被降级、
+# 或模型输出里混入多余文字时，两条路都要能解析。
+BATCH_FORMAT = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "category": {"type": "string", "enum": rules_mod.CATEGORIES},
+            "reason": {"type": "string"},
+        },
+        "required": ["name", "category", "reason"],
+    },
+}
+
+SINGLE_FORMAT = {
+    "type": "object",
+    "properties": {
+        "category": {"type": "string", "enum": rules_mod.CATEGORIES},
+        "reason": {"type": "string"},
+    },
+    "required": ["category", "reason"],
+}
+
 
 def is_ambiguous(fi, rules=None):
     """规则无法归类，或落入「其他」的文件，交给 AI 判断。"""
@@ -100,6 +126,7 @@ def ai_classify(files, client=None, progress_cb=None):
                     items="\n".join(_item_line(f) for f in batch))}],
                 options={"temperature": 0.1, "num_predict": 60 * len(batch)},
                 think=False,
+                format=BATCH_FORMAT,
             )
             arr = _parse_batch(answer)
             if arr:
@@ -143,6 +170,7 @@ def _classify_one(client, fi):
                 magic=magic or "未知", peek=(peek or "").replace("\n", " ")[:200] or "无")}],
             options={"temperature": 0.1, "num_predict": 200},
             think=False,
+            format=SINGLE_FORMAT,
         )
         obj = _parse_single(answer)
         return (_valid_cat(obj.get("category")), obj.get("reason", ""))

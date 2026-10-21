@@ -1,10 +1,17 @@
 """LLM 接入层测试：假 OpenAI 兼容服务器验证协议实现 + 模式切换 + 省钱混搭。"""
 import json
 import os
+import shutil
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# 必须在导入 backend 前隔离 APPDATA：本套会切换 llm_mode/embed_source 等
+# 设置，直跑会写进真实用户库（退出还原也不该碰它）
+_SANDBOX = tempfile.mkdtemp(prefix="fb_captest_llmprovider_")
+os.environ["APPDATA"] = _SANDBOX
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -145,4 +152,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        db.close_all_conns()
+        shutil.rmtree(_SANDBOX, ignore_errors=True)

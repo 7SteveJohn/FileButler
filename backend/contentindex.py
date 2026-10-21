@@ -5,7 +5,8 @@
 
 成本受控（见 budgets()）：单文件大小上限、单文件正文字符上限、总篇数与总字节
 预算；默认**不**自动运行，由设置页手动启动，可随时停止并续跑（增量记账在
-doc_content_state，按 mtime+size 判断是否需要重抽）。
+doc_content_state，按 mtime+size+parse_ver 判断是否需要重抽，解析管线
+升版（parsers.PARSE_VER）后旧解析抽出的正文会自动按新管线重抽一遍）。
 
 表设计说明：doc_content_fts 用独立表而非外部内容表（content=''），原因见
 db._ensure_fts 的注释——外部内容表 + trigram + WAL 在早期 SQLite 上 rebuild 会
@@ -27,7 +28,8 @@ CREATE TABLE IF NOT EXISTS doc_content_state (
     bytes INTEGER,
     err TEXT,
     fts_rowid INTEGER,
-    indexed_at REAL
+    indexed_at REAL,
+    parse_ver TEXT
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS doc_content_fts USING fts5(
     body, tokenize='trigram');
@@ -47,20 +49,28 @@ _prog = {"running": False, "done": 0, "total": 0, "ok": 0, "failed": 0,
          "started_at": 0.0, "finished_at": 0.0}
 
 _ensured = False
+_ensure_lock = threading.Lock()   # 升级后首轮并发首调（如设置页轮询 + 点开始索引）串行化
 
 
 def ensure():
-    """建表（幂等，进程内只做一次）。"""
+    """建表（幂等，进程内只做一次）。旧库缺 parse_ver 列时补列。"""
     global _ensured
     if _ensured:
         return
-    conn = db.get_conn()
-    try:
-        conn.executescript(SCHEMA)
-        conn.commit()
-        _ensured = True
-    finally:
-        conn.close()
+    with _ensure_lock:
+        if _ensured:   # 双检：并发首调时后到者直接返回，避免重复 ALTER 报 duplicate column
+            return
+        conn = db.get_conn()
+        try:
+            conn.executescript(SCHEMA)
+            # 旧库迁移：v1.2 及更早建的 doc_content_state 没有 parse_ver 列
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(doc_content_state)")}
+            if "parse_ver" not in cols:
+                conn.execute("ALTER TABLE doc_content_state ADD COLUMN parse_ver TEXT")
+            conn.commit()
+            _ensured = True
+        finally:
+            conn.close()
 
 
 def budgets():
@@ -101,9 +111,11 @@ def totals():
 
 
 def _cand_sql(select):
-    """候选集 SQL 片段（受支持格式 + 体积在限内 + 没抽过或已变化）。
+    """候选集 SQL 片段（受支持格式 + 体积在限内 + 没抽过/已变化/解析版本过期）。
 
     plan() 只要个数、_run() 要取行，两处共用同一个谓词，避免计数与实际索引口径漂移。
+    parse_ver 用 IS NOT 而非 <>：存量行该列为 NULL 时 <> 判 NULL 不命中，
+    IS NOT 对 NULL 也返回真，正好让旧解析的正文按新管线重抽一遍。
     """
     exts = sorted(parsers.SUPPORTED)
     marks = ",".join("?" * len(exts))
@@ -111,8 +123,9 @@ def _cand_sql(select):
     sql = ("SELECT " + select + " FROM file_index f "
            "LEFT JOIN doc_content_state s ON s.path = f.path "
            "WHERE f.ext IN (" + marks + ") AND f.size > 0 AND f.size <= ? "
-           "AND (s.path IS NULL OR s.mtime <> f.mtime OR s.size <> f.size)")
-    return sql, tuple(exts) + (MAX_FILE_BYTES,)
+           "AND (s.path IS NULL OR s.mtime <> f.mtime OR s.size <> f.size "
+           "OR s.parse_ver IS NOT ?)")
+    return sql, tuple(exts) + (MAX_FILE_BYTES, parsers.PARSE_VER)
 
 
 def _candidates(conn, limit=None):
@@ -276,9 +289,10 @@ def _run(cb):
                     failed += 1
                 conn.execute(
                     "INSERT OR REPLACE INTO doc_content_state"
-                    "(path,size,mtime,chars,bytes,err,fts_rowid,indexed_at) "
-                    "VALUES(?,?,?,?,?,?,?,?)",
-                    (path, size, mtime, chars, nbytes, err, rowid, time.time()))
+                    "(path,size,mtime,chars,bytes,err,fts_rowid,indexed_at,parse_ver) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (path, size, mtime, chars, nbytes, err, rowid, time.time(),
+                     parsers.PARSE_VER))
                 done += 1
                 batch += 1
                 if batch >= _BATCH_COMMIT:

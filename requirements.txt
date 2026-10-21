@@ -18,3 +18,6 @@ winrt-Windows.Storage.Streams>=3.0
 winrt-Windows.Security.Cryptography>=3.0
 winrt-Windows.Foundation>=3.0
 winrt-Windows.Foundation.Collections>=3.0
+pypinyin>=0.51
+onnxruntime>=1.17
+tokenizers>=0.15

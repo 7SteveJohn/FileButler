@@ -624,6 +624,7 @@ class Api:
             "embed_model": client.embed_model(),
             "ollama_keep_alive": db.get_setting("ollama_keep_alive", "30m"),
             "ollama_preload": db.get_setting("ollama_preload", "0") == "1",
+            "ollama_num_ctx": db.get_setting("ollama_num_ctx", "8192"),
             "kb": db.stats(),
             "winocr": winocr_status,
             "images_by_year": db.get_setting("images_by_year", "1"),
@@ -927,7 +928,9 @@ class Api:
 
     def quick_search(self, query, limit=8):
         """快速唤起（Ctrl+K/热键）专用搜索：纯文本 FTS，无计数、毫秒返回。
-        短词/无 FTS 时退回常规搜索。不走 browse_files 的全量计数——
+        命中按 FTS5 bm25 相关度排（file_fts.rank 升序，同 Files 页相关度排序）。
+        短词/无 FTS 时退回常规搜索。
+        不走 browse_files 的全量计数——
         常见子串在 85 万行上全量 COUNT 实测 900ms+，是即搜体验的最大延迟源。"""
         text = (query or "").strip()
         try:
@@ -939,7 +942,7 @@ class Api:
                         "SELECT f.path, f.name, f.ext, f.category, f.size, f.mtime "
                         "FROM file_fts JOIN file_index f ON f.id = file_fts.rowid "
                         "WHERE file_fts MATCH ? "
-                        "ORDER BY f.mtime DESC LIMIT ?",
+                        "ORDER BY file_fts.rank LIMIT ?",
                         (q, int(limit))).fetchall()
                 finally:
                     conn.close()
@@ -1449,7 +1452,8 @@ class Api:
 
     # ---------- Ollama 管理 ----------
 
-    def save_ollama_settings(self, host, chat_model, keep_alive="", preload=None):
+    def save_ollama_settings(self, host, chat_model, keep_alive="", preload=None,
+                             num_ctx=""):
         if host:
             db.set_setting("ollama_host", host.rstrip("/"))
         if chat_model:
@@ -1458,7 +1462,30 @@ class Api:
             db.set_setting("ollama_keep_alive", keep_alive)
         if preload is not None:
             db.set_setting("ollama_preload", "1" if preload else "0")
+        if num_ctx != "":
+            # "0" 是合法值（=跟随模型默认不干预），只拒绝非数字
+            if str(num_ctx).isdigit():
+                db.set_setting("ollama_num_ctx", str(num_ctx))
         return {"ok": True}
+
+    # ---------- Rerank（检索结果精排，可选增强） ----------
+
+    def rerank_status(self):
+        from backend.knowledge import reranker
+        return reranker.status()
+
+    def set_rerank_enabled(self, enabled):
+        from backend.knowledge import reranker
+        reranker.set_enabled(bool(enabled))
+        return reranker.status()
+
+    def rerank_download(self):
+        from backend.knowledge import reranker
+        return reranker.start_download()
+
+    def rerank_delete(self):
+        from backend.knowledge import reranker
+        return reranker.delete_model()
 
     def recommend_model(self):
         """自动探测本机配置（内存/显存），推荐本地 Ollama 模型；同时返回云端各服务商推荐模型。"""
@@ -1526,9 +1553,9 @@ class Api:
         q = (query or "").strip()
         fulltext = contentindex.search(q, limit=8) if q else {"results": []}
         content = rag.search(q, k=6) if q else {"mode": "vector", "results": [], "images": []}
-        seen = {r.get("file_path") for r in fulltext["results"]}
-        merged = fulltext["results"] + [r for r in content.get("results", [])
-                                        if r.get("file_path") not in seen]
+        # 两路按文件 RRF 融合（P1 遗留顺手项）：旧逻辑「正文 FTS 恒排知识库前」，
+        # 知识库里强命中的文件永远被正文的弱命中压住
+        merged = rag.rrf_merge_by_file([fulltext["results"], content.get("results", [])])
         return {"query": query,
                 "filename": filename,
                 "content": {"mode": "keyword" if fulltext["results"] else content.get("mode"),

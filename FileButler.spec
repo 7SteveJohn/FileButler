@@ -6,7 +6,8 @@ binaries = []
 hiddenimports = []
 tmp_ret = collect_all('webview')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-# winrt（Windows 内置 OCR）为惰性导入，PyInstaller 静态分析收集不到，需显式收集
+# winrt（Windows 内置 OCR）为惰性导入，PyInstaller 静态分析收集不到，需显式收集；
+# pypinyin（拼音检索，数据随包）/ onnxruntime + tokenizers（rerank 精排，惰性导入）同理
 for _pkg in ('winrt.runtime',
              'winrt.windows.media.ocr',
              'winrt.windows.graphics.imaging',
@@ -14,7 +15,10 @@ for _pkg in ('winrt.runtime',
              'winrt.windows.storage.streams',
              'winrt.windows.security.cryptography',
              'winrt.windows.foundation',
-             'winrt.windows.foundation.collections'):
+             'winrt.windows.foundation.collections',
+             'pypinyin',
+             'onnxruntime',
+             'tokenizers'):
     try:
         tmp_ret = collect_all(_pkg)
         datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]

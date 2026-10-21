@@ -114,11 +114,12 @@ def index_folder(folder_id, progress_cb=None):
         progress_cb("scan", 0, 0, root)
     files = [f for f in scanner.scan_folder(root) if f["ext"] in parsers.SUPPORTED]
 
-    # 2. 增量判断：mtime+size 未变的跳过
+    # 2. 增量判断：mtime+size 未变且解析管线版本一致才跳过
     conn = db.get_conn()
     try:
         known = {r["path"]: r for r in conn.execute(
-            "SELECT id, path, mtime, size FROM kb_files WHERE folder_id=?", (folder_id,))}
+            "SELECT id, path, mtime, size, parse_ver FROM kb_files WHERE folder_id=?",
+            (folder_id,))}
     finally:
         conn.close()
 
@@ -126,7 +127,8 @@ def index_folder(folder_id, progress_cb=None):
     skipped = 0
     for fi in files:
         old = known.get(fi["path"])
-        if old and abs(old["mtime"] - fi["mtime"]) < 1 and old["size"] == fi["size"]:
+        if old and abs(old["mtime"] - fi["mtime"]) < 1 and old["size"] == fi["size"] \
+                and (old["parse_ver"] or "") == parsers.PARSE_VER:
             skipped += 1
         else:
             todo.append(fi)
@@ -191,7 +193,8 @@ def _index_file_into_kb(client, fi, folder_id):
     if not text:
         _mark_parse_failed(folder_id, fi)
         return "failed"
-    pieces = chunker.chunk_text(text)
+    # 每块前置文件名，块向量携带文档上下文
+    pieces = chunker.chunk_text(text, title=os.path.splitext(os.path.basename(fi["path"]))[0])
     if not pieces:
         return "failed"
     try:
@@ -205,12 +208,14 @@ def _index_file_into_kb(client, fi, folder_id):
                      "(SELECT id FROM kb_files WHERE path=?)", (fi["path"],))
         conn.execute("DELETE FROM kb_files WHERE path=?", (fi["path"],))
         cur = conn.execute(
-            "INSERT INTO kb_files(folder_id,path,mtime,size,hash) VALUES(?,?,?,?,?)",
-            (folder_id, fi["path"], fi["mtime"], fi["size"], None))
+            "INSERT INTO kb_files(folder_id,path,mtime,size,hash,parse_ver) "
+            "VALUES(?,?,?,?,?,?)",
+            (folder_id, fi["path"], fi["mtime"], fi["size"], None, parsers.PARSE_VER))
         fid = cur.lastrowid
-        rows = [(fid, seq, piece, _vec_to_blob(v))
+        rows = [(fid, seq, piece, db.chunk_btext(piece), _vec_to_blob(v))
                 for seq, (piece, v) in enumerate(zip(pieces, vectors))]
-        conn.executemany("INSERT INTO chunks(file_id,seq,text,vec) VALUES(?,?,?,?)", rows)
+        conn.executemany(
+            "INSERT INTO chunks(file_id,seq,text,btext,vec) VALUES(?,?,?,?,?)", rows)
         conn.commit()
     finally:
         conn.close()
@@ -223,8 +228,10 @@ def _mark_parse_failed(folder_id, fi):
     try:
         conn.execute("DELETE FROM kb_files WHERE path=?", (fi["path"],))
         conn.execute(
-            "INSERT INTO kb_files(folder_id,path,mtime,size,hash,status) VALUES(?,?,?,?,?,?)",
-            (folder_id, fi["path"], fi["mtime"], fi["size"], None, "parse_failed"))
+            "INSERT INTO kb_files(folder_id,path,mtime,size,hash,status,parse_ver) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (folder_id, fi["path"], fi["mtime"], fi["size"], None,
+             "parse_failed", parsers.PARSE_VER))
         conn.commit()
     finally:
         conn.close()
@@ -242,7 +249,8 @@ def index_files(paths, progress_cb=None):
 
     conn = db.get_conn()
     try:
-        known = {r["path"]: r for r in conn.execute("SELECT path, mtime, size FROM kb_files")}
+        known = {r["path"]: r for r in conn.execute(
+            "SELECT path, mtime, size, parse_ver FROM kb_files")}
     finally:
         conn.close()
 
@@ -259,6 +267,7 @@ def index_files(paths, progress_cb=None):
         except OSError:
             continue
         if old and abs(old["mtime"] - st.st_mtime) < 1 and old["size"] == st.st_size \
+                and (old["parse_ver"] or "") == parsers.PARSE_VER \
                 and _folder_id_of(path) is not None:
             skipped += 1
             continue

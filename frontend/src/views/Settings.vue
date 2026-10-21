@@ -29,11 +29,19 @@ const pullState = ref(null)   // {model, pct, status, done}
 const recommend = ref(null)
 const keepAlive = ref('30m')  // 模型常驻时长：默认 30m，避免空闲 5 分钟被卸载后重载几十秒
 const preload = ref(false)    // 启动时把模型预载进显存/内存
+const numCtx = ref('8192')    // 上下文窗口 token：默认 8192，防止长资料被 Ollama 默认窗口静默截断
 const keepAliveOptions = [
   { label: '5 分钟', value: '5m' },
   { label: '30 分钟（推荐）', value: '30m' },
   { label: '1 小时', value: '1h' },
   { label: '常驻不卸载', value: '-1' },
+]
+const numCtxOptions = [
+  { label: '4096（低配省显存）', value: '4096' },
+  { label: '8192（推荐）', value: '8192' },
+  { label: '16384', value: '16384' },
+  { label: '32768', value: '32768' },
+  { label: '跟随模型默认', value: '0' },
 ]
 
 async function refresh() {
@@ -42,6 +50,7 @@ async function refresh() {
   chatModel.value = status.value.chat_model
   keepAlive.value = status.value.ollama_keep_alive || '30m'
   preload.value = !!status.value.ollama_preload
+  numCtx.value = status.value.ollama_num_ctx || '8192'
   const opts = []
   for (const m of status.value.ollama.models) {
     if (!m.startsWith('bge')) opts.push({ label: m, value: m })
@@ -50,7 +59,7 @@ async function refresh() {
 }
 
 async function saveOllama() {
-  await api('save_ollama_settings', host.value, chatModel.value, keepAlive.value, preload.value)
+  await api('save_ollama_settings', host.value, chatModel.value, keepAlive.value, preload.value, numCtx.value)
   message.success('已保存')
   refresh()
   window.dispatchEvent(new CustomEvent('fb-refresh'))
@@ -703,6 +712,36 @@ async function checkUpdate() {
   checkingUpdate.value = false
 }
 
+// Rerank（检索结果精排，可选增强）：模型 ~544MB 按需下载，CPU 打分，默认关
+const rerank = ref(null)
+let rerankTimer = null
+async function refreshRerank() {
+  try {
+    rerank.value = await api('rerank_status')
+  } catch (e) { /* 忽略 */ }
+}
+async function toggleRerank(v) {
+  rerank.value = await api('set_rerank_enabled', v)
+  if (v && !rerank.value.active) message.warning('Rerank 尚未就绪（运行时或模型缺失），问答仍走纯 RRF')
+}
+async function rerankDownload() {
+  rerank.value = await api('rerank_download')
+  if (rerankTimer) clearInterval(rerankTimer)
+  rerankTimer = setInterval(async () => {
+    await refreshRerank()
+    if (!rerank.value?.download?.downloading) {
+      clearInterval(rerankTimer); rerankTimer = null
+      if (rerank.value?.download?.error) message.error('Rerank 模型下载失败：' + rerank.value.download.error)
+      else if (rerank.value?.downloaded) message.success('Rerank 模型已就绪')
+    }
+  }, 1000)
+}
+async function rerankDelete() {
+  await api('rerank_delete')
+  message.success('已删除 Rerank 模型')
+  refreshRerank()
+}
+
 onMounted(() => {
   refresh()
   loadRules().then(applyFilter)
@@ -719,6 +758,7 @@ onMounted(() => {
   loadExcludes()
   loadAutoOrganize()
   loadAbout()
+  refreshRerank()
   api('recommend_model').then((r) => (recommend.value = r))
 })
 </script>
@@ -757,9 +797,15 @@ onMounted(() => {
               <template #suffix>启动时预载</template>
             </n-switch>
           </n-space>
+          <n-space item-style="display:flex;align-items:center;gap:8px">
+            <n-text style="width:80px">上下文窗口</n-text>
+            <n-select v-model:value="numCtx" :options="numCtxOptions" style="width:320px" />
+          </n-space>
           <n-text depth="3" style="font-size:12px">
             Ollama 默认空闲 5 分钟就把模型踢出显存，下次提问要重新载入几十秒——
             「常驻 30 分钟」可让对话随叫随到；内存充裕可开「启动时预载」并选「常驻不卸载」。
+            「上下文窗口」默认 8192：问答要喂给模型大段原文，窗口太小会被静默截断；
+            低配纯 CPU 机器觉得吃内存可选 4096 或「跟随模型默认」。
           </n-text>
 
           <n-descriptions v-if="recommend" :column="3" bordered size="small" label-placement="left">
@@ -1135,6 +1181,53 @@ onMounted(() => {
           <n-text v-if="ci?.status?.budget_hit || (ci?.plan && ci.plan.budget.docs_left === 0)"
             type="warning" style="font-size:12px">
             已达预算上限——放宽上限后再次点「开始索引」即可继续。
+          </n-text>
+        </n-space>
+      </n-card>
+
+      <!-- ============ Rerank 检索精排 ============ -->
+      <n-card title="检索精排 Rerank（可选增强）">
+        <n-space vertical size="small">
+          <n-text depth="3" style="font-size:12.5px">
+            用本地 rerank 模型（bge-reranker-v2-m3 int8，CPU 推理）对混合检索结果读原文重排，
+            提升问答与检索的准确度。模型约 544 MB 按需下载不占安装包；打分 50 段约 1~3 秒，
+            默认关闭。任何一步不可用（未下载 / 运行时缺失）问答自动回退纯 RRF，不受影响。
+          </n-text>
+          <n-space size="small" align="center" style="margin-top:4px">
+            <n-switch
+              :value="rerank?.enabled || false"
+              :disabled="!rerank?.runtime || !rerank?.downloaded"
+              @update:value="toggleRerank" />
+            <n-text style="font-size:12.5px">
+              {{ !rerank?.runtime ? '运行时缺失（onnxruntime / tokenizers）'
+                  : !rerank?.downloaded ? '模型未下载'
+                  : rerank.enabled ? '已开启' : '已关闭' }}
+            </n-text>
+            <template v-if="rerank?.runtime && !rerank?.downloaded">
+              <n-button size="small" type="primary" ghost :loading="rerank?.download?.downloading"
+                @click="rerankDownload">
+                {{ rerank?.download?.downloading ? '下载中…' : '下载模型' }}
+              </n-button>
+              <n-text depth="3" style="font-size:12px">
+                {{ rerank?.download?.downloading
+                    ? (rerank.download.pct + '% · ' + ((rerank.download.done_bytes || 0) / 1048576).toFixed(0) + ' MB')
+                    : '约 544 MB' }}
+              </n-text>
+            </template>
+            <template v-if="rerank?.downloaded">
+              <n-popconfirm @positive-click="rerankDelete">
+                <template #trigger>
+                  <n-button size="small" quaternary type="error">删除模型</n-button>
+                </template>
+                删除后磁盘释放约 544 MB，需要时可重新下载。
+              </n-popconfirm>
+              <n-text depth="3" style="font-size:12px">
+                已就绪 · {{ ((rerank.size_bytes || 0) / 1048576).toFixed(0) }} MB
+              </n-text>
+            </template>
+          </n-space>
+          <n-text v-if="rerank?.failed" type="warning" style="font-size:12px">
+            模型加载失败：{{ rerank.error }}——问答已自动回退纯 RRF。
           </n-text>
         </n-space>
       </n-card>

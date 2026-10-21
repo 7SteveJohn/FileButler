@@ -2,12 +2,19 @@
 扫描版 PDF（文字提取为空但有内容）通过 VL 模型或 Windows 系统 OCR 补充。"""
 import os
 
+from html.parser import HTMLParser as _HTMLParser
+
 from backend.core.scanner import TEXT_EXTS
+
+# 解析管线版本：解析行为变化（PDF 主通道、docx 标题等）时 +1，
+# indexer 据此让旧索引在下次索引时自动按新管线重解析
+# v3: HTML 从「整文件按文本读」改为剥标签取正文；新增 eml 邮件解析
+PARSE_VER = "3"
 
 # 知识库支持的扩展名
 SUPPORTED = {
     "pdf", "docx", "pptx", "xlsx", "doc", "md", "markdown", "txt", "csv",
-} | TEXT_EXTS
+} | TEXT_EXTS | {"eml"}
 
 
 def parse_file(path):
@@ -23,6 +30,10 @@ def parse_file(path):
             return _parse_xlsx(path)
         if ext == "csv":
             return _parse_csv(path)
+        if ext == "eml":
+            return _parse_eml(path)
+        if ext in ("html", "htm"):
+            return _parse_html(path)
         if ext in TEXT_EXTS:
             return _parse_text(path)
         # doc（旧版二进制格式）python-docx 打不开时尝试按文本读
@@ -33,18 +44,138 @@ def parse_file(path):
         return None
 
 
+class _HTMLTextExtractor(_HTMLParser):
+    """剥标签取正文：<script>/<style> 整段丢弃，块级标签换行，
+    h1-h3 转 md 标题行（chunker 据此按章节切块）。"""
+
+    _BLOCK = {"p", "div", "section", "article", "li", "tr", "table",
+              "ul", "ol", "br", "blockquote", "pre", "header", "footer", "hr"}
+    _HEAD = {"h1": "# ", "h2": "## ", "h3": "### "}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self._skip = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip += 1
+        elif self._skip:
+            return
+        elif tag in self._HEAD:
+            self.parts.append("\n" + self._HEAD[tag])
+        elif tag in self._BLOCK:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            if self._skip:
+                self._skip -= 1
+        elif not self._skip and tag in self._BLOCK:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self._skip and data.strip():
+            self.parts.append(data)
+
+
+def _read_decoded(path, limit=2_000_000):
+    """读文件前 limit 字节并解码：utf-8 → gb18030 逐级尝试
+    （中文网页/邮件常见 gb2312 是 gb18030 子集）。"""
+    with open(path, "rb") as f:
+        raw = f.read(limit)
+    for enc in ("utf-8", "gb18030"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="ignore")
+
+
+def _html_to_text(html):
+    """HTML 字符串 → 压缩空行后的正文；解析失败返回 None。"""
+    p = _HTMLTextExtractor()
+    try:
+        p.feed(html)
+        p.close()
+    except Exception:
+        return None
+    lines = [ln.strip() for ln in "".join(p.parts).splitlines()]
+    out = "\n".join(ln for ln in lines if ln)
+    return out.strip() or None
+
+
+def _parse_html(path):
+    """HTML → 正文：剥 script/style 与标签（旧实现整文件按文本读，
+    标签与脚本噪音全进向量与 FTS，检索质量明显受害）。"""
+    return _html_to_text(_read_decoded(path))
+
+
+def _parse_eml(path):
+    """eml 邮件 → 主题/发件人/日期 + 各 text/plain 正文段；
+    纯 HTML 邮件复用剥标签逻辑。附件（非 text 部分）不进正文。"""
+    import email
+    from email import policy
+    with open(path, "rb") as f:
+        msg = email.message_from_binary_file(f, policy=policy.default)
+    parts = []
+    for key, label in (("Subject", "主题"), ("From", "发件人"), ("Date", "日期")):
+        v = str(msg.get(key, "") or "").strip()
+        if v:
+            parts.append(f"{label}: {v}")
+    bodies, html_bodies = [], []
+    for part in msg.walk():
+        if part.get_content_maintype() != "text":
+            continue
+        try:
+            body = part.get_content()
+        except Exception:
+            continue
+        if part.get_content_subtype() == "html":
+            html_bodies.append(body)
+        else:
+            bodies.append(body)
+    text = "\n\n".join(bodies).strip()
+    if not text and html_bodies:
+        text = (_html_to_text("\n".join(html_bodies)) or "").strip()
+    if text:
+        parts.append(text)
+    return "\n\n".join(parts).strip() or None
+
+
 def _parse_pdf(path):
-    from pypdf import PdfReader
-    reader = PdfReader(path)
-    pages = [p.extract_text() or "" for p in reader.pages]
-    text = "\n\n".join(pages).strip()
-    # 扫描件检测：文本极少但文件较大 → 可能是扫描版
+    """主通道 PyMuPDF（阅读顺序/双栏/表格文本明显好于 pypdf，且已在依赖里）；
+    fitz 打不开（加密/损坏）时 pypdf 兜底；两者都抽不出文字视为扫描件走 OCR。"""
+    text = _pdf_text_fitz(path)
     if not text or len(text) < 20:
-        return _ocr_scanned_pdf(path, pages)
-    return text or None
+        text = _pdf_text_pypdf(path)
+    if not text or len(text) < 20:
+        return _ocr_scanned_pdf(path)
+    return text
 
 
-def _ocr_scanned_pdf(path, original_pages):
+def _pdf_text_fitz(path):
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(path)
+        try:
+            return "\n\n".join((page.get_text(sort=True) or "") for page in doc).strip()
+        finally:
+            doc.close()
+    except Exception:
+        return ""
+
+
+def _pdf_text_pypdf(path):
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(path)
+        return "\n\n".join((p.extract_text() or "") for p in reader.pages).strip()
+    except Exception:
+        return ""
+
+
+def _ocr_scanned_pdf(path):
     """扫描版 PDF OCR：Windows 系统 OCR 优先（实测 ~0.3s/页、无需模型、
     中文识别质量好）；系统 OCR 不可用时回退 VL 模型。两者都不可用返回 None。"""
     try:
@@ -101,7 +232,17 @@ def _ocr_pdf_by_vl(path, llm, imgsearch):
 def _parse_docx(path):
     import docx
     doc = docx.Document(path)
-    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    parts = []
+    for p in doc.paragraphs:
+        t = p.text.strip()
+        if not t:
+            continue
+        # 标题样式输出为 md 风格标题行，chunker 据此按章节切块
+        style = getattr(p.style, "name", "") or ""
+        if style.startswith(("Heading", "标题")):
+            parts.append("# " + t)
+        else:
+            parts.append(t)
     for table in doc.tables:
         for row in table.rows:
             cells = [c.text.strip() for c in row.cells if c.text.strip()]

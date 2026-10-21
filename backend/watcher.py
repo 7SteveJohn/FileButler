@@ -317,7 +317,7 @@ class WatchEngine:
 
 # 可自动进知识库的文档扩展名（与 knowledge.parsers.SUPPORTED 一致；此处复制避免 core→knowledge 依赖）
 _DOC_EXTS = {
-    "pdf", "docx", "pptx", "xlsx", "doc", "md", "markdown", "txt", "csv",
+    "pdf", "docx", "pptx", "xlsx", "doc", "md", "markdown", "txt", "csv", "eml",
     "log", "ini", "cfg", "conf", "tsv", "json", "xml", "yaml", "yml", "toml",
     "py", "js", "ts", "jsx", "tsx", "html", "htm", "css", "scss", "java",
     "c", "h", "cpp", "hpp", "cs", "go", "rs", "rb", "php", "swift", "sh",

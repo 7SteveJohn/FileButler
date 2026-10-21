@@ -5,6 +5,7 @@ file_index 表存每个文件的元数据，由 full_scan / watcher 增量维护
 """
 import ctypes
 import os
+import threading
 import time
 from ctypes import wintypes
 
@@ -29,13 +30,105 @@ CREATE TABLE IF NOT EXISTS file_index (
     ext TEXT,
     category TEXT,
     size INTEGER,
-    mtime REAL
+    mtime REAL,
+    pinyin TEXT,
+    pinyin_ini TEXT,
+    photo_time REAL
 );
 CREATE INDEX IF NOT EXISTS idx_fi_root ON file_index(root_id);
 CREATE INDEX IF NOT EXISTS idx_fi_category ON file_index(category);
 """
 
 IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "tiff", "ico", "svg"}
+
+
+# ---------- 文件名拼音与照片拍摄时间（检索增强元数据） ----------
+
+def _pinyin_pair(name):
+    """文件名 → (全拼小写, 首字母缩写)，非 CJK 字符原样保留（如
+    「项目报告2024v2」→ xiangmubaogao2024v2 / xmbg2024v2）。
+    pypinyin 缺失或异常时返回 ("", "")，拼音通道自动失效不报错。"""
+    try:
+        from pypinyin import Style, lazy_pinyin
+    except ImportError:
+        return "", ""
+    try:
+        keep = lambda x: [x.lower()]
+        full = "".join(lazy_pinyin(name, errors=keep))
+        ini = "".join(lazy_pinyin(name, style=Style.FIRST_LETTER, errors=keep))
+        return full, ini
+    except Exception:
+        return "", ""
+
+
+def _photo_time_of(path):
+    """图片 EXIF 拍摄时间 → epoch 秒；无 EXIF/打不开/解析失败返回 None。
+    只读文件头（Pillow 惰性加载不解码像素），单张几毫秒到几十毫秒——
+    watcher 单文件路径可直接调用；全量扫描不读 EXIF（十几万张会把
+    扫描拖长十几分钟），存量由 backfill 后台线程补齐。"""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            exif = im._getexif()
+        if not exif:
+            return None
+        raw = exif.get(36867) or exif.get(36868) or exif.get(306)  # 拍摄/数字化/修改
+        if not raw:
+            return None
+        return time.mktime(time.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S"))
+    except Exception:
+        return None
+
+
+_backfill_lock = threading.Lock()
+_backfilling = False
+
+
+def backfill_async():
+    """后台补齐存量行的拼音列与图片拍摄时间（新写入由 upsert/scan 直接带值）。
+
+    photo_time 用 0 / pinyin 用 '' 标记「已处理但无值」，避免每次启动重扫。
+    分批短事务同 _fts_resync 形态；UPDATE 会经 fi_au 触发器把拼音同步进
+    file_fts，无需再单独重建。"""
+    global _backfilling
+    if _backfilling or not _backfill_lock.acquire(blocking=False):
+        return
+
+    def _run():
+        global _backfilling
+        _backfilling = True
+        try:
+            while True:
+                conn = db.get_conn()
+                try:
+                    rows = conn.execute(
+                        "SELECT id, name, path, ext, pinyin, photo_time FROM file_index "
+                        "WHERE pinyin IS NULL OR photo_time IS NULL LIMIT 500").fetchall()
+                    if not rows:
+                        return
+                    for r in rows:
+                        if r["pinyin"] is None:
+                            full, ini = _pinyin_pair(r["name"] or "")
+                            conn.execute(
+                                "UPDATE file_index SET pinyin=?, pinyin_ini=? WHERE id=?",
+                                (full, ini, r["id"]))
+                        if r["photo_time"] is None:
+                            if r["ext"] in IMAGE_EXTS:
+                                pt = _photo_time_of(r["path"]) or 0
+                            else:
+                                pt = 0  # 非图片：标记已处理
+                            conn.execute(
+                                "UPDATE file_index SET photo_time=? WHERE id=?",
+                                (pt, r["id"]))
+                        conn.commit()
+                finally:
+                    conn.close()
+        except Exception as e:
+            print("[backfill] pinyin/exif failed:", e)
+        finally:
+            _backfilling = False
+
+    threading.Thread(target=_run, daemon=True, name="fb-backfill-meta").start()
 
 
 # ---------- 系统用户目录（兼容 OneDrive 重定向） ----------
@@ -156,6 +249,8 @@ def ensure_default_roots():
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             ("known_drives", "|".join(sorted(seen))))
         conn.commit()
+        # 存量行的拼音/拍摄时间补齐（一次性后台任务，无待补行时线程空转即退）
+        backfill_async()
         return added
     finally:
         conn.close()
@@ -322,14 +417,21 @@ def upsert_file(path):
           "size": int(st.st_size or 0), "mtime": float(st.st_mtime or 0.0)}
     cat = _classify(fi, env["rules"])
     rid = _root_id_of(path, env["roots"])
+    # 拼音与拍摄时间：watcher 单文件路径读得起（EXIF 只读文件头）；
+    # 拿不到（无 EXIF/pypinyin 缺失）写空标记，不阻塞入库
+    full, ini = _pinyin_pair(fi["name"])
+    pt = _photo_time_of(path) if ext in IMAGE_EXTS else 0
     conn = db.get_conn()
     try:
         conn.execute(
-            "INSERT INTO file_index(root_id,path,name,ext,category,size,mtime) "
-            "VALUES(?,?,?,?,?,?,?) "
+            "INSERT INTO file_index(root_id,path,name,ext,category,size,mtime,"
+            "pinyin,pinyin_ini,photo_time) VALUES(?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(path) DO UPDATE SET root_id=excluded.root_id, name=excluded.name, "
-            "ext=excluded.ext, category=excluded.category, size=excluded.size, mtime=excluded.mtime",
-            (rid, path, fi["name"], ext, cat, fi["size"], fi["mtime"]))
+            "ext=excluded.ext, category=excluded.category, size=excluded.size, "
+            "mtime=excluded.mtime, pinyin=excluded.pinyin, pinyin_ini=excluded.pinyin_ini, "
+            "photo_time=excluded.photo_time",
+            (rid, path, fi["name"], ext, cat, fi["size"], fi["mtime"],
+             full or "", ini or "", pt or 0))
         conn.commit()
     finally:
         conn.close()
@@ -441,8 +543,11 @@ def full_scan(progress_cb=None, stop_event=None):
                     _purge_seen(seen_del)
                     seen_del.clear()
             if changed:
+                # 拼音在确认变更后才算（未变更文件居多，省掉每文件两轮 pypinyin）
+                full, ini = _pinyin_pair(fi["name"])
                 batch.append((_root_id_of(fi["path"], root_map), fi["path"],
-                              fi["name"], fi["ext"], cat, fi["size"], fi["mtime"]))
+                              fi["name"], fi["ext"], cat, fi["size"], fi["mtime"],
+                              full, ini))
                 stats["added" if old is None else "updated"] += 1
                 if len(batch) >= 2000:
                     if progress_cb:
@@ -513,10 +618,11 @@ def _write_batch(batch):
     conn = db.get_conn()
     try:
         conn.executemany(
-            "INSERT INTO file_index(root_id,path,name,ext,category,size,mtime) "
-            "VALUES(?,?,?,?,?,?,?) "
+            "INSERT INTO file_index(root_id,path,name,ext,category,size,mtime,"
+            "pinyin,pinyin_ini) VALUES(?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(path) DO UPDATE SET root_id=excluded.root_id, name=excluded.name, "
-            "ext=excluded.ext, category=excluded.category, size=excluded.size, mtime=excluded.mtime",
+            "ext=excluded.ext, category=excluded.category, size=excluded.size, "
+            "mtime=excluded.mtime, pinyin=excluded.pinyin, pinyin_ini=excluded.pinyin_ini",
             batch)
         conn.commit()
     finally:
@@ -596,21 +702,30 @@ _FTS_COUNT_CAP = 5000
 _SQL_FTS_COUNT_CAPPED = ("SELECT COUNT(*) c FROM "
                          "(SELECT 1 FROM file_fts WHERE file_fts MATCH ? LIMIT ?)")
 
+# 时间过滤（mtime_from/to/dm:）按「拍摄时间优先」：有 EXIF 拍摄时间（photo_time>0）
+# 的照片用它，其余退回修改时间——「上个月的照片」按拍摄时间才算对，拷贝/整理
+# 文件不改拍摄时间。排序不套用（sort_by=mtime 的字段语义保持原样）。
+_MT_FILTER = ("CASE WHEN file_index.photo_time>0 THEN file_index.photo_time "
+              "ELSE file_index.mtime END")
+
 
 def search(query=None, category=None, ext=None, min_size=None, is_image=None,
            limit=300, offset=0, sort_by="mtime", sort_order="desc", tag_ids=None,
            mtime_from=None, mtime_to=None):
     """文件搜索：支持语法过滤；长关键词走 FTS5，短关键词退回 LIKE。
-    sort_by: mtime/name/size/ext；sort_order: asc/desc；tag_ids: 命中任一标签即返回。
+    sort_by: mtime/name/size/ext/relevance——relevance 只在文本真正走了 FTS
+    MATCH 时按 file_fts.rank（bm25）排，LIKE 降级时无分数可比照旧回退 mtime；
+    sort_order: asc/desc（对 relevance 无效，bm25 固定最相关在前）。
+    tag_ids: 命中任一标签即返回。
     mtime_from/mtime_to: 修改时间区间（epoch 秒，左闭右开，供时间线视图用）。
     纯文本 FTS 搜索的计数封顶为 _FTS_COUNT_CAP，此时 total_capped=True。"""
     text, f = parse_query(query)
     conds, params = [], []
     if mtime_from is not None:
-        conds.append("file_index.mtime>=?")
+        conds.append(f"{_MT_FILTER}>=?")
         params.append(float(mtime_from))
     if mtime_to is not None:
-        conds.append("file_index.mtime<?")
+        conds.append(f"{_MT_FILTER}<?")
         params.append(float(mtime_to))
     if f["exts"]:
         marks = ",".join("?" * len(f["exts"]))
@@ -626,7 +741,7 @@ def search(query=None, category=None, ext=None, min_size=None, is_image=None,
         conds.append("file_index.size<=?")
         params.append(f["max_size"])
     if f["days"]:
-        conds.append("file_index.mtime>=?")
+        conds.append(f"{_MT_FILTER}>=?")
         params.append(_time.time() - f["days"] * 86400)
     if f["path_sub"]:
         conds.append("lower(file_index.path) LIKE ?")
@@ -655,12 +770,14 @@ def search(query=None, category=None, ext=None, min_size=None, is_image=None,
         # 而不是把整串当连续短语（旧逻辑搜「设置 教程」永远 0 结果）
         toks = [t for t in text.split() if t]
         if len(text) >= 3 and _fts_available() and all(len(t) >= 3 for t in toks):
-            # 全部词 ≥3 字符：FTS 多短语 AND（trigram 子串匹配）
+            # 全部词 ≥3 字符：FTS 多短语 AND（trigram 子串匹配）。
+            # MATCH 不指定列 = name/path/pinyin/pinyin_ini 全列找——纯字母词
+            # （baogao / xmbg）自然命中拼音列，中文词命中文件名列，混排无需区分
             phrases = ['"' + t.replace('"', '""') + '"' for t in toks]
             join_fts = " JOIN file_fts ON file_fts.rowid = file_index.id AND file_fts MATCH ?"
             fts_params = [" AND ".join(phrases)]
         elif len(text) >= 3 and _fts_available():
-            # 混合：长词走 FTS，短词（trigram 粒度以下）降级为 name LIKE
+            # 混合：长词走 FTS，短词（trigram 粒度以下）降级为 name/拼音首字母 LIKE
             fts_phrases, like_toks = [], []
             for t in toks:
                 if len(t) >= 3:
@@ -671,16 +788,21 @@ def search(query=None, category=None, ext=None, min_size=None, is_image=None,
                 join_fts = " JOIN file_fts ON file_fts.rowid = file_index.id AND file_fts MATCH ?"
                 fts_params = [" AND ".join(fts_phrases)]
             else:
-                conds.append("lower(file_index.name) LIKE ?")
+                conds.append("(lower(file_index.name) LIKE ? "
+                             "OR lower(file_index.pinyin_ini) LIKE ?)")
                 fts_params = []
                 params.append(f"%{text.lower()}%")
+                params.append(f"%{text.lower()}%")
             for t in like_toks:
-                conds.append("lower(file_index.name) LIKE ?")
+                conds.append("(lower(file_index.name) LIKE ? "
+                             "OR lower(file_index.pinyin_ini) LIKE ?)")
+                params.append(f"%{t}%")
                 params.append(f"%{t}%")
         else:
-            # 整串 <3 字符：LIKE
-            conds.append("lower(name) LIKE ?")
+            # 整串 <3 字符：LIKE（两字拼音首字母「bg」也能命中「项目报告」）
+            conds.append("(lower(name) LIKE ? OR lower(pinyin_ini) LIKE ?)")
             fts_params = []
+            params.append(f"%{text.lower()}%")
             params.append(f"%{text.lower()}%")
     else:
         fts_params = []
@@ -689,14 +811,24 @@ def search(query=None, category=None, ext=None, min_size=None, is_image=None,
     sql_total = f"SELECT COUNT(*) c FROM file_index{join_fts}{where}"
     # 排序：仅允许白名单字段防注入
     _sort_cols = {"mtime": "mtime", "name": "name", "size": "size", "ext": "ext"}
-    col = _sort_cols.get(sort_by, "mtime")
-    order = "DESC" if (sort_order or "desc").lower() == "desc" else "ASC"
+    if sort_by == "relevance" and join_fts:
+        # 相关度只在文本真正走了 FTS MATCH 时有意义。file_fts.rank 是 FTS5 内建
+        # bm25() 的分值，SQLite 文档约定更准的匹配分值更小（本机 SQLite 3.50.4
+        # 用同款 JOIN 实测：命中词出现次数更多的行 rank 更小、排最前，回归见
+        # tests/test_rel_sort.py），故固定升序 = 最相关在前；分值列没有字段级
+        # asc/desc 语义，忽略 sort_order。LIKE 降级（短词/无 FTS）没有分数可比，
+        # 与非法值一样照旧回退 mtime。
+        col, order = "file_fts.rank", "ASC"
+    else:
+        col = "file_index." + _sort_cols.get(sort_by, "mtime")
+        order = "DESC" if (sort_order or "desc").lower() == "desc" else "ASC"
     sql_rows = (f"SELECT file_index.path, file_index.name, file_index.ext, "
                 f"file_index.category, file_index.size, file_index.mtime, "
+                f"file_index.photo_time, "
                 f"(SELECT GROUP_CONCAT(t.name,'|') FROM file_tags ft "
                 f"JOIN tags t ON t.id=ft.tag_id WHERE ft.path=file_index.path) AS tags "
                 f"FROM file_index{join_fts}{where} "
-                f"ORDER BY file_index.{col} {order} LIMIT ? OFFSET ?")
+                f"ORDER BY {col} {order} LIMIT ? OFFSET ?")
     conn = db.get_conn()
     try:
         # 先取行再决定要不要计数：首页且没填满一页时，行数就是精确总数。
