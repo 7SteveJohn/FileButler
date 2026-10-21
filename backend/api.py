@@ -291,14 +291,17 @@ class Api:
                         break
             if not exe:
                 return
-            subprocess.Popen([exe, "serve"],
-                             creationflags=0x08000000,  # CREATE_NO_WINDOW，不弹黑框
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            proc = subprocess.Popen([exe, "serve"],
+                                    creationflags=0x08000000,  # CREATE_NO_WINDOW，不弹黑框
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # 记录由应用拉起的进程：退出时按设置回收（用户自己开的 Ollama 不动）
+            self._ollama_proc = proc
             # 轮询等就绪（最多 20s），就绪后 warm/preload 才有意义
             for _ in range(40):
                 time.sleep(0.5)
                 try:
                     if OllamaClient().status().get("running"):
+                        self._emit("ollama_ready", {})   # 前端收到后重拉 get_status，离线态自动转在线
                         return
                 except Exception:
                     continue
@@ -676,6 +679,7 @@ class Api:
             "images_by_year": db.get_setting("images_by_year", "1"),
             "auto_kb": db.get_setting("auto_kb", "1") == "1",
             "auto_start_ollama": db.get_setting("auto_start_ollama", "1") == "1",
+            "stop_ollama_on_exit": db.get_setting("stop_ollama_on_exit", "1") == "1",
             "img_semantic": db.get_setting("img_semantic", "0") == "1",
             "library": lib,
             "thumb_base": f"http://127.0.0.1:{self.thumb.port}" if self.thumb.port else None,
@@ -2112,6 +2116,26 @@ class Api:
         """启动时自动拉起 ollama serve（Ollama 没在运行时），默认开。"""
         db.set_setting("auto_start_ollama", "1" if enabled else "0")
         return {"ok": True}
+
+    def set_stop_ollama_on_exit(self, enabled):
+        """退出应用时是否结束由应用拉起的 ollama serve，默认开。"""
+        db.set_setting("stop_ollama_on_exit", "1" if enabled else "0")
+        return {"ok": True}
+
+    def shutdown_ollama(self):
+        """退出收尾：只回收「应用自己拉起」的 serve，用户手动开的 Ollama 不动。"""
+        try:
+            if db.get_setting("stop_ollama_on_exit", "1") != "1":
+                return
+            proc = getattr(self, "_ollama_proc", None)
+            if proc is not None and proc.poll() is None:
+                proc.terminate()   # ollama serve 是单进程，terminate 足够
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    proc.kill()
+        except Exception:
+            pass
 
     def set_img_semantic(self, enabled):
         """图片语义搜索开关。开启时若无视觉模型返回提示。"""

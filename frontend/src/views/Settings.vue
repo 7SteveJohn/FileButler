@@ -520,11 +520,13 @@ loadContentIndex()
 const autoKb = ref(true)
 const autostart = ref(false)
 const autoStartOllama = ref(true)
+const stopOllamaOnExit = ref(true)
 
 async function loadToggles() {
   const st = await api('get_status')
   autoKb.value = st.auto_kb
   autoStartOllama.value = st.auto_start_ollama
+  stopOllamaOnExit.value = st.stop_ollama_on_exit
   const as = await api('autostart_status')
   autostart.value = as.enabled
 }
@@ -533,6 +535,12 @@ async function toggleAutoStartOllama(v) {
   autoStartOllama.value = v
   await api('set_auto_start_ollama', v)
   message.success(v ? t('settings.m.asoOn') : t('settings.m.asoOff'))
+}
+
+async function toggleStopOllamaOnExit(v) {
+  stopOllamaOnExit.value = v
+  await api('set_stop_ollama_on_exit', v)
+  message.success(v ? t('settings.m.sooOn') : t('settings.m.sooOff'))
 }
 
 async function toggleAutoKb(v) {
@@ -1302,6 +1310,16 @@ onMounted(() => {
               <n-text strong>{{ t('settings.autoStartOllama') }}</n-text>
               <n-text depth="3" style="display:block;font-size:12px">
                 {{ t('settings.autoStartOllamaHint') }}
+              </n-text>
+            </div>
+          </n-space>
+
+          <n-space item-style="display:flex;align-items:center;gap:10px">
+            <n-switch :value="stopOllamaOnExit" @update:value="toggleStopOllamaOnExit" />
+            <div>
+              <n-text strong>{{ t('settings.stopOllamaOnExit') }}</n-text>
+              <n-text depth="3" style="display:block;font-size:12px">
+                {{ t('settings.stopOllamaOnExitHint') }}
               </n-text>
             </div>
           </n-space>

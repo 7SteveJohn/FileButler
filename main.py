@@ -401,6 +401,7 @@ def main():
                 api.thumb.server.stop()
         except Exception:
             pass
+        api.shutdown_ollama()   # 退出时回收应用拉起的 ollama serve（设置可关）
         try:
             if tray.get("icon"):
                 tray["icon"].stop()

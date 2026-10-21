@@ -1,11 +1,11 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import {
   NCard, NGrid, NGi, NStatistic, NTag, NSpace, NButton, NText, NSpin, NAlert,
   NList, NListItem, NResult, NIcon,
 } from 'naive-ui'
 import { FolderOpenOutline } from '@vicons/ionicons5'
-import { api, resetBridge } from '../lib/bridge'
+import { api, resetBridge, on } from '../lib/bridge'
 import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 
@@ -55,7 +55,13 @@ async function retry() {
   resetBridge()      // 强制重连后端
   await refresh()
 }
-onMounted(refresh)
+let offOllamaReady = null
+// Ollama 后台拉起就绪后后端会推事件：首屏先按离线渲染，就绪自动转在线（不再干等）
+onMounted(() => {
+  offOllamaReady = on('ollama_ready', refresh)
+  refresh()
+})
+onUnmounted(() => { if (offOllamaReady) offOllamaReady() })
 
 const greeting = computed(() => {
   const h = new Date().getHours()

@@ -116,7 +116,7 @@ class OllamaClient:
             return cached[1]
         try:
             s = _session_for(self.host)
-            r = s.get(f"{self.host}/api/tags", timeout=(2, 3))
+            r = s.get(f"{self.host}/api/tags", timeout=(0.6, 1.5))  # 本地探测快速失败：未就绪时不拖慢 get_status
             models = [m["name"] for m in r.json().get("models", [])]
         except Exception:
             models = None  # None 表示探测失败（与空列表区分）
@@ -127,7 +127,7 @@ class OllamaClient:
         """真实探测（不缓存）。"""
         try:
             s = _session_for(self.host)
-            r = s.get(f"{self.host}/api/tags", timeout=(2, 3))
+            r = s.get(f"{self.host}/api/tags", timeout=(0.6, 1.5))  # 本地探测快速失败：未就绪时不拖慢 get_status
             r.raise_for_status()
             data = r.json()
             models = [m["name"] for m in data.get("models", [])]
