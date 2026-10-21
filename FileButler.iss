@@ -12,7 +12,7 @@
 ; 版本号需与 backend/__init__.py 的 __version__ 手工同步
 
 #define MyAppName "FileButler"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.3.1"
 #define MyAppExeName "FileButler.exe"
 
 ; PyInstaller onedir 产物目录；可用 ISCC /DSourceDir="dist_132\FileButler" 覆盖，
