@@ -94,6 +94,78 @@ class ThumbServerHolder:
         self.port = self.server.start()
 
 
+# ---------- Ollama 生命周期绑定 ----------
+# 只靠退出时 taskkill 不够：用户可能从任务管理器结束进程、或程序崩溃，
+# 这些路径都不走 quit_app。Job Object 的 KILL_ON_JOB_CLOSE 由系统兜底——
+# 本进程一消失（任何原因），job 内的 ollama 与 llama-server 全部终止。
+_JOB_HANDLE = None
+
+
+def _make_kill_on_close_job():
+    global _JOB_HANDLE
+    if _JOB_HANDLE is not None:
+        return _JOB_HANDLE
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _IO(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in
+                        ("ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                         "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class _BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong),
+                        ("PerJobUserTimeLimit", ctypes.c_longlong),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class _EXT(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", _BASIC),
+                        ("IoInfo", _IO),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        k32 = ctypes.windll.kernel32
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = _EXT()
+        info.BasicLimitInformation.LimitFlags = 0x2000   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            k32.CloseHandle(job)
+            return None
+        _JOB_HANDLE = job
+        return job
+    except Exception:
+        return None
+
+
+def _attach_to_job(pid):
+    """把进程拉进本应用的 job；它后续 spawn 的子进程自动继承。"""
+    job = _make_kill_on_close_job()
+    if not job or not pid:
+        return False
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x0100 | 0x0001, False, int(pid))   # SET_QUOTA | TERMINATE
+        if not h:
+            return False
+        ok = bool(k32.AssignProcessToJobObject(job, h))
+        k32.CloseHandle(h)
+        return ok
+    except Exception:
+        return False
+
+
 class Api:
     def __init__(self):
         self._window = None
@@ -268,19 +340,54 @@ class Api:
         except Exception as e:
             print("pending dir cleanup error:", e)
 
+    @staticmethod
+    def _pid_listening(port):
+        """反查监听某端口的进程 PID（netstat 输出是 GBK，必须显式解码）。"""
+        try:
+            r = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True,
+                               text=True, encoding="gbk", errors="ignore", timeout=5,
+                               creationflags=0x08000000)
+            for line in (r.stdout or "").splitlines():
+                if f":{port}" in line and "LISTENING" in line.upper():
+                    return int(line.split()[-1])
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _ollama_app_running():
+        """官方托盘程序是否在（在的话 ollama 归用户管，退出时绝不碰）。"""
+        try:
+            r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ollama app.exe", "/NH"],
+                               capture_output=True, text=True, encoding="gbk",
+                               errors="ignore", timeout=5, creationflags=0x08000000)
+            return "ollama app.exe" in (r.stdout or "").lower()
+        except Exception:
+            return False
+
     def _maybe_start_ollama(self):
-        """设置开启时：Ollama 没在运行就拉起 `ollama serve`。
+        """设置开启时：Ollama 没在运行就拉起 `ollama serve`，并把它绑进本应用的
+        Job Object——应用消失（正常退出 / 崩溃 / 任务管理器强杀）它都跟着结束。
         用户痛点：首屏要等 Ollama 冷启动 + 模型加载几十秒；服务先起，
-        配合 preload 预载模型，首屏几乎不等。已运行则直接返回。"""
+        配合 preload 预载模型，首屏几乎不等。"""
         try:
             if db.get_setting("auto_start_ollama", "1") != "1":
                 return
+            running = False
             try:
                 # status() 不抛异常：未运行时返回 running=False（还有 5s 缓存）
-                if OllamaClient().status().get("running"):
-                    return   # 已在运行
+                running = bool(OllamaClient().status().get("running"))
             except Exception:
                 pass
+            if running:
+                # 已有裸 serve 在跑（多半是上次没回收干净的残留）：接管它，
+                # 让本次退出能收掉。有官方托盘程序时不动，那是用户自己的。
+                if not self._ollama_app_running():
+                    pid = self._pid_listening(11434)
+                    if pid and _attach_to_job(pid):
+                        self._ollama_pid = pid
+                        print(f"[ollama] adopted existing serve pid={pid}")
+                return
             exe = shutil.which("ollama")
             if not exe:
                 # ollama 安装器不一定写 PATH，补两个常见位置
@@ -291,11 +398,14 @@ class Api:
                         break
             if not exe:
                 return
+            _make_kill_on_close_job()   # 先建 job，下面的 attach 才有意义
             proc = subprocess.Popen([exe, "serve"],
                                     creationflags=0x08000000,  # CREATE_NO_WINDOW，不弹黑框
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            # 记录由应用拉起的进程：退出时按设置回收（用户自己开的 Ollama 不动）
+            # 记录 PID 并绑进 job：退出回收 + 崩溃/强杀兜底（用户自己开的 Ollama 不动）
             self._ollama_proc = proc
+            self._ollama_pid = proc.pid
+            _attach_to_job(proc.pid)
             # 轮询等就绪（最多 20s），就绪后 warm/preload 才有意义
             for _ in range(40):
                 time.sleep(0.5)
@@ -2147,11 +2257,14 @@ class Api:
         try:
             if db.get_setting("stop_ollama_on_exit", "1") != "1":
                 return
-            proc = getattr(self, "_ollama_proc", None)
-            if proc is None or proc.poll() is not None:
+            pid = getattr(self, "_ollama_pid", None)
+            if not pid:
+                proc = getattr(self, "_ollama_proc", None)
+                pid = proc.pid if proc is not None and proc.poll() is None else None
+            if not pid:
                 return
             if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                                creationflags=0x08000000, timeout=6,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
