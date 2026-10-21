@@ -103,8 +103,14 @@ def main():
         time.sleep(1.0)
         with open(new_file, "ab") as f:
             f.write(b"more")
-    time.sleep(5.0)  # 等待稳定入库
-    r = fileindex.search(query="新下载的文档")
+    # 等防抖结束 + watcher 入库：轮询而不是死等，CI runner 上文件事件与
+    # 索引明显比本地慢（死等 5s 在 windows-latest 上稳定失败）。
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        r = fileindex.search(query="新下载的文档")
+        if r["total"] == 1:
+            break
+        time.sleep(0.5)
     check("watcher picks new file", r["total"] == 1 and r["items"][0]["category"] == "文档", str(r))
     check("watcher emitted event", any(k == "added" and "新下载" in p for k, p in events))
 
