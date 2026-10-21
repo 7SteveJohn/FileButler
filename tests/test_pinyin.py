@@ -20,8 +20,15 @@ import time
 _SANDBOX = tempfile.mkdtemp(prefix="fb_captest_pinyin_")
 os.environ["APPDATA"] = _SANDBOX
 
-# 测试夹具必须在 SKIP_DIRS 之外（AppData 下的路径会被索引跳过）
-_FIXTURES = tempfile.mkdtemp(prefix="fb_pinyin_", dir=r"C:\tmp")
+# 测试夹具必须在 SKIP_DIRS 之外（AppData 下的路径会被索引跳过）。
+# C:\tmp 在干净机器/CI runner 上可能不存在，退到项目内的 .test_tmp。
+_FIX_ROOT = r"C:\tmp"
+try:
+    os.makedirs(_FIX_ROOT, exist_ok=True)
+except OSError:
+    _FIX_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".test_tmp")
+    os.makedirs(_FIX_ROOT, exist_ok=True)
+_FIXTURES = tempfile.mkdtemp(prefix="fb_pinyin_", dir=_FIX_ROOT)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
