@@ -1450,15 +1450,25 @@ def keyword_search(query, k=8):
         conn.close()
 
 
+_kb_stats_cache = [0.0, None]
+
+
 def stats():
+    """KB 计数（15s 进程缓存）：首屏 get_status 不每次全表 COUNT。"""
+    now = time.time()
+    if _kb_stats_cache[1] is not None and now - _kb_stats_cache[0] < 15:
+        return _kb_stats_cache[1]
     conn = get_conn()
     try:
         n_files = conn.execute("SELECT COUNT(*) c FROM kb_files").fetchone()["c"]
         n_chunks = conn.execute("SELECT COUNT(*) c FROM chunks").fetchone()["c"]
         n_folders = conn.execute("SELECT COUNT(*) c FROM kb_folders").fetchone()["c"]
         n_ops = conn.execute("SELECT COUNT(*) c FROM operations").fetchone()["c"]
-        return {"files": n_files, "chunks": n_chunks, "folders": n_folders, "operations": n_ops,
-                "db_path": DB_PATH}
+        out = {"files": n_files, "chunks": n_chunks, "folders": n_folders, "operations": n_ops,
+               "db_path": DB_PATH}
+        _kb_stats_cache[0] = time.time()
+        _kb_stats_cache[1] = out
+        return out
     finally:
         conn.close()
 

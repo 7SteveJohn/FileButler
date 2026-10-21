@@ -323,6 +323,10 @@ class Api:
                                  daemon=True, name="fb-preload-models").start()
         except Exception:
             pass
+        try:
+            self._lib_stats()   # 预热库聚合缓存：首屏 get_status 直接命中
+        except Exception:
+            pass
 
     def _warm_caches(self):
         """后台预热 dir_tree / space_analysis 聚合缓存 + FTS 索引页
@@ -590,6 +594,25 @@ class Api:
         cls._lib_stats_cache = [now, lib]
         return lib
 
+    @classmethod
+    def _lib_stats_or_none(cls):
+        """有缓存（含过期）返回缓存、过期同时后台刷新；从未算过返回 None 并触发
+        后台计算。保证 get_status 永不等聚合查询——首屏速度与库大小、是否扫描无关。"""
+        now = time.time()
+        cached = cls._lib_stats_cache[1]
+        if cached is not None:
+            if now - cls._lib_stats_cache[0] >= 15:
+                threading.Thread(target=cls._lib_stats, daemon=True,
+                                 name="fb-lib-stats-refresh").start()
+            return cached
+        threading.Thread(target=cls._lib_stats, daemon=True,
+                         name="fb-lib-stats-first").start()
+        return None
+
+    def lib_stats(self):
+        """前端异步取库统计（get_status 不再内联聚合）。"""
+        return self._lib_stats()
+
     def thumb_base(self):
         """缩略图服务地址（Files 页每次挂载要拿，不能走重量级 get_status）。"""
         return {"base": f"http://127.0.0.1:{self.thumb.port}" if self.thumb.port else None}
@@ -656,10 +679,6 @@ class Api:
         """全局状态：模型接入、知识库统计、文件总索引。"""
         from backend import llm as llm_mod
         client = OllamaClient()
-        try:
-            lib = self._lib_stats()
-        except Exception:
-            lib = {"files": 0, "total_size": 0, "categories": []}
         # 内置能力（不依赖 Ollama）：Windows 系统 OCR（图片文字/扫描件 PDF）
         try:
             from backend.knowledge import winocr as _winocr
@@ -681,7 +700,7 @@ class Api:
             "auto_start_ollama": db.get_setting("auto_start_ollama", "1") == "1",
             "stop_ollama_on_exit": db.get_setting("stop_ollama_on_exit", "1") == "1",
             "img_semantic": db.get_setting("img_semantic", "0") == "1",
-            "library": lib,
+            "library": self._lib_stats_or_none(),
             "thumb_base": f"http://127.0.0.1:{self.thumb.port}" if self.thumb.port else None,
             "watching": len(fileindex.enabled_root_paths()),
             "llm": llm_mod.provider_summary(),

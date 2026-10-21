@@ -54,6 +54,9 @@ const numCtxOptions = computed(() => [
   { label: t('settings.ctxDefault'), value: '0' },
 ])
 
+// Ollama 后台拉起就绪后自动重拉：模型下拉/在线状态不再停留在空列表
+onMounted(() => { offs.push(on('ollama_ready', refresh)) })
+
 async function refresh() {
   status.value = await api('get_status')
   host.value = status.value.ollama.host

@@ -55,11 +55,17 @@ async function retry() {
   resetBridge()      // 强制重连后端
   await refresh()
 }
+const libStats = ref(null)
+async function loadLib() {
+  try { libStats.value = await api('lib_stats') } catch (e) { /* 忽略，稍后重试 */ }
+}
+
 let offOllamaReady = null
 // Ollama 后台拉起就绪后后端会推事件：首屏先按离线渲染，就绪自动转在线（不再干等）
 onMounted(() => {
   offOllamaReady = on('ollama_ready', refresh)
   refresh()
+  loadLib()
 })
 onUnmounted(() => { if (offOllamaReady) offOllamaReady() })
 
@@ -121,7 +127,7 @@ function pct(n) {
         </div>
         <div class="fb-hello-stats">
           <div class="fb-hello-stat">
-            <b>{{ fmtCount(status.library.files) }}</b><span>{{ t('dashboard.statFiles') }}</span>
+            <b>{{ fmtCount(libStats?.files) }}</b><span>{{ t('dashboard.statFiles') }}</span>
           </div>
           <div class="fb-hello-stat">
             <b>{{ report?.data?.new_count ?? '—' }}</b><span>{{ t('dashboard.statNew') }}</span>
@@ -183,14 +189,14 @@ function pct(n) {
                   <n-icon :component="FolderOpenOutline" size="19" style="color:var(--fb-accent)" />
                 </div>
                 <n-space vertical :size="2">
-                  <n-text strong style="font-size:17px">{{ t('dashboard.libFiles', { n: status.library.files }) }}</n-text>
+                  <n-text strong style="font-size:17px">{{ t('dashboard.libFiles', { n: libStats?.files ?? 0 }) }}</n-text>
                   <n-text depth="3" style="font-size:12.5px">
-                    {{ t('dashboard.libSub', { size: fmtSize(status.library.total_size), n: status.watching }) }}
+                    {{ t('dashboard.libSub', { size: fmtSize(libStats?.total_size), n: status.watching }) }}
                   </n-text>
                 </n-space>
               </n-space>
               <n-space :wrap="true">
-                <n-tag v-for="c in status.library.categories.slice(0, 7)" :key="c.category"
+                <n-tag v-for="c in (libStats?.categories || []).slice(0, 7)" :key="c.category"
                   size="small" round :bordered="false">
                   {{ c.category }} {{ c.n }}
                 </n-tag>
