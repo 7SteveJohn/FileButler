@@ -385,6 +385,8 @@ def main():
             os._exit(0)
 
     api.set_restart_handler(do_restart)
+    # 自动更新：安装器已拉起后再退出本进程。quit_app 定义在下方，用 lambda 延迟绑定。
+    api.set_quit_handler(lambda: quit_app())
 
     _start_single_server(window, api)  # 监听后续进程的 SendTo/右键路径
 

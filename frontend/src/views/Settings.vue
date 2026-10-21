@@ -712,6 +712,42 @@ async function checkUpdate() {
   checkingUpdate.value = false
 }
 
+// 下载 + 静默安装：下载进度走事件，装完由后端拉起安装器并退出本进程
+const downloadingUpdate = ref(false)
+const updatePct = ref(0)
+const updateReady = ref(null)   // { path, version }
+const updateOffs = []
+updateOffs.push(on('update_progress', (p) => { updatePct.value = p.pct || 0 }))
+updateOffs.push(on('update_done', (p) => {
+  downloadingUpdate.value = false
+  updateReady.value = p
+  message.success(`v${p.version} 已下载完成，点「重启并安装」即可更新`)
+}))
+updateOffs.push(on('update_error', (e) => {
+  downloadingUpdate.value = false
+  updatePct.value = 0
+  message.error(String(e))
+}))
+onUnmounted(() => updateOffs.forEach((f) => f()))
+
+async function downloadUpdate() {
+  downloadingUpdate.value = true
+  updatePct.value = 0
+  try {
+    const r = await api('download_update')
+    if (!r.ok) { downloadingUpdate.value = false; message.error(r.error || '下载失败') }
+  } catch (e) { downloadingUpdate.value = false; message.error('下载失败：' + e) }
+}
+
+async function installUpdate() {
+  if (!updateReady.value) return
+  try {
+    const r = await api('install_update', updateReady.value.path)
+    if (!r.ok) message.error(r.error || '安装失败')
+    else message.info('安装器已启动，应用即将退出，装完重新打开即可')
+  } catch (e) { message.error('安装失败：' + e) }
+}
+
 // Rerank（检索结果精排，可选增强）：模型 ~544MB 按需下载，CPU 打分，默认关
 const rerank = ref(null)
 let rerankTimer = null
@@ -1385,12 +1421,21 @@ onMounted(() => {
                  : updateInfo.latest ? `已是最新版本 v${updateInfo.current}` : updateInfo.error }}
             </template>
             <template #default>
-              <span v-if="updateInfo.outdated && updateInfo.download">
-                <n-button size="tiny" type="primary" @click="api('open_url', updateInfo.download)">
-                  去下载
+              <n-space v-if="updateInfo.outdated && updateInfo.download" align="center" size="small">
+                <n-button v-if="updateReady" size="tiny" type="primary" @click="installUpdate">
+                  重启并安装 v{{ updateReady.version }}
                 </n-button>
-              </span>
-              <span v-if="updateInfo.notes" style="margin-left:10px">{{ updateInfo.notes }}</span>
+                <n-button v-else size="tiny" type="primary" :loading="downloadingUpdate"
+                          @click="downloadUpdate">
+                  {{ downloadingUpdate ? `下载中 ${updatePct}%` : '下载更新' }}
+                </n-button>
+                <n-button size="tiny" quaternary @click="api('open_url', updateInfo.download)">
+                  手动下载
+                </n-button>
+              </n-space>
+              <n-progress v-if="downloadingUpdate" :percentage="updatePct" :height="6"
+                          :show-indicator="false" style="margin-top:8px" />
+              <div v-if="updateInfo.notes" style="margin-top:6px">{{ updateInfo.notes }}</div>
             </template>
           </n-alert>
           <n-text depth="3" style="font-size:12.5px">

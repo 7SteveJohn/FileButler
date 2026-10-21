@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from urllib.parse import quote as _urlquote
@@ -110,6 +111,8 @@ class Api:
         self._win_maximized = False  # 最大化状态（由 pywebview 事件维护）
         self._scan_stop = threading.Event()  # 恢复备份/搬迁前叫停全量扫描
         self._scan_thread = None     # 在飞的全量扫描线程（配合 _scan_stop 等它退出）
+        self._quit_handler = None    # main.py 注入：退出应用（自动更新装完后用）
+        self._updating = False       # 自动更新下载中（防重入）
 
     def set_window(self, window):
         self._window = window
@@ -128,6 +131,10 @@ class Api:
     def set_hide_to_tray_handler(self, fn):
         """main.py 注入：隐藏到托盘（自绘标题栏的关闭按钮用）。"""
         self._hide_to_tray_handler = fn
+
+    def set_quit_handler(self, fn):
+        """main.py 注入：退出应用（自动更新拉起安装器后调用）。"""
+        self._quit_handler = fn
 
     # ---------- 自绘标题栏的窗口控制（frameless 窗口） ----------
     # 注意：WinForms 控件只能由 UI 线程操作——必须走 pywebview 的
@@ -1356,10 +1363,12 @@ class Api:
         download = (str(data.get("download", "") or "").strip()
                     or str(data.get("html_url", "") or "").strip()
                     or str(data.get("url", "") or "").strip())
+        digest = ""
         for a in (data.get("assets") or []):
             name = str(a.get("name", ""))
             if name.lower().endswith(".exe"):
                 download = a.get("browser_download_url") or download
+                digest = str(a.get("digest") or "")   # GitHub: "sha256:<hex>"
                 break
         notes = ""
         body = str(data.get("body", "") or data.get("notes", "") or "")
@@ -1375,7 +1384,7 @@ class Api:
         except Exception:
             outdated = bool(latest) and latest != current
         return {"latest": latest or None, "download": download or None,
-                "notes": notes, "outdated": outdated}
+                "digest": digest or None, "notes": notes, "outdated": outdated}
 
     def check_update(self):
         """检查新版本：默认走本仓库 GitHub Releases，对比本地版本。
@@ -1398,6 +1407,116 @@ class Api:
             return {"ok": True, "current": __version__, "source": url, **info}
         except Exception as e:
             return {"ok": False, "error": f"检查失败：{e}", "current": __version__}
+
+    # ---------- 自动更新（下载 + 静默安装） ----------
+
+    UPDATE_DIR = os.path.join(tempfile.gettempdir(), "FileButler-update")
+
+    def download_update(self):
+        """下载最新安装包到临时目录，进度走 update_progress 事件。
+
+        只有用户点「下载更新」才发起。只接受 .exe 资产；发布页若给了
+        sha256 digest 就边下边算，校验不通过直接丢弃半成品。
+        """
+        if self._updating:
+            return {"ok": False, "error": "正在下载中"}
+        info = self.check_update()
+        if not info.get("ok"):
+            return {"ok": False, "error": info.get("error", "检查更新失败")}
+        if not info.get("outdated"):
+            return {"ok": False, "error": "当前已是最新版本"}
+        url = str(info.get("download") or "")
+        if not url.split("?")[0].lower().endswith(".exe"):
+            return {"ok": False, "error": "更新源没有提供安装包，请到 Releases 页手动下载"}
+        digest = str(info.get("digest") or "")
+        version = str(info.get("latest") or "")
+        self._updating = True
+
+        def worker():
+            import hashlib
+            import urllib.request as _url
+            from backend import __version__ as ver
+            part = None
+            try:
+                os.makedirs(self.UPDATE_DIR, exist_ok=True)
+                name = os.path.basename(url.split("?")[0]) or "FileButler-Setup.exe"
+                dest = os.path.join(self.UPDATE_DIR, name)
+                part = dest + ".part"
+                h = hashlib.sha256()
+                self._emit("update_progress", {"pct": 0, "done": 0, "total": 0})
+                req = _url.Request(url, headers={"User-Agent": "FileButler/" + ver})
+                with _url.urlopen(req, timeout=30) as resp, open(part, "wb") as f:
+                    total = int(resp.headers.get("Content-Length") or 0)
+                    done = 0
+                    last = 0.0
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        h.update(chunk)
+                        done += len(chunk)
+                        now = time.time()
+                        if now - last > 0.25:
+                            last = now
+                            self._emit("update_progress", {
+                                "pct": int(done * 100 / total) if total else 0,
+                                "done": done, "total": total})
+                if digest.lower().startswith("sha256:"):
+                    want = digest.split(":", 1)[1].strip().lower()
+                    if h.hexdigest().lower() != want:
+                        os.remove(part)
+                        part = None
+                        self._emit("update_error", "安装包校验失败（SHA-256 不匹配），已丢弃")
+                        return
+                os.replace(part, dest)
+                part = None
+                self._emit("update_done", {"path": dest, "version": version})
+            except Exception as e:
+                if part and os.path.exists(part):
+                    try:
+                        os.remove(part)
+                    except OSError:
+                        pass
+                self._emit("update_error", f"下载失败：{e}")
+            finally:
+                self._updating = False
+
+        threading.Thread(target=worker, daemon=True, name="fb-update").start()
+        return {"ok": True, "started": True}
+
+    def install_update(self, path):
+        """用已下载的安装包静默升级：先拉起安装器，再退出本进程。
+
+        只接受更新目录下的 FileButler-Setup-*.exe（防任意路径执行）。
+        免安装目录没有 unins000.exe，无法判断安装位置，改提示手动下载。
+        """
+        path = os.path.abspath(str(path or ""))
+        updir = os.path.abspath(self.UPDATE_DIR)
+        name = os.path.basename(path)
+        if (os.path.dirname(path) != updir
+                or not name.lower().startswith("filebutler-setup-")
+                or not name.lower().endswith(".exe")
+                or not os.path.isfile(path)):
+            return {"ok": False, "error": "安装包路径无效"}
+        if not getattr(sys, "frozen", False):
+            return {"ok": False, "error": "开发模式下不执行升级"}
+        app_dir = os.path.dirname(os.path.abspath(sys.executable))
+        if not os.path.exists(os.path.join(app_dir, "unins000.exe")):
+            return {"ok": False, "error": "当前是免安装版本，请到 Releases 页手动下载新版"}
+        try:
+            subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART",
+                              "/DIR=" + app_dir], close_fds=True)
+        except Exception as e:
+            return {"ok": False, "error": f"无法启动安装器：{e}"}
+
+        def _quit():
+            time.sleep(1.2)   # 让安装器先起进程，避免它反被我们占用文件
+            if self._quit_handler is not None:
+                self._quit_handler()
+
+        threading.Thread(target=_quit, daemon=True, name="fb-update-quit").start()
+        return {"ok": True, "restarting": True}
 
     # ---------- 知识库 ----------
 
