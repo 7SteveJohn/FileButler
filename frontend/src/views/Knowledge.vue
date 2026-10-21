@@ -57,6 +57,16 @@ function fmtEta(s) {
   return t('kb.hour', { h: Math.floor(m / 60), m: m % 60 })
 }
 
+function kbPct(id) {
+  const p = indexing.value[id]
+  return p?.n ? Math.round(p.i / p.n * 100) : 0
+}
+
+function kbStageText(id) {
+  const stage = indexing.value[id]?.stage
+  return ({ scan: t('kb.stage.scan'), parse: t('kb.stage.parse'), done: t('kb.stage.done') })[stage] || ''
+}
+
 async function cancelIndex(id) {
   const r = await api('kb_index_cancel', id)
   if (!r.ok) message.warning(r.error || t('kb.msgCancelFail'))
@@ -238,19 +248,20 @@ loadSessions()
             </n-space>
 
             <template v-for="f in folders" :key="f.id">
-              <n-alert v-if="indexing[f.id]" type="info" :bordered="false">
-                <n-progress
-                  :percentage="indexing[f.id].n ? Math.round(indexing[f.id].i / indexing[f.id].n * 100) : 0"
-                  indicator-placement="inside" processing />
-                <n-space align="center" justify="space-between" size="small" style="margin-top:4px">
-                  <n-text class="mono" style="font-size:12px">
-                    {{ { scan: t('kb.stage.scan'), parse: t('kb.stage.parse'), done: t('kb.stage.done') }[indexing[f.id].stage] || '' }}
-                    {{ indexing[f.id].i }}/{{ indexing[f.id].n }} {{ indexing[f.id].detail }}
-                    <span v-if="indexing[f.id].eta">{{ t('kb.eta', { v: fmtEta(indexing[f.id].eta) }) }}</span>
-                  </n-text>
+              <div v-if="indexing[f.id]" class="fb-scanbar">
+                <div class="fb-scanbar-row">
+                  <span class="fb-scanbar-dot"></span>
+                  <span class="fb-scanbar-stage">{{ kbStageText(f.id) }}</span>
+                  <span class="fb-scanbar-detail mono">{{ indexing[f.id].detail }}</span>
+                  <span class="fb-scanbar-num mono">
+                    {{ indexing[f.id].i }}/{{ indexing[f.id].n }} · {{ kbPct(f.id) }}%
+                    <template v-if="indexing[f.id].eta"> · {{ t('kb.eta', { v: fmtEta(indexing[f.id].eta) }) }}</template>
+                  </span>
                   <n-button size="tiny" quaternary type="error" @click="cancelIndex(f.id)">{{ t('kb.cancel') }}</n-button>
-                </n-space>
-              </n-alert>
+                </div>
+                <n-progress type="line" :percentage="kbPct(f.id)" :show-indicator="false"
+                  :height="5" :border-radius="3" processing />
+              </div>
             </template>
 
             <n-data-table v-if="folders.length" :columns="folderColumns" :data="folders" size="small" />

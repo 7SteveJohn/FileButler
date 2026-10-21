@@ -479,6 +479,9 @@ onUnmounted(() => imgOffs.forEach((f) => f()))
 const ci = ref(null)           // {status: {...}, plan: {...}|null}
 const ciBusy = ref(false)
 const ciRunning = computed(() => !!ci.value?.status?.running)
+const ciPct = computed(() => ci.value?.status?.total
+  ? Math.min(99.5, Math.round((ci.value.status.done || 0) / ci.value.status.total * 100))
+  : 0)
 
 async function loadContentIndex() {
   try { ci.value = await api('content_index_status') } catch (e) { /* 忽略 */ }
@@ -922,10 +925,12 @@ onMounted(() => {
           </n-space>
 
           <template v-if="pullState">
-            <n-progress :percentage="Math.min(99, pullState.pct)" indicator-placement="inside" processing />
-            <n-text depth="3" class="mono">
+            <n-progress :percentage="Math.min(99, pullState.pct)" :show-indicator="false"
+              :height="5" :border-radius="3" processing />
+            <n-text depth="3" class="mono" style="font-size:12px">
               {{ pullState.model }} · {{ pullState.status }}
               {{ pullState.total ? '(' + (pullState.done / 1e9).toFixed(1) + ' / ' + (pullState.total / 1e9).toFixed(1) + ' GB)' : '' }}
+              <span style="opacity:.7"> · {{ Math.min(99, pullState.pct) }}%</span>
             </n-text>
           </template>
         </n-space>
@@ -1238,12 +1243,13 @@ onMounted(() => {
               @click="ciReset">{{ t('settings.ciReset') }}</n-button>
             <n-button size="small" quaternary @click="loadContentIndex">{{ t('settings.refresh') }}</n-button>
           </n-space>
-          <n-progress v-if="ciRunning && ci?.status?.total" type="line" :percentage="Math.min(99.5, Math.round((ci.status.done || 0) / ci.status.total * 100))"
-            indicator-placement="inside" processing />
+          <n-progress v-if="ciRunning && ci?.status?.total" type="line" :percentage="ciPct"
+            :show-indicator="false" :height="5" :border-radius="3" processing />
           <n-text depth="3" style="font-size:12px">
             {{ t('settings.ciStat', { ok: ci?.status?.indexed?.ok ?? 0 }) }}
             {{ t('settings.ciBody', { b: fmtBody(ci?.status?.indexed?.bytes ?? 0) }) }}
             {{ t('settings.ciFail', { f: ci?.status?.indexed?.failed ?? 0 }) }}
+            <span v-if="ciRunning && ci?.status?.total"> · {{ ciPct }}%</span>
           </n-text>
           <n-text v-if="ci?.plan" depth="3" style="font-size:12px">
             {{ t('settings.ciPlan', { c: ci.plan.candidates, w: ci.plan.will_index }) }}

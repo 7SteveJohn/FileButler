@@ -506,6 +506,11 @@ const scanPct = computed(() => scanning.value?.n
   ? Math.round(scanning.value.i / scanning.value.n * 100)
   : 0)
 
+const scanStageText = computed(() => ({
+  scan: t('files.scan.scan'), index: t('files.scan.index'),
+  clean: t('files.scan.clean'), done: t('files.scan.done'),
+}[scanning.value?.stage] || t('files.scan.scan')))
+
 function onQueryInput() {
   if (!query.value.trim()) {
     currentDir.value = null
@@ -1080,15 +1085,16 @@ refresh()
         </n-space>
 
         <!-- 扫描进度 -->
-        <n-alert v-if="scanning" type="info" :bordered="false" class="fb-scanalert">
+        <div v-if="scanning" class="fb-scanbar">
+          <div class="fb-scanbar-row">
+            <span class="fb-scanbar-dot"></span>
+            <span class="fb-scanbar-stage">{{ scanStageText }}</span>
+            <span class="fb-scanbar-detail mono">{{ scanning.detail }}</span>
+            <span class="fb-scanbar-num mono">{{ scanning.i }}/{{ scanning.n }} · {{ scanPct }}%</span>
+          </div>
           <n-progress type="line" :percentage="scanPct" :show-indicator="false"
-            :height="6" :border-radius="3" processing style="margin-bottom:7px" />
-          <n-text class="mono" style="font-size:12px">
-            {{ { scan: t('files.scan.scan'), index: t('files.scan.index'), clean: t('files.scan.clean'), done: t('files.scan.done') }[scanning.stage] }}
-            {{ scanning.i }}/{{ scanning.n }} {{ scanning.detail }}
-            <span style="opacity:.55"> · {{ scanPct }}%</span>
-          </n-text>
-        </n-alert>
+            :height="5" :border-radius="3" processing />
+        </div>
 
         <!-- 保存的智能筛选 -->
         <div class="fb-saved" v-if="savedSearches.length || query.trim()">

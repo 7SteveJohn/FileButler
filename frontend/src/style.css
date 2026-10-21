@@ -141,10 +141,44 @@ html, body {
   text-align: right;
 }
 
-/* 扫描进度条：收窄成一条轻量横幅 */
-.fb-scanalert .n-alert-body { padding: 4px 0 !important; }
-.fb-scanalert { border-radius: 10px !important; }
-.fb-scanalert .n-alert__content { padding: 0 !important; }
+/* 扫描/索引进度条：自绘轻量横幅。
+   不用 n-alert —— 它会强制渲染一个圆形图标（info 就是个感叹号），
+   在只有一行进度 + 一行文字的场景里太抢眼。 */
+.fb-scanbar {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 12px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--fb-border, rgba(17, 24, 39, .08));
+  background: color-mix(in srgb, var(--fb-accent, #888) 6%, transparent);
+}
+.fb-scanbar-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fb-text, inherit);
+}
+.fb-scanbar-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  align-self: center;
+  background: var(--fb-accent, #18a058);
+  animation: fb-scanpulse 1.2s ease-in-out infinite;
+}
+@keyframes fb-scanpulse { 0%, 100% { opacity: 1 } 50% { opacity: .28 } }
+.fb-scanbar-stage { font-weight: 600; flex-shrink: 0; }
+.fb-scanbar-detail {
+  flex: 1; min-width: 0;
+  opacity: .62;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fb-scanbar-num { flex-shrink: 0; opacity: .55; font-variant-numeric: tabular-nums; }
+.fb-scanbar-row > .n-button { align-self: center; flex-shrink: 0; }
 .fb-tb-btn {
   width: 32px; height: 30px;
   border: none;
