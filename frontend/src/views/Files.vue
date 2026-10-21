@@ -479,13 +479,32 @@ function pickDir(dir) {
   refresh()
   if (dir) searchContent()
 }
-function treeDataFor(tree) {
-  return (tree || []).map((n) => ({
-    label: `${n.name}（${n.files}）`,
-    key: n.path,
-    children: treeDataFor(n.children),
-  }))
+// 每层最多渲染 60 个：C:// 下常有几百个子目录，全渲染既卡又要拖很久。
+// 超出的用搜索框定位（后端已按文件数降序，重要的排在前面）。
+const TREE_PAGE = 60
+
+function treeDataFor(tree, pat = '') {
+  const p = (pat || '').trim().toLowerCase()
+  const walk = (list) => {
+    const out = []
+    for (const n of (list || []).slice(0, TREE_PAGE)) {
+      const kids = walk(n.children)
+      // 保留：自身命中，或子节点有命中（命中子节点时连同祖先链一起显示）
+      if (!p || n.name.toLowerCase().includes(p) || kids.length) {
+        out.push({ label: `${n.name}（${n.files}）`, key: n.path, children: kids })
+      }
+    }
+    return out
+  }
+  return walk(tree)
 }
+
+const dirTreeShown = computed(() => treeDataFor(dirTreeData.value, dirTreePattern.value))
+
+// 扫描进度百分比：n 还没来（0/0）时保持 0，条走 processing 动画即可
+const scanPct = computed(() => scanning.value?.n
+  ? Math.round(scanning.value.i / scanning.value.n * 100)
+  : 0)
 
 function onQueryInput() {
   if (!query.value.trim()) {
@@ -1062,11 +1081,12 @@ refresh()
 
         <!-- 扫描进度 -->
         <n-alert v-if="scanning" type="info" :bordered="false" class="fb-scanalert">
-          <n-progress :percentage="scanning.n ? Math.round(scanning.i / scanning.n * 100) : 0"
-            indicator-placement="inside" processing />
+          <n-progress type="line" :percentage="scanPct" :show-indicator="false"
+            :height="6" :border-radius="3" processing style="margin-bottom:7px" />
           <n-text class="mono" style="font-size:12px">
             {{ { scan: t('files.scan.scan'), index: t('files.scan.index'), clean: t('files.scan.clean'), done: t('files.scan.done') }[scanning.stage] }}
             {{ scanning.i }}/{{ scanning.n }} {{ scanning.detail }}
+            <span style="opacity:.55"> · {{ scanPct }}%</span>
           </n-text>
         </n-alert>
 
@@ -1109,9 +1129,11 @@ refresh()
             {{ dirExpanded ? t('files.stat.treeExpand') : t('files.stat.tree') }}
             <template v-if="currentDir"> · {{ currentDir }}</template>
           </n-button>
+          <n-input v-if="dirExpanded" v-model:value="dirTreePattern" size="tiny" clearable
+            :placeholder="t('files.stat.treeFilter')" style="margin-top:6px;max-width:300px" />
           <!-- 取消 default-expand-all：大库（万级文件）展开整棵会卡。改为只展开第 1 层 + 搜索过滤 -->
-          <n-tree v-if="dirExpanded" :data="treeDataFor(dirTreeData)" block-line
-            selectable filterable :pattern="dirTreePattern"
+          <n-tree v-if="dirExpanded" :data="dirTreeShown" block-line
+            selectable
             :default-expanded-keys="defaultExpandedDirs"
             :selected-keys="currentDir ? [currentDir] : []"
             style="max-height:260px;overflow:auto;margin-top:6px"

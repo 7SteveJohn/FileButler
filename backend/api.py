@@ -573,9 +573,19 @@ class Api:
 
                 result = fileindex.full_scan(cb, stop_event=self._scan_stop)
                 db.set_setting("last_full_scan_at", str(time.time()))
-                self._dir_tree_cache = [0.0, False, {"tree": []}]  # 扫描后目录树/空间缓存失效
+                # 扫描后只标记过期、保留旧树：dir_tree 的 SWR 会立即返回旧值再后台重算，
+                # 清成空表会让用户每次扫描完都干等 0.7s 重新聚合。
+                if self._dir_tree_cache[1]:
+                    self._dir_tree_cache[0] = 0.0
                 self._space_cache.clear()
                 fileindex.invalidate_stats_cache()
+                # 扫描期间 WAL 会涨到几百 MB（写入多、checkpoint 被读事务挡），
+                # 扫完立刻回收，避免后续读都穿过巨大的 -wal
+                try:
+                    # 不 close：get_conn 返回线程缓存的连接，关掉会让本线程后续调用拿到失效句柄
+                    db.get_conn().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except Exception:
+                    pass
                 self._emit("lib_scan_done", {"result": result,
                                              "stats": fileindex.index_stats()})
                 if after:
@@ -2044,9 +2054,11 @@ class Api:
             dirs = {}
             for r in rows:
                 path = r["path"]
-                # rfind 最后一个 \ 之前的部分是 dirname（处理 X:\ 这种盘根没 \ 的情况）
+                # dirname = 最后一个 \ 之前的部分。盘根下的文件（C:\swapfile.sys）
+                # rfind 落在 "C:" 冒号后（idx==2），此时 dirname 是盘根而非文件本身
+                # ——旧代码在 idx<=2 时取 path 自己，把文件当目录节点塞进了树。
                 idx = path.rfind("\\")
-                d = path[:idx] if idx > 2 else path  # X:\ 整盘，dirname = path
+                d = path[:idx] if idx > 2 else path[:3]
                 e = dirs.setdefault(d, {"files": 0, "size": 0})
                 e["files"] += 1
                 try:

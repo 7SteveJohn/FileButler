@@ -564,6 +564,12 @@ def init_db():
     with _conn_lock:
         conn = _connect()
         try:
+            # 启动时回收上次运行残留的 WAL：异常退出/长读事务会让 -wal 涨到几百 MB
+            # （实测 419MB vs 900MB 库），之后所有读都要穿过它。busy 时忽略，无害。
+            try:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
             conn.executescript(SCHEMA)
             # 旧库迁移：kb_folders 补 source 列，img_index 补 ocr 列
             cols = {r[1] for r in conn.execute("PRAGMA table_info(kb_folders)")}

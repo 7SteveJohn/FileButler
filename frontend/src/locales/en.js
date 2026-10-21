@@ -91,6 +91,7 @@ export default {
       all: 'All', count: '{n} files',
       added: 'added', removed: 'removed', recent: ' · recent: ',
       treeExpand: '▾ Hide folder tree', tree: '▸ Folder tree',
+      treeFilter: 'Filter folders…',
       clearDir: '↺ All (clear folder filter)',
     },
     batch: {

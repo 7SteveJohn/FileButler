@@ -91,6 +91,7 @@ export default {
       all: '全部', count: '共 {n} 个文件',
       added: '新增', removed: '移除', recent: ' · 最近动态：',
       treeExpand: '▾ 收起目录树', tree: '▸ 目录树',
+      treeFilter: '搜索目录…',
       clearDir: '↺ 全部（清除目录过滤）',
     },
     batch: {
