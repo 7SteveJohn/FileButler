@@ -831,58 +831,56 @@ onMounted(() => {
   <div class="fb-page">
     <n-space vertical size="large">
       <!-- ============ Ollama ============ -->
-      <n-card title="本地模型服务 (Ollama)">
+      <n-card :title="t('settings.ollamaTitle')">
         <n-space vertical size="large">
           <n-alert v-if="status && !status.ollama.running" type="error">
-            未检测到 Ollama 服务。FileButler 的 AI 能力（智能分类、语义检索、知识库问答）完全依赖本机 Ollama，免费且无需任何 API Key。
-            <n-button style="margin-left:12px" type="primary" size="small" @click="installOllama">去下载安装</n-button>
+            {{ t('settings.ollamaMissing') }}
+            <n-button style="margin-left:12px" type="primary" size="small" @click="installOllama">{{ t('settings.downloadInstall') }}</n-button>
           </n-alert>
           <n-alert v-else-if="status && (!status.ollama.chat_ready || !status.ollama.embed_ready)" type="warning">
-            Ollama 已运行，但还缺模型：
-            <n-tag v-if="!status.ollama.chat_ready" size="small">对话模型（qwen2.5）</n-tag>
-            <n-tag v-if="!status.ollama.embed_ready" size="small">向量模型（bge-m3）</n-tag>
-            <span style="margin-left:8px">在下方点击下载即可。</span>
+            {{ t('settings.ollamaNoModel') }}
+            <n-tag v-if="!status.ollama.chat_ready" size="small">{{ t('settings.tagChat') }}</n-tag>
+            <n-tag v-if="!status.ollama.embed_ready" size="small">{{ t('settings.tagEmbed') }}</n-tag>
+            <span style="margin-left:8px">{{ t('settings.clickDownload') }}</span>
           </n-alert>
 
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">服务地址</n-text>
+            <n-text style="width:80px">{{ t('settings.host') }}</n-text>
             <n-input v-model:value="host" style="width:320px" class="mono" placeholder="http://127.0.0.1:11434" />
           </n-space>
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">对话模型</n-text>
+            <n-text style="width:80px">{{ t('settings.chatModel') }}</n-text>
             <n-select v-model:value="chatModel" :options="chatModelOptions" style="width:320px"
-              placeholder="选择已安装的模型" tag filterable />
-            <n-button type="primary" @click="saveOllama">保存</n-button>
+              :placeholder="t('settings.pickInstalled')" tag filterable />
+            <n-button type="primary" @click="saveOllama">{{ t('settings.save') }}</n-button>
           </n-space>
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">模型常驻</n-text>
+            <n-text style="width:80px">{{ t('settings.keepAlive') }}</n-text>
             <n-select v-model:value="keepAlive" :options="keepAliveOptions" style="width:320px" />
             <n-switch v-model:value="preload" size="small">
-              <template #suffix>启动时预载</template>
+              <template #suffix>{{ t('settings.preload') }}</template>
             </n-switch>
           </n-space>
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">上下文窗口</n-text>
+            <n-text style="width:80px">{{ t('settings.contextWin') }}</n-text>
             <n-select v-model:value="numCtx" :options="numCtxOptions" style="width:320px" />
           </n-space>
           <n-text depth="3" style="font-size:12px">
-            Ollama 默认空闲 5 分钟就把模型踢出显存，下次提问要重新载入几十秒——
-            「常驻 30 分钟」可让对话随叫随到；内存充裕可开「启动时预载」并选「常驻不卸载」。
-            「上下文窗口」默认 8192：问答要喂给模型大段原文，窗口太小会被静默截断；
-            低配纯 CPU 机器觉得吃内存可选 4096 或「跟随模型默认」。
+            {{ t('settings.keepHint') }}<br>
+            {{ t('settings.ctxHint') }}
           </n-text>
 
           <n-descriptions v-if="recommend" :column="3" bordered size="small" label-placement="left">
-            <n-descriptions-item label="本机内存">{{ recommend.config.ram_gb }} GB</n-descriptions-item>
-            <n-descriptions-item label="独立显卡">
+            <n-descriptions-item :label="t('settings.ram')">{{ recommend.config.ram_gb }} GB</n-descriptions-item>
+            <n-descriptions-item :label="t('settings.gpu')">
               {{ recommend.config.gpu
-                ? (recommend.config.gpu_name || recommend.config.vram_gb + ' GB 显存')
-                : '未检测到' }}
+                ? (recommend.config.gpu_name || recommend.config.vram_gb + ' GB')
+                : t('settings.noGpu') }}
             </n-descriptions-item>
-            <n-descriptions-item label="推荐对话模型">
+            <n-descriptions-item :label="t('settings.recModel')">
               <b class="mono">{{ recommend.local.model }}</b>（约 {{ recommend.local.size_gb }} GB）
             </n-descriptions-item>
-            <n-descriptions-item label="推荐理由" :span="3">
+            <n-descriptions-item :label="t('settings.recReason')" :span="3">
               {{ recommend.local.reason }} · {{ recommend.local.note }}
             </n-descriptions-item>
           </n-descriptions>
@@ -892,15 +890,15 @@ onMounted(() => {
               :title="m">
               <template #header-extra>
                 <n-tag v-if="recommend && recommend.local.model === m" size="tiny" type="success"
-                  :bordered="false">推荐</n-tag>
-                <n-tag v-if="status && status.ollama.models.includes(m)" type="success" size="small">已安装</n-tag>
-                <n-button v-else size="small" type="primary" ghost @click="pull(m)">下载 {{ MODEL_SIZES[m] }}</n-button>
+                  :bordered="false">{{ t('settings.recTag') }}</n-tag>
+                <n-tag v-if="status && status.ollama.models.includes(m)" type="success" size="small">{{ t('settings.installed') }}</n-tag>
+                <n-button v-else size="small" type="primary" ghost @click="pull(m)">{{ t('settings.downloadN', { size: MODEL_SIZES[m] }) }}</n-button>
               </template>
             </n-card>
-            <n-card size="small" style="width:280px" title="bge-m3（向量模型，必装）">
+            <n-card size="small" style="width:280px" :title="t('settings.embedTitle')">
               <template #header-extra>
-                <n-tag v-if="status && status.ollama.embed_ready" type="success" size="small">已安装</n-tag>
-                <n-button v-else size="small" type="primary" ghost @click="pull('bge-m3')">下载 ~1.2 GB</n-button>
+                <n-tag v-if="status && status.ollama.embed_ready" type="success" size="small">{{ t('settings.installed') }}</n-tag>
+                <n-button v-else size="small" type="primary" ghost @click="pull('bge-m3')">{{ t('settings.embedDownload') }}</n-button>
               </template>
             </n-card>
           </n-space>
@@ -971,28 +969,24 @@ onMounted(() => {
       </n-card>
 
       <!-- ============ 数据存储位置 ============ -->
-      <n-card title="数据存储位置">
+      <n-card :title="t('settings.dataTitle')">
         <n-space vertical size="medium" v-if="dataDir">
           <div class="fb-kv">
-            <span class="fb-kv-label">当前位置</span>
+            <span class="fb-kv-label">{{ t('settings.curPos') }}</span>
             <code class="fb-path" :title="dataDir.current">{{ dataDir.current }}</code>
             <n-tag size="small" round :type="dataDir.is_default ? 'default' : 'success'">
-              {{ dataDir.is_default ? '默认' : '自定义' }}
+              {{ dataDir.is_default ? t('settings.tagDefault') : t('settings.tagCustom') }}
             </n-tag>
           </div>
           <n-alert v-if="dataDir.pointer_issue" type="error" :bordered="false">
             <div style="font-size:13px">
-              数据目录指针指向 <code class="fb-path">{{ dataDir.pointer_issue }}</code>，
-              但这个目录已经不存在了，所以实际用的是上面的默认位置——之前那次「更改位置」
-              并没有生效。点「恢复默认位置」清掉失效指针，或用「更改位置…」重新选一个。
+              {{ t('settings.pointerIssue', { p: dataDir.pointer_issue }) }}
             </div>
           </n-alert>
           <n-alert v-if="dataDir.alternatives && dataDir.alternatives.length"
             type="warning" :bordered="false">
             <div style="font-size:13px">
-              当前索引库是空的，但在别处发现了装着数据的 FileButler 库——通常是数据目录指针
-              丢失或迁移中途被打断。确认是你要的那份后点「切换到这里」，走的是下面的搬迁流程
-              （默认复制，原目录保留为备份）。
+              {{ t('settings.discover') }}
             </div>
             <div v-for="a in dataDir.alternatives" :key="a.db_path"
               style="display:flex;align-items:center;gap:8px;margin-top:6px">
@@ -1001,47 +995,47 @@ onMounted(() => {
                 {{ (a.size / 1e6).toFixed(0) }} MB
               </n-text>
               <n-button size="tiny" round type="primary" ghost @click="pendingDir = a.dir">
-                切换到这里
+                {{ t('settings.switchHere') }}
               </n-button>
             </div>
           </n-alert>
           <n-text depth="3" style="font-size:12.5px">
-            数据库 + 缩略图缓存共 {{ (dataDir.total_size / 1e6).toFixed(1) }} MB。
-            切换到同步盘/其他盘后，备份时只需拷贝该目录。
+            {{ t('settings.dbTotal', { size: (dataDir.total_size / 1e6).toFixed(1) }) }}
+            {{ t('settings.switchHint') }}
           </n-text>
           <n-space>
-            <n-button size="small" round @click="api('open_data_dir')">打开数据目录</n-button>
-            <n-button size="small" round type="primary" ghost @click="pickNewDataDir">更改位置…</n-button>
+            <n-button size="small" round @click="api('open_data_dir')">{{ t('settings.openDataDir') }}</n-button>
+            <n-button size="small" round type="primary" ghost @click="pickNewDataDir">{{ t('settings.changeDir') }}</n-button>
             <n-button v-if="!dataDir.is_default || dataDir.pointer_issue"
-              size="small" round @click="doResetDir">恢复默认位置</n-button>
+              size="small" round @click="doResetDir">{{ t('settings.restoreDefault') }}</n-button>
           </n-space>
           <div v-if="pendingDir" class="fb-pending">
-            <n-text style="font-size:13px">搬迁到</n-text>
+            <n-text style="font-size:13px">{{ t('settings.moveTo') }}</n-text>
             <code class="fb-path" style="border-style: solid;">{{ pendingDir }}</code>
-            <n-button size="small" round type="primary" :loading="switching" @click="doSwitch(false)">开始搬迁</n-button>
-            <n-button size="small" round quaternary @click="pendingDir = null">取消</n-button>
+            <n-button size="small" round type="primary" :loading="switching" @click="doSwitch(false)">{{ t('settings.startMove') }}</n-button>
+            <n-button size="small" round quaternary @click="pendingDir = null">{{ t('settings.cancel') }}</n-button>
             <n-radio-group v-model:value="moveMode" size="small" style="margin-left:8px">
-              <n-radio value="copy">复制（原目录保留为备份）</n-radio>
-              <n-radio value="move">迁移（重启后删除原目录，不占双份空间）</n-radio>
+              <n-radio value="copy">{{ t('settings.copyRadio') }}</n-radio>
+              <n-radio value="move">{{ t('settings.moveRadio') }}</n-radio>
             </n-radio-group>
           </div>
           <n-alert v-if="restartPending" type="warning" :bordered="false">
-            数据目录已切换，重启应用后完全生效。
-            <n-button size="small" type="primary" style="margin-left:10px" @click="restartNow">立即重启</n-button>
+            {{ t('settings.switched') }}
+            <n-button size="small" type="primary" style="margin-left:10px" @click="restartNow">{{ t('settings.restartNow') }}</n-button>
           </n-alert>
         </n-space>
       </n-card>
 
       <!-- ============ 数据库维护 ============ -->
-      <n-card title="数据库维护">
+      <n-card :title="t('settings.dbTitle')">
         <n-space vertical size="medium">
           <div class="fb-kv">
-            <span class="fb-kv-label">库大小</span>
+            <span class="fb-kv-label">{{ t('settings.dbSize') }}</span>
             <n-tag size="small" round>{{ fmtMB(dbMaint.db_size) }}</n-tag>
             <n-tag v-if="dbMaint.wal_size > 10 * 1e6" size="small" round type="warning">
-              待落盘 {{ fmtMB(dbMaint.wal_size) }}
+              {{ t('settings.wal', { size: fmtMB(dbMaint.wal_size) }) }}
             </n-tag>
-            <n-tag size="small" round depth="2">备份 {{ dbMaint.backups }} 份</n-tag>
+            <n-tag size="small" round depth="2">{{ t('settings.backups', { n: dbMaint.backups }) }}</n-tag>
           </div>
           <n-text depth="3" style="font-size:12.5px">
             大量删除/重建索引后库文件不会自动缩小，压缩（VACUUM）可回收空间。
@@ -1050,19 +1044,19 @@ onMounted(() => {
           <n-space>
             <n-button size="small" round type="primary" ghost :loading="dbMaint.vacuum_running"
               :disabled="dbMaint.vacuum_running" @click="doVacuum">
-              {{ dbMaint.vacuum_running ? '压缩中…' : '压缩数据库' }}
+              {{ dbMaint.vacuum_running ? t('settings.vacuuming') : t('settings.vacuum') }}
             </n-button>
-            <n-button size="small" round @click="loadDbMaint">刷新</n-button>
+            <n-button size="small" round @click="loadDbMaint">{{ t('settings.refresh') }}</n-button>
           </n-space>
         </n-space>
       </n-card>
 
       <!-- ============ 模型接入 ============ -->
-      <n-card title="模型接入方式">
+      <n-card :title="t('settings.modeTitle')">
         <n-space vertical size="medium">
           <n-radio-group :value="provMode" @update:value="(v) => (provMode = v)">
-            <n-radio-button value="ollama">本地 Ollama（免费）</n-radio-button>
-            <n-radio-button value="api">云端 API（OpenAI 兼容）</n-radio-button>
+            <n-radio-button value="ollama">{{ t('settings.modeLocal') }}</n-radio-button>
+            <n-radio-button value="api">{{ t('settings.modeApi') }}</n-radio-button>
           </n-radio-group>
 
           <template v-if="provMode === 'api'">
@@ -1072,21 +1066,21 @@ onMounted(() => {
                 @click="pickPreset(p)">{{ p.label }}</n-tag>
             </n-space>
             <div class="fb-kv">
-              <span class="fb-kv-label">服务地址</span>
-              <n-input v-model:value="provBase" placeholder="http://127.0.0.1:1234/v1（LM Studio）或 https://api.deepseek.com/v1"
+              <span class="fb-kv-label">{{ t('settings.base') }}</span>
+              <n-input v-model:value="provBase" :placeholder="t('settings.basePh')"
                 style="flex:1;min-width:280px" class="mono" />
             </div>
             <div class="fb-kv">
-              <span class="fb-kv-label">API 密钥</span>
+              <span class="fb-kv-label">{{ t('settings.apiKey') }}</span>
               <n-input ref="keyInputRef" :value="keyDisplay"
                 @update:value="onKeyInput"
                 @focus="onKeyFocus" @blur="onKeyBlur"
                 :type="keyRevealed ? 'text' : 'password'"
-                :placeholder="provKeyMask ? '输入新密钥可更换；留空保存则沿用已保存的密钥' : 'sk-…（LM Studio 等本机服务无需密钥）'"
+                :placeholder="provKeyMask ? t('settings.keyPhNew') : t('settings.keyPhEmpty')"
                 style="flex:1;min-width:280px" class="mono">
                 <template #suffix>
                   <n-button quaternary circle size="tiny" tabindex="-1"
-                    @click="toggleKeyReveal" :title="keyRevealed ? '隐藏密钥' : '查看密钥'">
+                    @click="toggleKeyReveal" :title="keyRevealed ? t('settings.hideKey') : t('settings.showKey')">
                     <n-icon :size="16" :depth="3">
                       <component :is="keyRevealed ? EyeOffOutline : EyeOutline" />
                     </n-icon>
@@ -1095,16 +1089,16 @@ onMounted(() => {
               </n-input>
             </div>
             <div class="fb-kv">
-              <span class="fb-kv-label">对话模型</span>
+              <span class="fb-kv-label">{{ t('settings.chatModel') }}</span>
               <n-select v-if="provModels.length" v-model:value="provChatModel"
                 :options="provModels.map(m => ({ label: m, value: m }))" tag filterable
-                placeholder="从服务获取的模型" style="flex:1;min-width:280px" class="mono" />
-              <n-input v-else v-model:value="provChatModel" placeholder="如 deepseek-chat / glm-4.7 / gpt-4o-mini"
+                :placeholder="t('settings.pickFromServer')" style="flex:1;min-width:280px" class="mono" />
+              <n-input v-else v-model:value="provChatModel" :placeholder="t('settings.modelPh')"
                 style="flex:1;min-width:280px" class="mono" />
-              <n-button size="small" round :loading="provFetching" @click="fetchProvModels">拉取模型列表</n-button>
+              <n-button size="small" round :loading="provFetching" @click="fetchProvModels">{{ t('settings.fetchModels') }}</n-button>
             </div>
             <div class="fb-kv">
-              <span class="fb-kv-label">向量化</span>
+              <span class="fb-kv-label">{{ t('settings.embed') }}</span>
               <n-select v-model:value="provEmbedSource" :options="embedSourceOptions"
                 style="width:220px" />
               <n-select v-if="provEmbedSource === 'api' && provModels.length"
