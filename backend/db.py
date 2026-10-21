@@ -934,7 +934,12 @@ def set_setting(key, value):
             conn.commit()
             return
         except sqlite3.OperationalError as e:
-            if "locked" not in str(e).lower() or attempt == 2:
+            msg = str(e).lower()
+            # locked：扫描/索引持写锁超 busy_timeout
+            # readonly：_connect 里切换 journal_mode 与其他写事务相撞的已知竞态
+            #           （SQLite 会短暂把库判成只读），重试即可
+            retryable = "locked" in msg or "readonly" in msg
+            if not retryable or attempt == 2:
                 raise
             time.sleep(0.2 * (attempt + 1))
         finally:

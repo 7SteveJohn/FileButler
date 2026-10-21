@@ -42,6 +42,33 @@ CREATE INDEX IF NOT EXISTS idx_fi_category ON file_index(category);
 IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "tiff", "ico", "svg"}
 
 
+def _ensure_stats_index_async():
+    """后台补建统计覆盖索引（idx_fi_stats）。
+
+    Dashboard 的 COUNT / SUM(size) / MAX(mtime) / GROUP BY category 有了它只读
+    十几 MB 的索引，而不是扫 859MB 的表：实测 14.5s → 90ms。
+    老库首次升级要建索引（33 万行约 2s），放后台以免拖慢启动；
+    新库在空表上瞬间完成。"""
+    def run():
+        try:
+            conn = db.get_conn()
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_fi_stats'"
+                ).fetchone()
+                if row:
+                    return
+                conn.execute("CREATE INDEX idx_fi_stats ON file_index(category, size, mtime)")
+                conn.commit()
+                print("[index] stats covering index created")
+            finally:
+                conn.close()
+        except Exception as e:
+            print("[index] stats index failed:", e)
+
+    threading.Thread(target=run, daemon=True, name="fb-stats-index").start()
+
+
 # ---------- 文件名拼音与照片拍摄时间（检索增强元数据） ----------
 
 def _pinyin_pair(name):
@@ -221,6 +248,7 @@ def ensure_default_roots():
         # file_index 表此刻才存在：全新安装时 init_db 里的 FTS 建表
         # 因表缺失被整体跳过，这里补建（老库幂等无副作用）
         db.ensure_fts()
+        _ensure_stats_index_async()
         n = conn.execute("SELECT COUNT(*) c FROM watch_roots").fetchone()["c"]
         now = time.time()
         added = False
