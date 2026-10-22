@@ -512,6 +512,10 @@ const scanStageText = computed(() => ({
 }[scanning.value?.stage] || t('files.scan.scan')))
 
 function onQueryInput() {
+  // n-auto-complete 的清空按钮 emit 的是 null 而不是 ''（AutoComplete.handleClear
+  // → doUpdateValue(null)）。不归一会让下面和模板里的 query.trim() 抛 TypeError，
+  // 而渲染期抛错的后果是搜索栏之后的整片界面都不渲染——看起来就是「全没了」。
+  if (query.value == null) query.value = ''
   if (!query.value.trim()) {
     currentDir.value = null
     contentResults.value = null
@@ -1097,7 +1101,7 @@ refresh()
         </div>
 
         <!-- 保存的智能筛选 -->
-        <div class="fb-saved" v-if="savedSearches.length || query.trim()">
+        <div class="fb-saved" v-if="savedSearches.length || (query || '').trim()">
           <n-tag v-for="s in savedSearches" :key="s.name" size="small" round closable
             :bordered="false" :title="s.query" @click="applySaved(s)" @close="removeSaved(s)">
             {{ s.name }}
