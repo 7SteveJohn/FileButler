@@ -104,10 +104,18 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 | **Knowledge base** | Pick folders, ask questions, search only, review past sessions |
 | **Settings** | Model backends and downloads, watched folders and exclusions, data migration, backups, updates |
 
-<!-- Screenshots wanted (3–5: dashboard / search results / plan preview / KB answer / model settings).
-     Drop them in docs/screenshots/ and replace this comment with:
-     <p align="center"><img src="docs/screenshots/files.png" width="760" alt="Files page"></p>
--->
+<table>
+  <tr>
+    <td><img src="docs/screenshots/01-dashboard.png" width="380" alt="Dashboard"></td>
+    <td><img src="docs/screenshots/02-files.png" width="380" alt="Files"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/03-organizer.png" width="380" alt="Organize plan preview"></td>
+    <td><img src="docs/screenshots/05-knowledge.png" width="380" alt="Knowledge base"></td>
+  </tr>
+</table>
+
+<p align="center"><img src="docs/screenshots/04-settings.png" width="720" alt="Settings"></p>
 
 ## FAQ
 

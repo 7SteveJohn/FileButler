@@ -102,10 +102,18 @@ AI 默认跑在你本机的 [Ollama](https://ollama.com) 开源模型上——�
 | **知识库** | 选文件夹建库、问答、仅搜索、历史会话 |
 | **设置** | 模型接入与下载、监控与排除目录、数据迁移、备份、更新 |
 
-<!-- 截图位（建议补 3~5 张：概览 / 文件搜索结果 / 整理计划预览 / 知识库问答 / 设置页模型管理）
-     图片放进 docs/screenshots/ 后，用下面的写法替换本注释即可：
-     <p align="center"><img src="docs/screenshots/files.png" width="760" alt="文件页"></p>
--->
+<table>
+  <tr>
+    <td><img src="docs/screenshots/01-dashboard.png" width="380" alt="概览"></td>
+    <td><img src="docs/screenshots/02-files.png" width="380" alt="文件"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/03-organizer.png" width="380" alt="整理计划预览"></td>
+    <td><img src="docs/screenshots/05-knowledge.png" width="380" alt="知识库"></td>
+  </tr>
+</table>
+
+<p align="center"><img src="docs/screenshots/04-settings.png" width="720" alt="设置"></p>
 
 ## 常见问题
 
