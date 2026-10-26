@@ -40,6 +40,7 @@ const recommend = ref(null)
 const keepAlive = ref('30m')  // 模型常驻时长：默认 30m，避免空闲 5 分钟被卸载后重载几十秒
 const preload = ref(false)    // 启动时把模型预载进显存/内存
 const numCtx = ref('8192')    // 上下文窗口 token：默认 8192，防止长资料被 Ollama 默认窗口静默截断
+const modelsDir = ref('')     // 模型目录：空 = 跟随 Ollama 默认（C 盘用户目录）
 const keepAliveOptions = computed(() => [
   { label: t('settings.keep5'), value: '5m' },
   { label: t('settings.keep30'), value: '30m' },
@@ -64,6 +65,7 @@ async function refresh() {
   keepAlive.value = status.value.ollama_keep_alive || '30m'
   preload.value = !!status.value.ollama_preload
   numCtx.value = status.value.ollama_num_ctx || '8192'
+  modelsDir.value = status.value.ollama_models_dir || ''
   const opts = []
   for (const m of status.value.ollama.models) {
     if (!m.startsWith('bge')) opts.push({ label: m, value: m })
@@ -76,6 +78,26 @@ async function saveOllama() {
   message.success(t('settings.m.saved'))
   refresh()
   window.dispatchEvent(new CustomEvent('fb-refresh'))
+}
+
+async function useModelsDir(p) {
+  modelsDir.value = p
+  await saveModelsDir()
+}
+
+async function pickModelsDir() {
+  const p = await api('pick_folder')
+  if (p) await useModelsDir(p)
+}
+
+async function saveModelsDir() {
+  const r = await api('set_ollama_models_dir', modelsDir.value)
+  if (r && r.ok) {
+    message.success(t('settings.m.saved'))
+    refresh()
+    return
+  }
+  message.error(t('settings.m.dirFail', { e: (r && r.error) || '' }))
 }
 
 const MODEL_SIZES = {
@@ -858,6 +880,14 @@ onMounted(() => {
             {{ t('settings.ollamaMissing') }}
             <n-button style="margin-left:12px" type="primary" size="small" @click="installOllama">{{ t('settings.downloadInstall') }}</n-button>
           </n-alert>
+          <n-alert v-else-if="status && status.ollama.model_dirs && status.ollama.model_dirs.length" type="warning">
+            {{ t('settings.modelsDirMismatch') }}
+            <div v-for="d in status.ollama.model_dirs" :key="d.path" style="margin-top:6px">
+              <span class="mono">{{ d.path }}</span>
+              <n-tag size="small" style="margin-left:6px">{{ t('settings.modelsFound', { n: d.n_models }) }}</n-tag>
+              <n-button size="tiny" type="primary" style="margin-left:8px" @click="useModelsDir(d.path)">{{ t('settings.useThisDir') }}</n-button>
+            </div>
+          </n-alert>
           <n-alert v-else-if="status && (!status.ollama.chat_ready || !status.ollama.embed_ready)" type="warning">
             {{ t('settings.ollamaNoModel') }}
             <n-tag v-if="!status.ollama.chat_ready" size="small">{{ t('settings.tagChat') }}</n-tag>
@@ -886,9 +916,17 @@ onMounted(() => {
             <n-text style="width:80px">{{ t('settings.contextWin') }}</n-text>
             <n-select v-model:value="numCtx" :options="numCtxOptions" style="width:320px" />
           </n-space>
+          <n-space item-style="display:flex;align-items:center;gap:8px">
+            <n-text style="width:80px">{{ t('settings.modelsDir') }}</n-text>
+            <n-input v-model:value="modelsDir" style="width:320px" class="mono"
+              :placeholder="t('settings.modelsDirPh')" />
+            <n-button size="small" @click="pickModelsDir">{{ t('settings.browse') }}</n-button>
+            <n-button type="primary" @click="saveModelsDir">{{ t('settings.save') }}</n-button>
+          </n-space>
           <n-text depth="3" style="font-size:12px">
             {{ t('settings.keepHint') }}<br>
-            {{ t('settings.ctxHint') }}
+            {{ t('settings.ctxHint') }}<br>
+            {{ t('settings.modelsDirHint') }}
           </n-text>
 
           <n-descriptions v-if="recommend" :column="3" bordered size="small" label-placement="left">

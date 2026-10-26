@@ -17,6 +17,7 @@ import webview
 from backend import contentindex, db, fileindex
 from backend.core import classifier, cleanup, dedupe, executor, planner, rules as rules_mod, scanner
 from backend.knowledge import indexer, imgsearch, rag
+from backend import ollama_client as ollama_mod
 from backend.ollama_client import OllamaClient, OllamaNotRunning
 from backend import thumbserver, watcher
 
@@ -365,6 +366,42 @@ class Api:
         except Exception:
             return False
 
+    @staticmethod
+    def _ollama_serve_env():
+        """拉起 `ollama serve` 用的环境：把用户设置的模型目录作为 OLLAMA_MODELS 带上。
+
+        模型默认落在 C 盘用户目录，很多人为了省 C 盘把它搬到别的盘，靠的是
+        OLLAMA_MODELS 这个变量——它通常不在系统环境里，而是「谁启动 ollama 时带了，
+        谁才看得到模型」。应用自己拉起的服务必须带上，否则读空目录、界面一直显示未安装。
+        没设置时原样继承（用户可能已经在系统里配好了）。
+        """
+        env = os.environ.copy()
+        models_dir = (db.get_setting("ollama_models_dir", "") or "").strip()
+        if models_dir:
+            env["OLLAMA_MODELS"] = models_dir
+        return env
+
+    def _restart_ollama(self):
+        """重启「应用自己拉起」的 ollama serve，让新的模型目录立刻生效。
+
+        只动 self._ollama_pid 记录的那个进程；用户手动开的 Ollama（含官方托盘）不碰。
+        """
+        pid = getattr(self, "_ollama_pid", None)
+        if not pid:
+            return False
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           creationflags=0x08000000, timeout=6,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+        self._ollama_pid = None
+        self._ollama_proc = None
+        time.sleep(1)   # 等端口放开，否则下面会 adopt 到正在退出的那个进程
+        threading.Thread(target=self._maybe_start_ollama, daemon=True,
+                         name="fb-ollama-restart").start()
+        return True
+
     def _maybe_start_ollama(self):
         """设置开启时：Ollama 没在运行就拉起 `ollama serve`，并把它绑进本应用的
         Job Object——应用消失（正常退出 / 崩溃 / 任务管理器强杀）它都跟着结束。
@@ -399,7 +436,7 @@ class Api:
             if not exe:
                 return
             _make_kill_on_close_job()   # 先建 job，下面的 attach 才有意义
-            proc = subprocess.Popen([exe, "serve"],
+            proc = subprocess.Popen([exe, "serve"], env=self._ollama_serve_env(),
                                     creationflags=0x08000000,  # CREATE_NO_WINDOW，不弹黑框
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             # 记录 PID 并绑进 job：退出回收 + 崩溃/强杀兜底（用户自己开的 Ollama 不动）
@@ -799,6 +836,12 @@ class Api:
         """全局状态：模型接入、知识库统计、文件总索引。"""
         from backend import llm as llm_mod
         client = OllamaClient()
+        ollama_status = client.status()
+        # 服务在跑却一个模型都没有：多半是它读的不是装模型的那个目录
+        # （OLLAMA_MODELS 没跟着进程带过来）。把装了模型的目录找出来给前端提示，
+        # 别让用户对着「未安装」三个字干瞪眼。
+        if ollama_status.get("running") and not ollama_status.get("models"):
+            ollama_status["model_dirs"] = ollama_mod.installed_model_dirs()
         # 内置能力（不依赖 Ollama）：Windows 系统 OCR（图片文字/扫描件 PDF）
         try:
             from backend.knowledge import winocr as _winocr
@@ -807,7 +850,8 @@ class Api:
         except Exception:
             winocr_status = {"available": False, "languages": []}
         return {
-            "ollama": client.status(),
+            "ollama": ollama_status,
+            "ollama_models_dir": db.get_setting("ollama_models_dir", ""),
             "chat_model": client.chat_model(),
             "embed_model": client.embed_model(),
             "ollama_keep_alive": db.get_setting("ollama_keep_alive", "30m"),
@@ -2267,6 +2311,22 @@ class Api:
         """退出应用时是否结束由应用拉起的 ollama serve，默认开。"""
         db.set_setting("stop_ollama_on_exit", "1" if enabled else "0")
         return {"ok": True}
+
+    def set_ollama_models_dir(self, path):
+        """设置 Ollama 模型目录（空 = 跟随 Ollama 默认位置）。
+
+        只对「应用自己拉起」的 serve 生效：改完立刻重启它，让它带新的
+        OLLAMA_MODELS 起来。用户手动开的 Ollama 不在管辖内（官方托盘更是碰都不碰），
+        那种情况只能保存设置，前端如实提示用户去那边配。
+        """
+        path = (path or "").strip()
+        if path:
+            try:
+                os.makedirs(path, exist_ok=True)
+            except Exception as e:
+                return {"ok": False, "error": f"这个目录用不了：{e}"}
+        db.set_setting("ollama_models_dir", path)
+        return {"ok": True, "path": path, "restarted": self._restart_ollama()}
 
     def shutdown_ollama(self):
         """退出收尾：只回收「应用自己拉起」的 serve，用户手动开的 Ollama 不动。

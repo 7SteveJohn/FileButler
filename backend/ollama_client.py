@@ -1,5 +1,7 @@
 """Ollama 本地模型服务客户端：状态检测、对话（支持流式）、向量化、模型拉取。"""
 import json
+import os
+import string
 import time
 
 import requests
@@ -29,6 +31,63 @@ def _session_for(host):
     if "127.0.0.1" in host or "localhost" in host or host.startswith("http://[::1]"):
         return _direct_session
     return requests
+
+
+def default_models_dir():
+    """Ollama 没设 OLLAMA_MODELS 时用的目录（Windows 上是用户目录下 .ollama\\models）。"""
+    return os.path.join(os.path.expanduser("~"), ".ollama", "models")
+
+
+def count_manifests(models_dir):
+    """模型目录下 manifests 里的清单文件数（一个模型一个）；目录不存在返回 0。
+
+    只数文件、不读内容，且超过 50 就停——扫的是候选目录，代价必须低到能随便调。
+    """
+    root = os.path.join(models_dir, "manifests")
+    if not os.path.isdir(root):
+        return 0
+    n = 0
+    for _dir, _sub, files in os.walk(root):
+        n += len(files)
+        if n > 50:
+            break
+    return n
+
+
+def candidate_model_dirs():
+    """常见模型目录位置：默认目录 + 每个盘下的 ollama\\models / .ollama\\models。
+
+    刻意不全盘遍历——装模型的人图省盘空间，八成放在某个盘根下的一层目录里，
+    把这几个位置找一遍就够，代价是几十次 stat。
+    """
+    cands = [default_models_dir()]
+    for letter in string.ascii_uppercase:
+        root = f"{letter}:\\"
+        if not os.path.isdir(root):
+            continue
+        cands.append(os.path.join(root, "ollama", "models"))
+        cands.append(os.path.join(root, ".ollama", "models"))
+    return cands
+
+
+def installed_model_dirs():
+    """返回「真的装着模型」的目录列表：[{path, n_models}]，按盘符排序。
+
+    用途：Ollama 没有接口能问出它的模型目录，而 `ollama serve` 读的是
+    OLLAMA_MODELS——没带这个变量启动的服务会去读空的默认目录，于是「模型明明
+    拉好了，界面却说没安装」。这里把装了模型的目录找出来，供设置页提示与一键切换。
+    """
+    out = []
+    seen = set()
+    for path in candidate_model_dirs():
+        key = os.path.normcase(os.path.normpath(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        n = count_manifests(path)
+        if n:
+            out.append({"path": path, "n_models": n})
+    return out
 
 
 class OllamaNotRunning(Exception):
