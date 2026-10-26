@@ -38,7 +38,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 
 ## Quick start
 
-1. Grab `FileButler-Setup-1.4.1.exe` from [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) (~58 MB) and run it — **no administrator rights needed**, it installs into your user profile
+1. Grab `FileButler-Setup-1.4.2.exe` from [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) (~58 MB) and run it — **no administrator rights needed**, it installs into your user profile
 2. On first launch it scans Desktop / Documents / Downloads / Pictures, and you can search within seconds
 3. Want Q&A and semantic search? Install [Ollama](https://ollama.com); the settings page recommends models for your GPU and downloads them in one click (`qwen3` family plus the `bge-m3` embedding model)
 4. Already running LM Studio or a cloud API? Switch the backend in Settings — Ollama is optional
