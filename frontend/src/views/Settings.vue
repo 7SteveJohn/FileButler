@@ -9,10 +9,10 @@ import { EyeOutline, EyeOffOutline } from '@vicons/ionicons5'
 import { api, on } from '../lib/bridge'
 import { THEMES, AUTO_KEY, loadThemeKey, saveThemeKey } from '../lib/theme'
 import { useI18n } from 'vue-i18n'
-import { LANGS, setLocale, currentLocale } from '../lib/i18n'
+import { LANGS, setLocale, currentLocale, catLabel, subLabel, statusText } from '../lib/i18n'
 
 const message = useMessage()
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 // ---------- 界面语言 ----------
 const lang = ref(currentLocale())
@@ -37,6 +37,17 @@ const chatModel = ref('')
 const chatModelOptions = ref([])
 const pullState = ref(null)   // {model, pct, status, done}
 const recommend = ref(null)
+
+// 推荐的说明 + 档位备注都是后端拼的中文句子，英文界面按 code / tier 重新取文案。
+const recLine = computed(() => {
+  const r = recommend.value?.local
+  if (!r) return ''
+  const rk = r.reason_code ? 'settings.' + r.reason_code : ''
+  const nk = r.tier ? 'settings.tier.' + r.tier : ''
+  const reason = rk && te(rk) ? t(rk, r.reason_args || {}) : (r.reason || '')
+  const note = nk && te(nk) ? t(nk) : (r.note || '')
+  return [reason, note].filter(Boolean).join(' · ')
+})
 const keepAlive = ref('30m')  // 模型常驻时长：默认 30m，避免空闲 5 分钟被卸载后重载几十秒
 const preload = ref(false)    // 启动时把模型预载进显存/内存
 const numCtx = ref('8192')    // 上下文窗口 token：默认 8192，防止长资料被 Ollama 默认窗口静默截断
@@ -159,8 +170,8 @@ function applyFilter() {
 
 const ruleColumns = computed(() => [
   { title: t('settings.colExt'), key: 'pattern', width: 110, render: (r) => '.' + r.pattern },
-  { title: t('settings.colCat'), key: 'category', width: 110 },
-  { title: t('settings.colSub'), key: 'sub', width: 130, render: (r) => r.sub || '-' },
+  { title: t('settings.colCat'), key: 'category', width: 110, render: (r) => catLabel(r.category) },
+  { title: t('settings.colSub'), key: 'sub', width: 130, render: (r) => (r.sub ? subLabel(r.sub) : '-') },
   { title: t('settings.colSrc'), key: 'custom', width: 160, render: (r) => r.custom
       ? h(NSpace, { size: 'small', align: 'center' }, { default: () => [
           h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => t('settings.custom') }),
@@ -940,7 +951,7 @@ onMounted(() => {
               <b class="mono">{{ recommend.local.model }}</b>{{ t('settings.approxGB', { n: recommend.local.size_gb }) }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('settings.recReason')" :span="3">
-              {{ recommend.local.reason }} · {{ recommend.local.note }}
+              {{ recLine }}
             </n-descriptions-item>
           </n-descriptions>
 
@@ -1178,11 +1189,11 @@ onMounted(() => {
             <n-button size="small" round :loading="provDetecting" @click="detectLocal">{{ t('settings.detectLocal') }}</n-button>
             <n-tag v-if="provider" size="small" round
               :type="provider.summary.chat.ok ? 'success' : 'error'">
-              {{ t('settings.chatReason', { v: provider.summary.chat.reason }) }}
+              {{ t('settings.chatReason', { v: statusText(provider.summary.chat) }) }}
             </n-tag>
             <n-tag v-if="provider" size="small" round
               :type="provider.summary.embed.ok ? 'success' : 'warning'">
-              {{ t('settings.embedReason', { v: provider.summary.embed.reason }) }}
+              {{ t('settings.embedReason', { v: statusText(provider.summary.embed) }) }}
             </n-tag>
           </n-space>
           <n-alert v-if="provTestResult" :bordered="false"
@@ -1558,7 +1569,7 @@ onMounted(() => {
     <n-modal v-model:show="showAdd" preset="card" :title="t('settings.addRuleTitle')" style="width:420px">
       <n-space vertical>
         <n-input v-model:value="newRule.pattern" :placeholder="t('settings.ruleExtPh')" />
-        <n-select v-model:value="newRule.category" :options="rules.categories.map(c => ({ label: c, value: c }))" />
+        <n-select v-model:value="newRule.category" :options="rules.categories.map(c => ({ label: catLabel(c), value: c }))" />
         <n-input v-model:value="newRule.sub" :placeholder="t('settings.ruleSubPh')" />
         <n-button type="primary" @click="addRule">{{ t('settings.add') }}</n-button>
       </n-space>

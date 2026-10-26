@@ -336,21 +336,27 @@ def get_embed_client():
 
 
 def chat_status():
-    """{"ok": bool, "reason": str} —— 对话模型可用性。"""
+    """{"ok": bool, "code": str, "args": dict, "reason": str} —— 对话模型可用性。
+
+    reason 是中文兜底文案（日志、错误对象里直接用）；界面按 code 取本地化文案，
+    这样英文界面不会因为服务端拼好的中文句子漏字。
+    """
     if mode() == "api":
         c = OpenAICompatClient()
         if not api_base():
-            return {"ok": False, "reason": "服务地址未配置"}
+            return {"ok": False, "code": "api_no_base", "reason": "服务地址未配置"}
         if not c.chat_model():
-            return {"ok": False, "reason": "对话模型名未填写"}
-        return {"ok": True,
+            return {"ok": False, "code": "api_no_model", "reason": "对话模型名未填写"}
+        return {"ok": True, "code": "api_local" if is_local_base(api_base()) else "api_cloud",
                 "reason": "本机服务" if is_local_base(api_base()) else "云端 API"}
     st = OllamaClient().status()
     if not st["running"]:
-        return {"ok": False, "reason": "Ollama 未运行"}
+        return {"ok": False, "code": "ollama_down", "reason": "Ollama 未运行"}
     if not st["chat_ready"]:
-        return {"ok": False, "reason": f"本地模型 {st['chat_model']} 未安装"}
-    return {"ok": True, "reason": f"Ollama · {st['chat_model']}"}
+        return {"ok": False, "code": "model_missing", "args": {"model": st["chat_model"]},
+                "reason": f"本地模型 {st['chat_model']} 未安装"}
+    return {"ok": True, "code": "ollama_ok", "args": {"model": st["chat_model"]},
+            "reason": f"Ollama · {st['chat_model']}"}
 
 
 def embed_status():
@@ -360,18 +366,21 @@ def embed_status():
         oc = OllamaClient()
         st = oc.status()
         if not st["running"]:
-            return {"ok": False, "reason": "Ollama 未运行"}
+            return {"ok": False, "code": "ollama_down", "reason": "Ollama 未运行"}
         if not st["embed_ready"]:
-            return {"ok": False, "reason": "向量模型 bge-m3 未安装"}
-        return {"ok": True, "reason": f"本地 · {oc.embed_model()}"}
+            return {"ok": False, "code": "embed_missing", "reason": "向量模型 bge-m3 未安装"}
+        return {"ok": True, "code": "embed_ok", "args": {"model": oc.embed_model()},
+                "reason": f"本地 · {oc.embed_model()}"}
     c = OpenAICompatClient()
     if not api_base():
-        return {"ok": False, "reason": "服务地址未配置"}
+        return {"ok": False, "code": "api_no_base", "reason": "服务地址未配置"}
     if not c.embed_model():
-        return {"ok": False, "reason": "向量模型名未填写（或改用本地 bge-m3）"}
-    return {"ok": True,
-            "reason": ("本机 · " if is_local_base(api_base()) else "云端 · ")
-                      + c.embed_model()}
+        return {"ok": False, "code": "embed_no_model",
+                "reason": "向量模型名未填写（或改用本地 bge-m3）"}
+    local = is_local_base(api_base())
+    return {"ok": True, "code": "embed_api_local" if local else "embed_api_cloud",
+            "args": {"model": c.embed_model()},
+            "reason": ("本机 · " if local else "云端 · ") + c.embed_model()}
 
 
 def chat_available():

@@ -946,7 +946,7 @@ class Api:
     # pywebview 每次启动用随机端口伺服前端，localStorage 的 origin 每次都变，
     # 前端偏好必须存后端。前端仍可写 localStorage 做即时缓存。
 
-    _UI_STATE_KEYS = {"theme", "last_view", "sider_collapsed", "view_mode", "onboarded"}
+    _UI_STATE_KEYS = {"theme", "last_view", "sider_collapsed", "view_mode", "onboarded", "lang"}
 
     def get_ui_state(self):
         out = {}

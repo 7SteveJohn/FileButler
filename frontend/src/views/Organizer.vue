@@ -6,6 +6,7 @@ import {
   NCheckbox, useMessage, NEmpty, NAlert, NSpin,
 } from 'naive-ui'
 import { api, on } from '../lib/bridge'
+import { catLabel } from '../lib/i18n'
 import { useI18n } from 'vue-i18n'
 
 const message = useMessage()
@@ -29,12 +30,7 @@ const batchOps = ref(null)
 const showBatchOps = ref(false)
 
 const CATEGORIES = ['文档', '图片', '视频', '音频', '压缩包', '安装包', '代码', '数据', '字体', '其他']
-const CAT_KEY = {
-  文档: 'doc', 图片: 'image', 视频: 'video', 音频: 'audio', 压缩包: 'archive',
-  安装包: 'installer', 代码: 'code', 数据: 'data', 字体: 'font', 其他: 'other',
-}
-const catLabel = (c) => (CAT_KEY[c] ? t('files.cat.' + CAT_KEY[c]) : c)
-const categoryOptions = CATEGORIES.map((c) => ({ label: c, value: c }))
+const categoryOptions = computed(() => CATEGORIES.map((c) => ({ label: catLabel(c), value: c })))
 
 let offs = []
 offs.push(on('ai_classify_start', (p) => { aiRunning.value = true }))
@@ -83,7 +79,7 @@ const scanColumns = computed(() => [
   { title: t('org.colCategory'), key: 'category', width: 110, render: (r) => h(NTag, {
       size: 'small', bordered: false,
       type: r.ai_category ? 'success' : (r.rule_hit ? 'default' : 'warning'),
-    }, { default: () => r.final_category || r.category }) },
+    }, { default: () => catLabel(r.final_category || r.category) }) },
   { title: t('org.colExt'), key: 'ext', width: 90, render: (r) => h('span', { class: 'mono' }, r.ext || '-') },
   { title: t('org.colSize'), key: 'size', width: 100, render: (r) => fmtSize(r.size) },
 ])
@@ -132,7 +128,7 @@ const planColumns = computed(() => [
   { type: 'selection' },
   { title: t('org.colSrc'), key: 'src', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.src) },
   { title: t('org.colDst'), key: 'dst', ellipsis: { tooltip: true }, render: (r) => h('span', { class: 'mono' }, r.dst || r.src) },
-  { title: t('org.colCategory'), key: 'category', width: 110, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
+  { title: t('org.colCategory'), key: 'category', width: 110, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => catLabel(r.category) }) },
 ])
 
 const planRows = computed(() => planData.value?.plan || [])
@@ -312,7 +308,7 @@ const bigColumns = computed(() => [
   { type: 'selection' },
   { title: t('org.colSize'), key: 'size', width: 100, render: (r) => h('b', null, fmtSize(r.size)) },
   { title: t('org.colName'), key: 'name', ellipsis: { tooltip: true } },
-  { title: t('org.colCategory'), key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
+  { title: t('org.colCategory'), key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => catLabel(r.category) }) },
   { title: t('org.colMtime'), key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
   { title: t('org.colPath'), key: 'path', ellipsis: { tooltip: true },
     render: (r) => h('span', { class: 'mono', style: 'cursor:pointer', title: t('org.colPath'),

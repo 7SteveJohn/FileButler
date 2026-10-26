@@ -19,25 +19,25 @@ _NO_WINDOW = 0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
 # ---------- 本地模型分级（按显存） ----------
 
 LOCAL_GPU_TIERS = [
-    {"model": "qwen3:32b", "size_gb": 22,
+    {"id": "gpu32", "model": "qwen3:32b", "size_gb": 22,
      "min_vram": 20, "min_ram": 32,
      "note": "旗舰：24GB 显存可跑，性能约等于 qwen2.5-72B"},
-    {"model": "qwen3:14b", "size_gb": 10,
+    {"id": "gpu14", "model": "qwen3:14b", "size_gb": 10,
      "min_vram": 12, "min_ram": 16,
      "note": "16GB 显存甜点，推理/写作/代码均衡"},
-    {"model": "qwen3:8b", "size_gb": 6,
+    {"id": "gpu8", "model": "qwen3:8b", "size_gb": 6,
      "min_vram": 8, "min_ram": 16,
      "note": "日常首选：8GB 显存即可流畅，超过 qwen2.5-14B"},
-    {"model": "qwen3:4b", "size_gb": 3,
+    {"id": "gpu4", "model": "qwen3:4b", "size_gb": 3,
      "min_vram": 4, "min_ram": 8,
      "note": "入门：低显存机器也能跑"},
 ]
 
 # 无独显时按内存给 CPU 档（CPU 推理大模型很慢，最多推荐 8B）
 LOCAL_CPU_TIERS = [
-    {"model": "qwen3:8b", "size_gb": 6, "min_ram": 16,
+    {"id": "cpu8", "model": "qwen3:8b", "size_gb": 6, "min_ram": 16,
      "note": "CPU 推理上限，16GB+ 内存可用（约 5 token/s）"},
-    {"model": "qwen3:4b", "size_gb": 3, "min_ram": 8,
+    {"id": "cpu4", "model": "qwen3:4b", "size_gb": 3, "min_ram": 8,
      "note": "低配 CPU 也能流畅，优先保证可用性"},
 ]
 
@@ -162,7 +162,10 @@ def _gpu_name():
 
 
 def recommend_local(ram_gb=None, vram_gb=None):
-    """按显存优先、内存兜底给出本地对话模型推荐。"""
+    """按显存优先、内存兜底给出本地对话模型推荐。
+
+    tier / reason_code 供界面取本地化文案；note / reason 是中文兜底。
+    """
     if ram_gb is None or vram_gb is None:
         cfg = detect_config()
         ram_gb, vram_gb = cfg["ram_gb"], cfg["vram_gb"]
@@ -170,16 +173,20 @@ def recommend_local(ram_gb=None, vram_gb=None):
         for tier in LOCAL_GPU_TIERS:
             if vram_gb >= tier["min_vram"]:
                 return {"model": tier["model"], "size_gb": tier["size_gb"],
-                        "note": tier["note"], "gpu": True,
+                        "note": tier["note"], "tier": tier["id"], "gpu": True,
+                        "reason_code": "rec_gpu",
+                        "reason_args": {"vram": f"{vram_gb:.0f}"},
                         "reason": f"检测到显存约 {vram_gb:.0f}GB，可在 GPU 上流畅运行"}
     for tier in LOCAL_CPU_TIERS:
         if ram_gb >= tier["min_ram"]:
             return {"model": tier["model"], "size_gb": tier["size_gb"],
-                    "note": tier["note"], "gpu": False,
+                    "note": tier["note"], "tier": tier["id"], "gpu": False,
+                    "reason_code": "rec_cpu", "reason_args": {"ram": f"{ram_gb:.0f}"},
                     "reason": f"未检测到独立显卡，按 {ram_gb:.0f}GB 内存推荐（CPU 推理）"}
     tier = LOCAL_CPU_TIERS[-1]
     return {"model": tier["model"], "size_gb": tier["size_gb"],
-            "note": tier["note"], "gpu": False,
+            "note": tier["note"], "tier": tier["id"], "gpu": False,
+            "reason_code": "rec_low", "reason_args": {"ram": f"{ram_gb:.0f}"},
             "reason": f"配置较低（{ram_gb:.0f}GB 内存），推荐最小可用模型"}
 
 

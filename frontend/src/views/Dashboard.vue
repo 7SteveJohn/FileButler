@@ -8,6 +8,7 @@ import { FolderOpenOutline } from '@vicons/ionicons5'
 import { api, resetBridge, on } from '../lib/bridge'
 import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { catLabel, statusText } from '../lib/i18n'
 
 const message = useMessage()
 const { t, locale } = useI18n()
@@ -157,10 +158,10 @@ function pct(n) {
             <n-space vertical size="large">
               <n-space>
                 <n-tag :type="status.llm?.chat?.ok ? 'success' : 'error'" round size="small">
-                  {{ t('dashboard.chat', { v: status.llm?.chat?.reason || t('dashboard.unknown') }) }}
+                  {{ t('dashboard.chat', { v: statusText(status.llm?.chat, t('dashboard.unknown')) }) }}
                 </n-tag>
                 <n-tag :type="status.llm?.embed?.ok ? 'success' : 'warning'" round size="small">
-                  {{ t('dashboard.embed', { v: status.llm?.embed?.reason || t('dashboard.notSet') }) }}
+                  {{ t('dashboard.embed', { v: statusText(status.llm?.embed, t('dashboard.notSet')) }) }}
                 </n-tag>
               </n-space>
               <n-text depth="3" class="mono" style="font-size:12px">
@@ -198,7 +199,7 @@ function pct(n) {
               <n-space :wrap="true">
                 <n-tag v-for="c in (libStats?.categories || []).slice(0, 7)" :key="c.category"
                   size="small" round :bordered="false">
-                  {{ c.category }} {{ c.n }}
+                  {{ catLabel(c.category) }} {{ c.n }}
                 </n-tag>
               </n-space>
               <n-button size="small" quaternary type="primary" @click="goto('files')">
@@ -233,7 +234,7 @@ function pct(n) {
             <n-space v-if="report.data.by_category && Object.keys(report.data.by_category).length"
               style="margin-top:14px">
               <n-tag v-for="(v, cat) in report.data.by_category" :key="cat" size="small" round>
-                {{ cat }} +{{ v.n }}（{{ fmtSize(v.size) }}）
+                {{ catLabel(cat) }} +{{ v.n }}（{{ fmtSize(v.size) }}）
               </n-tag>
             </n-space>
 
@@ -244,7 +245,7 @@ function pct(n) {
                   style="padding:5px 0;cursor:pointer" @click="api('open_path', f.path)">
                   <n-space justify="space-between">
                     <n-text style="font-size:13px">{{ f.name }}</n-text>
-                    <n-text depth="3" style="font-size:12px">{{ f.category }} · {{ fmtSize(f.size) }}</n-text>
+                    <n-text depth="3" style="font-size:12px">{{ catLabel(f.category) }} · {{ fmtSize(f.size) }}</n-text>
                   </n-space>
                 </n-list-item>
               </n-list>
@@ -258,7 +259,7 @@ function pct(n) {
                   style="padding:5px 0;cursor:pointer" @click="api('open_path', f.path)">
                   <n-space justify="space-between">
                     <n-text style="font-size:13px">{{ f.name }}</n-text>
-                    <n-text depth="3" style="font-size:12px">{{ f.category }} · {{ fmtSize(f.size) }}</n-text>
+                    <n-text depth="3" style="font-size:12px">{{ catLabel(f.category) }} · {{ fmtSize(f.size) }}</n-text>
                   </n-space>
                 </n-list-item>
               </n-list>
@@ -281,7 +282,7 @@ function pct(n) {
               <div v-if="space.by_category && space.by_category.length">
                 <div class="fb-sub-title">{{ t('dashboard.byCategory') }}</div>
                 <div v-for="c in space.by_category" :key="c.category" class="fb-space-row">
-                  <span class="fb-space-label">{{ c.category }}</span>
+                  <span class="fb-space-label">{{ catLabel(c.category) }}</span>
                   <div class="fb-space-bar">
                     <div class="fb-space-fill" :style="{ width: pct(c.size) + '%' }"></div>
                   </div>

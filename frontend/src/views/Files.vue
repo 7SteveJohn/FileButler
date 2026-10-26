@@ -9,6 +9,7 @@ import { SearchOutline } from '@vicons/ionicons5'
 import { api, on } from '../lib/bridge'
 import { CATEGORY_HUES } from '../lib/theme'
 import { useI18n } from 'vue-i18n'
+import { catLabel } from '../lib/i18n'
 
 const message = useMessage()
 const { t } = useI18n()
@@ -696,12 +697,7 @@ function pickCategory(c) {
 }
 
 const CATEGORIES = ['文档', '图片', '视频', '音频', '压缩包', '安装包', '代码', '数据', '字体', '其他']
-// 分类值是后端返回的中文常量，只翻译显示，筛选仍按原值传
-const CAT_KEY = {
-  文档: 'doc', 图片: 'image', 视频: 'video', 音频: 'audio', 压缩包: 'archive',
-  安装包: 'installer', 代码: 'code', 数据: 'data', 字体: 'font', 其他: 'other',
-}
-const catLabel = (c) => (CAT_KEY[c] ? t('files.cat.' + CAT_KEY[c]) : c)
+// 分类值是后端返回的中文常量，只翻译显示，筛选仍按原值传（catLabel 见 lib/i18n）
 
 const isImg = (it) => ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'ico', 'svg', 'tiff', 'heic'].includes(it.ext)
 
@@ -980,7 +976,7 @@ const columns = computed(() => [
   { title: t('files.col.name'), key: 'name', ellipsis: { tooltip: true },
     render: (r) => h('span', { style: 'cursor:pointer', onClick: () => previewFile(r),
       title: t('files.col.nameHint') }, r.name) },
-  { title: t('files.col.category'), key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => r.category }) },
+  { title: t('files.col.category'), key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => catLabel(r.category) }) },
   { title: t('files.col.size'), key: 'size', width: 100, render: (r) => fmtSize(r.size) },
   { title: t('files.col.mtime'), key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
   { title: t('files.col.tags'), key: 'tags', width: 140, render: (r) => h(NPopover, { trigger: 'click', placement: 'left' }, {

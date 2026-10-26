@@ -106,16 +106,16 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/01-dashboard.png" width="380" alt="Dashboard"></td>
-    <td><img src="docs/screenshots/02-files.png" width="380" alt="Files"></td>
+    <td><img src="docs/screenshots/01-dashboard-en.png" width="380" alt="Dashboard"></td>
+    <td><img src="docs/screenshots/02-files-en.png" width="380" alt="Files"></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/03-organizer.png" width="380" alt="Organize plan preview"></td>
-    <td><img src="docs/screenshots/05-knowledge.png" width="380" alt="Knowledge base"></td>
+    <td><img src="docs/screenshots/03-organizer-en.png" width="380" alt="Organize plan preview"></td>
+    <td><img src="docs/screenshots/05-knowledge-en.png" width="380" alt="Knowledge base"></td>
   </tr>
 </table>
 
-<p align="center"><img src="docs/screenshots/04-settings.png" width="720" alt="Settings"></p>
+<p align="center"><img src="docs/screenshots/04-settings-en.png" width="720" alt="Settings"></p>
 
 ## FAQ
 
