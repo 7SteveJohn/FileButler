@@ -95,6 +95,13 @@ const ocrModelInstalled = computed(() => {
   return status.value.ollama.models.some((m) => m === want || m.split(':')[0] === wantBase)
 })
 
+// 推荐区 OCR 卡片的已装判断（基名匹配，兼容社区量化变体）
+const ocrCardInstalled = computed(() => {
+  if (!status.value) return false
+  const base = OCR_PULL_MODEL.split(':')[0]
+  return status.value.ollama.models.some((m) => m === OCR_PULL_MODEL || m.split(':')[0] === base)
+})
+
 async function saveOllama() {
   await api('save_ollama_settings', host.value, chatModel.value, keepAlive.value, preload.value, numCtx.value, ocrModel.value)
   message.success(t('settings.m.saved'))
@@ -129,7 +136,10 @@ const MODEL_SIZES = {
   'qwen3:32b': '~22 GB',
   'bge-m3': '~1.2 GB',
   'qwen2.5vl:7b': '~6 GB',
+  'longwayxu/xiaomi-ocr-0:bf16': '~1.8 GB',
 }
+// 扫描件 OCR 专用模型（推荐区卡片一键下载，装好后到上方「OCR 模型」选择）
+const OCR_PULL_MODEL = 'longwayxu/xiaomi-ocr-0:bf16'
 // 本地对话模型候选（按推荐度排序，推荐项自动打标）
 const localModelCards = ['qwen3:8b', 'qwen3:14b', 'qwen3:32b', 'qwen3:4b']
 
@@ -990,6 +1000,13 @@ onMounted(() => {
               <template #header-extra>
                 <n-tag v-if="status && status.ollama.embed_ready" type="success" size="small">{{ t('settings.installed') }}</n-tag>
                 <n-button v-else size="small" type="primary" ghost @click="pull('bge-m3')">{{ t('settings.embedDownload') }}</n-button>
+              </template>
+            </n-card>
+            <n-card size="small" style="width:280px" :title="t('settings.ocrCardTitle')">
+              <n-text depth="3" style="font-size:12px">{{ t('settings.ocrCardHint') }}</n-text>
+              <template #header-extra>
+                <n-tag v-if="ocrCardInstalled" type="success" size="small">{{ t('settings.installed') }}</n-tag>
+                <n-button v-else size="small" type="primary" ghost @click="pull(OCR_PULL_MODEL)">{{ t('settings.downloadN', { size: MODEL_SIZES[OCR_PULL_MODEL] }) }}</n-button>
               </template>
             </n-card>
           </n-space>

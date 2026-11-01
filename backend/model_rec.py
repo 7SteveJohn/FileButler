@@ -45,6 +45,9 @@ LOCAL_CPU_TIERS = [
 VL_MODEL = "qwen2.5vl:7b"
 VL_MODEL_NEXT = "qwen3-vl:7b"  # Ollama 标签待确认，暂不切换
 
+# 扫描件 OCR 专用视觉模型（0.8B，实测约 2GB 显存；设置页推荐区卡片一键下载）
+OCR_MODEL = "longwayxu/xiaomi-ocr-0:bf16"
+
 EMBED_MODEL = "bge-m3"
 
 

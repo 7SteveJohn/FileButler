@@ -348,6 +348,8 @@ export default {
     },
     installed: 'Installed', downloadN: 'Download {size}',
     embedTitle: 'bge-m3 (embedding model, required)', embedDownload: 'Download ~1.2 GB',
+    ocrCardTitle: 'Xiaomi-OCR-0 (scanned-doc OCR)',
+    ocrCardHint: 'Parses scanned PDFs with structured tables, formulas and reading order; ~2 GB VRAM. After installing, enable it in the "OCR model" selector above.',
     appearanceTitle: 'Appearance',
     dataTitle: 'Data location', curPos: 'Current', tagDefault: 'default', tagCustom: 'custom',
     pointerIssue: 'The data pointer points to {p}, but that folder no longer exists, so the default location above is in use — the earlier "change location" never took effect. Click "Restore default" to clear the stale pointer, or "Change location…" to pick another.',

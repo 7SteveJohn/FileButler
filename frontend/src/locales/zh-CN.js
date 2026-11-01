@@ -346,6 +346,8 @@ export default {
     },
     installed: '已安装', downloadN: '下载 {size}',
     embedTitle: 'bge-m3（向量模型，必装）', embedDownload: '下载 ~1.2 GB',
+    ocrCardTitle: 'Xiaomi-OCR-0（扫描件 OCR）',
+    ocrCardHint: '扫描版 PDF 解析专用：表格、公式、阅读顺序结构化输出，约 2GB 显存。装好后到上方「OCR 模型」选择启用。',
     appearanceTitle: '外观主题',
     dataTitle: '数据存储位置', curPos: '当前位置', tagDefault: '默认', tagCustom: '自定义',
     pointerIssue: '数据目录指针指向 {p}，但这个目录已经不存在了，所以实际用的是上面的默认位置——之前那次「更改位置」并没有生效。点「恢复默认位置」清掉失效指针，或用「更改位置…」重新选一个。',
