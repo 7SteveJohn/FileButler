@@ -243,6 +243,43 @@ def enumerate_drives():
     return drives
 
 
+# ---------- 默认排除规则 ----------
+# 新用户首次全盘扫描会把 C:\Windows 等系统目录整个吸进索引：实测这类噪音约占
+# 索引行数 39%，且毫无检索价值。这里预置一组默认 exclude_rules，写库时机在
+# ensure_default_roots()：仅当「从没播过种（settings: default_excludes_seeded）
+# 且 exclude_rules 为空」（即首次新装）时写入；老用户已有规则则完全不动。
+# 播过种就落标记，之后用户删光默认规则也不回种——与 known_drives 防回补同一思路。
+#
+# 匹配语义见 scanner._path_excluded / fileindex._under_skip_dir：规则 normcase
+# 后与路径整段相等、或路径以 <规则>\ 开头——纯路径前缀，不支持通配。因此规则
+# 必须是绝对目录路径，这也正是手动 add_exclude（api.py）写入并校验的形态，
+# 保证预置规则在设置页能被正常展示和删除。
+#
+# 注意三个「目录名级」的默认排除不必也不能入库：node_modules / .git /
+# __pycache__ 是任意位置的目录名而非固定路径，前缀规则表达不了（写入只会成为
+# 永不命中的死规则，还会在设置页里误导用户）；它们由 scanner.SKIP_DIRS 按目录
+# 名兜底，任何位置都生效。$Recycle.Bin 与 System Volume Information 在
+# SKIP_DIRS 里同样有名字兜底，但仍按盘展开成绝对路径入库，让用户能在设置页
+# 看到这层排除并可自行管理。
+DEFAULT_EXCLUDES = [
+    r"C:\Windows",               # 系统目录：数十万文件，纯噪音
+    r"C:\Program Files",         # 已安装软件本体
+    r"C:\Program Files (x86)",
+    r"C:\ProgramData",           # 应用共享数据（缓存/清单为主）
+]
+# 每块固定盘根下都要排除的目录（播种时按 enumerate_drives() 的结果展开成绝对路径）
+_PER_DRIVE_EXCLUDES = (r"$Recycle.Bin", r"System Volume Information")
+
+
+def _default_exclude_rules(drives):
+    """把默认排除清单展开成可直接入库的绝对路径列表（与手动 add_exclude 同形态）。"""
+    rules = list(DEFAULT_EXCLUDES)
+    for d in drives:
+        rules.extend(os.path.join(d, name) for name in _PER_DRIVE_EXCLUDES)
+    rules.append(os.path.join(os.path.expanduser("~"), "AppData", "Local", "Temp"))
+    return rules
+
+
 def ensure_default_roots():
     """首次运行写入默认用户目录 + 全部本地盘根（开箱即用）；之后只补「没见过的新盘」。
 
@@ -253,6 +290,7 @@ def ensure_default_roots():
     drives = enumerate_drives()
     # 读在写事务开始之前：get_setting 会另开一条连接
     known = {x for x in (db.get_setting("known_drives", "") or "").split("|") if x}
+    exclude_seeded = bool(db.get_setting("default_excludes_seeded", ""))
     conn = db.get_conn()
     try:
         conn.executescript(SCHEMA_EXTRA)
@@ -279,6 +317,20 @@ def ensure_default_roots():
             conn.execute("INSERT INTO watch_roots(path,label,added_at) VALUES(?,?,?)",
                          (drive, f"{drive[:-1]}（自动）", now))
             added = True
+        # 预置默认排除规则（仅当从未播过种且规则表为空；见 DEFAULT_EXCLUDES 注释）。
+        # exclude_rules 与 settings 一样在 init_db 的主 SCHEMA 里，此处必然已建表。
+        # 规则表非空（老用户已有规则）时不写任何规则行，但同样落标记，
+        # 避免他们之后清空规则时默认清单突然冒出来。
+        if not exclude_seeded:
+            if conn.execute("SELECT COUNT(*) c FROM exclude_rules").fetchone()["c"] == 0:
+                for path in _default_exclude_rules(drives):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO exclude_rules(path,added_at) VALUES(?,?)",
+                        (path, now))
+            conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                ("default_excludes_seeded", "1"))
         # 记下「当前插着的盘 + 已在监控中的目录」，下次据此判断谁是新盘
         seen = set(drives)
         for r in conn.execute("SELECT path FROM watch_roots").fetchall():
