@@ -28,6 +28,8 @@ AI runs on local open models through [Ollama](https://ollama.com) by default —
 
 Search, preview, organizing and deduplication **do not depend on AI** — they keep working whether or not a model is running.
 
+**File indexing, full-text and semantic search, and OCR all run locally — no cloud API by default.** Without a cloud API configured, the only network calls are user-triggered: "Check for updates" sends GET requests to `api.github.com` (no background polling), and the installer and the optional local reranking model are downloaded only when you click to. File contents are never uploaded. Once you opt into a cloud API there are three upload points, all explicit: your **question**, together with the retrieved document excerpts and the last few turns of the conversation, goes to the provider you chose; and if "embedding source" is also set to the cloud (it follows local by default), **knowledge-base indexing** sends document chunks to it for embedding — keep embeddings local if you mind, and everything else in the retrieval pipeline stays on this machine.
+
 | The problem | What FileButler does |
 |---|---|
 | You need a PDF from three months ago and only remember roughly what it said | Search filename, body text and text inside images at once — or just ask "what was in that quote?" |
@@ -39,18 +41,20 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 ## Quick start
 
 1. Grab `FileButler-Setup-1.4.2.exe` from [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) (~58 MB) and run it — **no administrator rights needed**, it installs into your user profile
-2. On first launch it scans Desktop / Documents / Downloads / Pictures, and you can search within seconds
+2. On first launch it scans your user folders — Desktop / Documents / Downloads / Pictures / Videos / Music — and you can search within seconds
 3. Want Q&A and semantic search? Install [Ollama](https://ollama.com); the settings page recommends models for your GPU and downloads them in one click (`qwen3` family plus the `bge-m3` embedding model)
 4. Already running LM Studio or a cloud API? Switch the backend in Settings — Ollama is optional
 
 > **Requirements**: Windows 10 / 11, 64-bit. Search, preview, organizing and deduplication are fully local and need no external service.
+>
+> **About the installer**: it is **not code-signed**, so Windows SmartScreen may warn about an "unknown publisher" — click **More info → Run anyway**. Every release carries the installer's SHA-256 so you can verify the download yourself.
 
 ## What it does
 
 ### 🔍 Finding files — more than filename matching
 
-- **Automatic cataloging (Everything-style, read-only)**: scans Desktop / Documents / Downloads / Pictures on startup, watches for changes in the background, new files become searchable within seconds
-- **Search syntax**: `ext:pdf`, `size:>100mb`, `dm:week`, `path:Desktop`, `cat:图片`, freely combined with keywords. Long tokens go through an FTS5 full-text index, with pinyin and pinyin-initials matching for Chinese filenames (`baogao`, `bg` → 报告), sortable by relevance. Date keywords accept English (`today` / `week` / `month` / `year`) or Chinese (`本周` / `本月`); category values follow the UI language, so `cat:图片` means "images" in the current Chinese build
+- **Automatic cataloging (Everything-style, read-only)**: scans your user folders — Desktop / Documents / Downloads / Pictures / Videos / Music — on startup, watches for changes in the background, new files become searchable within seconds
+- **Search syntax**: `ext:pdf`, `size:>100mb`, `dm:week`, `path:Desktop`, `cat:图片`, freely combined with keywords — `path:` matches the real on-disk path (Windows user folders are literally named `Desktop`; unlike `dm:`/`cat:` it takes no translated values). Long tokens go through an FTS5 full-text index, with pinyin and pinyin-initials matching for Chinese filenames (`baogao`, `bg` → 报告), sortable by relevance. Date keywords accept English (`today` / `week` / `month` / `year`) or Chinese (`本周` / `本月`); `cat:` values are the backend's fixed Chinese labels (`图片`, `文档`, …) in either UI language — the category tags shown in the list are display-only translations
 - **Real capture dates for photos**: date filters prefer EXIF capture time, so copying or reorganizing files never scrambles a photo timeline; files without EXIF fall back to modified time
 - **Natural-language search**: "that quote from last month" resolves through a local vector index (requires Ollama)
 - **Semantic image search + OCR**: a vision model (qwen2.5vl) captions images and transcribes the text inside them — search "sunset" for photos, search an invoice number for a screenshot. Without a vision model it degrades to the built-in Windows OCR
@@ -160,7 +164,7 @@ Pull them manually if you prefer: `ollama pull qwen3:8b` / `ollama pull bge-m3`
 
 **Cloud API (OpenAI-compatible, optional)**:
 
-- Quick-fill presets for DeepSeek, Zhipu GLM, Kimi, Qwen (DashScope), SiliconFlow, OpenRouter and OpenAI; any OpenAI-compatible endpoint (vLLM, LM Studio, …) also works
+- Quick-fill presets for DeepSeek, Zhipu GLM, Kimi, Qwen (DashScope), SiliconFlow, OpenRouter, OpenAI and Xiaomi MiMo; any OpenAI-compatible endpoint (vLLM, LM Studio, …) also works
 - Cost-saving split: chat through a cloud model for quality, embeddings stay local with `bge-m3` for free — configured independently
 - Keys are stored only in the local SQLite database, never passed to a third party besides the provider you configured, and never echoed back in the UI
 - "Test connection" validates the key and model name before saving
@@ -201,6 +205,8 @@ tests/                automated test suites
 
 ## Development and packaging
 
+`docs/internal/` holds the maintainer handover notes (HANDOFF / ROADMAP / UPGRADE_PLAN) for whoever continues development or wants to dig into the implementation; they are kept out of the published repo and don't affect how the app is used.
+
 <details>
 <summary>Build from source</summary>
 
@@ -236,7 +242,7 @@ cd frontend && npm run build && cd ..
 .venv\Scripts\python tests\test_fileindex.py    # auto scan/watch/thumbnails (no Ollama needed)
 .venv\Scripts\python tests\test_batch2.py       # syntax search/FTS/cleanup/preview/QA history/weekly report/backup/templates
 .venv\Scripts\python tests\test_datadir.py      # data directory switching
-.venv\Scripts\python tests\test_hardening.py    # connection recycling/backup restore/watcher fallback/Host validation
+.venv\Scripts\python tests\test_hardening.py    # connection recycling/backup restore/watcher fallback/Host validation (needs a one-off APPDATA)
 .venv\Scripts\python tests\test_upgrade.py      # batch indexing/auto knowledge base/autostart (needs Ollama)
 .venv\Scripts\python tests\test_ai_classify.py  # AI classification, end to end
 .venv\Scripts\python tests\test_rag.py          # knowledge base, end to end

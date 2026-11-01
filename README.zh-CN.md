@@ -7,6 +7,7 @@
   <p>
     <a href="https://github.com/7SteveJohn/FileButler/releases/latest"><img src="https://img.shields.io/github/v/release/7SteveJohn/FileButler?color=4f8cff&label=release" alt="release"></a>
     <a href="https://github.com/7SteveJohn/FileButler/actions/workflows/ci.yml"><img src="https://github.com/7SteveJohn/FileButler/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f" alt="license"></a>
     <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white" alt="platform">
     <img src="https://img.shields.io/badge/data-local%20first-2ea44f" alt="local first">
     <img src="https://img.shields.io/badge/LLM-Ollama%20%2F%20OpenAI%20compatible-4f8cff" alt="llm backends">
@@ -26,6 +27,8 @@ FileButler 是一个**完全跑在你自己电脑上**的文件管家：替你�
 AI 默认跑在你本机的 [Ollama](https://ollama.com) 开源模型上——数据不出机器、零成本；想换就换，LM Studio 或任意 OpenAI 兼容的云端 API 都支持，模型和后端由你自己挑。
 不管有没有模型在跑，搜索、预览、整理、去重这些**都不依赖 AI**，照常能用。
 
+**文件索引、全文 / 语义检索、OCR 全部本地运行，默认不依赖任何云 API。**不配置云端 API 时，主动联网只有三件事，全部由你点击触发：「检查更新」向 `api.github.com` 发 GET（无后台轮询）、下载新版安装包、下载可选的本地精排模型；文件数据从不上传。接入云端 API 后有三个上传点，都摆在你眼前：**提问**时把问题连同检索到的文档片段、最近几轮对话一起发给指定服务商；若「向量来源」也选了云端（默认跟随本地），**知识库索引**会把文档切块正文发给它做向量化——介意的话保持向量走本地即可，检索链路其他环节仍全在本机。
+
 | 你现在的麻烦 | FileButler 的做法 |
 |---|---|
 | 找一份三个月前的 PDF，只记得大概写了什么 | 文件名、正文、图片文字一起搜；也可以直接问「那份报价单里写了什么」 |
@@ -37,18 +40,20 @@ AI 默认跑在你本机的 [Ollama](https://ollama.com) 开源模型上——�
 ## 30 秒上手
 
 1. 到 [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) 下载 `FileButler-Setup-1.4.2.exe`（约 58 MB），双击安装——**不需要管理员权限**，装在当前用户目录下
-2. 首次启动自动扫描桌面 / 文档 / 下载 / 图片等用户目录，几秒后就能搜到东西
+2. 首次启动自动扫描桌面 / 文档 / 下载 / 图片 / 视频 / 音乐，几秒后就能搜到东西
 3. 想要「问答」和「按意思搜」：装 [Ollama](https://ollama.com)，设置页按显卡推荐一键下载模型（`qwen3` 系列 + 向量模型 `bge-m3`）
 4. 已经有 LM Studio 或云端 API？设置页「模型接入方式」直接切，不必装 Ollama
 
 > **系统要求**：Windows 10 / 11 64 位。搜索、预览、整理、去重全部本地完成，不依赖任何外部服务。
+>
+> **安装说明**：安装包未做代码签名，Windows SmartScreen 可能提示「未知发布者」——点「更多信息」→「仍要运行」即可；每个 Release 附有安装包的 SHA-256，可自行核对下载是否完整。
 
 ## 它到底能做什么
 
 ### 🔍 找文件：比「只看文件名」多懂一点
 
-- **自动文件编目（Everything 式，只读）**：启动自动扫描桌面 / 文档 / 下载 / 图片等用户目录，后台实时监控增删改，新文件几秒内可搜
-- **搜索语法**：`ext:pdf`、`size:>100mb`、`dm:本周`、`path:桌面`、`cat:图片`，可与关键词混用；长词走 FTS5 全文索引，支持全拼 / 拼音首字母搜中文名（`baogao`、`bg` → 报告），可按相关度排序
+- **自动文件编目（Everything 式，只读）**：启动自动扫描桌面 / 文档 / 下载 / 图片 / 视频 / 音乐等用户目录，后台实时监控增删改，新文件几秒内可搜
+- **搜索语法**：`ext:pdf`、`size:>100mb`、`dm:本周`、`path:Desktop`、`cat:图片`，可与关键词混用；`path:` 按磁盘上的真实路径匹配（Windows 的用户目录实际叫 Desktop，不认中文别名，与 `dm:`/`cat:` 支持中文取值不同）；长词走 FTS5 全文索引，支持全拼 / 拼音首字母搜中文名（`baogao`、`bg` → 报告），可按相关度排序。日期关键词接受英文（`today` / `week` / `month` / `year`）或中文（`本周` / `本月`）；`cat:` 的取值固定用后端的中文分类名（`图片`、`文档`……），两种界面语言通用——列表里的分类标签只是翻译显示
 - **照片认拍摄时间**：时间筛选优先按 EXIF 拍摄时间（拷贝、整理文件不会打乱照片的时间线），没有拍摄时间的文件退回修改时间
 - **自然语言搜索**：搜「上个月那份报价单」也能命中，走本地向量索引（需 Ollama）
 - **图片语义搜索 + OCR**：视觉模型（qwen2.5vl）为图片生成描述并转录图中文字，搜「日落」找照片、搜发票号找截图；没有视觉模型时自动降级到 Windows 内置 OCR
@@ -163,7 +168,7 @@ LM Studio 的 embedding 模型，全程不装 Ollama。
 
 **云端 API（OpenAI 兼容，可选）**：
 
-- 内置常用服务商快捷填入：DeepSeek、智谱 GLM、Kimi、通义千问、硅基流动、OpenRouter、OpenAI，也支持任何 OpenAI 兼容端点（vLLM / LM Studio 等）
+- 内置常用服务商快捷填入：DeepSeek、智谱 GLM、Kimi、通义千问、硅基流动、OpenRouter、OpenAI、小米 MiMo，也支持任何 OpenAI 兼容端点（vLLM / LM Studio 等）
 - 省钱混搭：对话走云端（质量好），向量化留在本地 `bge-m3`（完全免费）——两者可独立配置
 - 密钥仅保存在本机 SQLite，除所填服务商外不经过任何第三方；界面上不回显
 - 保存前可「测试连接」验证密钥与模型名
@@ -194,9 +199,17 @@ frontend/             Vue 3 + Naive UI（Vite 构建为单文件内嵌）
 tests/                自动化测试
 ```
 
+**三条值得知道的设计约束：**
+
+- **不静默动文件。** 一切文件系统改动都走「计划 → 预览确认 → 执行」模型，全程留日志、按批次可撤销；重复文件移进待清理区而不是删除，重命名冲突绝不覆盖。
+- **AI 只是增强层。** 每个核心能力都有非 AI 路径：检索有 FTS5 关键词兜底而不是只靠向量，分类有规则引擎而不是只靠模型，OCR 有 Windows 内置引擎而不是只靠视觉模型。
+- **后端中立。** 对话与向量模型独立配置，纯本地、纯云端、混合接入走同一条检索管线。
+
 </details>
 
 ## 开发与打包
+
+`docs/internal/` 下是开发交接笔记（HANDOFF / ROADMAP / UPGRADE_PLAN），写给接手维护的人和想深入实现的贡献者；不入仓库发布，也不影响软件使用。
 
 <details>
 <summary>点开看</summary>
@@ -240,3 +253,7 @@ cd frontend && npm run build && cd ..
 ```
 
 </details>
+
+## 许可证
+
+MIT —— 见 [LICENSE](LICENSE)。

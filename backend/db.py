@@ -847,7 +847,7 @@ def chunk_fts_search(query, k=24):
 
 def _ensure_chunk_fts(conn):
     """chunk_fts（独立表 + 显式触发器，形态同 file_fts——external content +
-    rebuild 在本机 SQLite 3.50.4 实测会坏库，见 ROADMAP 🔧 节）。"""
+    rebuild 在本机 SQLite 3.50.4 实测会坏库，见 docs/internal/ROADMAP.md 🔧 节）。"""
     try:
         conn.executescript("""
 CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
@@ -1045,7 +1045,7 @@ class VectorIndex:
     select_sql 需返回 (id, vec) 两列。
 
     精度必须是 float32：float16 矩阵乘法在 numpy 里没有 BLAS 路径，
-    实测比 float32 慢 30 倍以上（2 万块 103ms vs 2.8ms，见 UPGRADE_PLAN P0 基线）；
+    实测比 float32 慢 30 倍以上（2 万块 103ms vs 2.8ms，见 docs/internal/UPGRADE_PLAN.md P0 基线）；
     内存换速度是正确取舍——个人知识库规模下 float32 常驻内存通常 < 100MB。"""
 
     def __init__(self, select_sql):
