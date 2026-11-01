@@ -1,13 +1,16 @@
 """文档解析：各格式 → 纯文本。解析失败返回 None（不中断索引）。
-扫描版 PDF（文字提取为空但有内容）通过 VL 模型或 Windows 系统 OCR 补充。"""
+扫描版 PDF（文字提取为空但有内容）：专用 OCR 模型（设置项 ocr_model）优先，
+其次 Windows 系统 OCR，最后回退 VL 模型。"""
 import os
 
 from html.parser import HTMLParser as _HTMLParser
 
 from backend.core.scanner import TEXT_EXTS
 
-# 解析管线版本：解析行为变化（PDF 主通道、docx 标题等）时 +1，
-# indexer 据此让旧索引在下次索引时自动按新管线重解析
+# 解析管线基础版本：解析行为变化（PDF 主通道、docx 标题等）时 +1，
+# indexer 据此让旧索引在下次索引时自动按新管线重解析。
+# 生效版本见 parse_ver()：基础版本之外还会带上 OCR 模型设置，
+# 启停/更换 OCR 模型无需动这里也会触发扫描件重解析
 # v3: HTML 从「整文件按文本读」改为剥标签取正文；新增 eml 邮件解析
 PARSE_VER = "3"
 
@@ -15,6 +18,33 @@ PARSE_VER = "3"
 SUPPORTED = {
     "pdf", "docx", "pptx", "xlsx", "doc", "md", "markdown", "txt", "csv",
 } | TEXT_EXTS | {"eml"}
+
+# 扫描件 OCR 可选的专用视觉模型（设置项 ocr_model，Ollama 模型名）。
+# 空 = 不启用（维持系统 OCR 优先的现状链路）；非空且模型就绪时优先于系统 OCR。
+XIAOMI_OCR_PROMPT = (
+    "Extract all information from the main body of the document image and represent it "
+    "in markdown format, ignoring headers and footers. Tables should be expressed in OTSL "
+    "format, formulas in the document should be represented using LATEX format, and the "
+    "parsing should be organized according to the reading order."
+)
+XIAOMI_OCR_NUM_PREDICT = 4096   # 整页 markdown 输出上限（官方示例同值）
+XIAOMI_OCR_NUM_CTX = 16384      # 官方评测同款上下文；Ollama 带图请求不注入全局 num_ctx，须显式给
+
+# VL 模型兜底链路的通用转录提示词（不走结构化解析）
+_VL_TRANSCRIBE_PROMPT = "请逐字转录此页中的所有文字，保持原始排版格式。如果没有文字则回复「无」。"
+
+
+def ocr_model():
+    """扫描件 OCR 模型设置（空 = 不启用）。"""
+    from backend import db
+    return (db.get_setting("ocr_model", "") or "").strip()
+
+
+def parse_ver():
+    """生效解析版本 = 基础版本 + OCR 模型设置：启停或更换 OCR 模型都会让
+    扫描件在下轮索引时按新链路自动重解析（indexer 的比对与写入都用它）。"""
+    model = ocr_model()
+    return PARSE_VER + ("+ocr:" + model if model else "")
 
 
 def parse_file(path):
@@ -176,31 +206,45 @@ def _pdf_text_pypdf(path):
 
 
 def _ocr_scanned_pdf(path):
-    """扫描版 PDF OCR：Windows 系统 OCR 优先（实测 ~0.3s/页、无需模型、
-    中文识别质量好）；系统 OCR 不可用时回退 VL 模型。两者都不可用返回 None。"""
+    """扫描版 PDF OCR：配置了专用模型（设置项 ocr_model）且就绪时优先
+    （表格/公式结构化质量最好）；否则 Windows 系统 OCR（实测 ~0.3s/页、
+    无需模型、中文识别质量好）；系统 OCR 也不可用时回退 VL 模型。
+    两者都不可用返回 None。"""
     try:
-        import fitz  # PyMuPDF
+        import fitz  # noqa: F401  仅探测可导入性
     except ImportError:
         return None
     try:
+        from backend import llm
+        model = ocr_model()
+        if model and llm.mode() == "ollama":
+            client = llm.get_chat_client()
+            if client.has_model(model):
+                return _ocr_pdf_by_vlm(path, client, model, XIAOMI_OCR_PROMPT,
+                                       num_predict=XIAOMI_OCR_NUM_PREDICT,
+                                       num_ctx=XIAOMI_OCR_NUM_CTX)
         from backend.knowledge import winocr
         if winocr.available():
             return winocr.ocr_pdf(path, max_pages=30, dpi=200)
         # 回退：VL 模型逐页转录（需 qwen2.5vl；慢且依赖模型就绪）
-        from backend import llm
         from backend.knowledge import imgsearch
         if llm.chat_available() and imgsearch.vl_ready():
-            return _ocr_pdf_by_vl(path, llm, imgsearch)
+            return _ocr_pdf_by_vlm(path, llm.get_chat_client(), imgsearch.vl_model(),
+                                   _VL_TRANSCRIBE_PROMPT, num_predict=1024)
         return None
     except Exception:
         return None
 
 
-def _ocr_pdf_by_vl(path, llm, imgsearch):
-    client = llm.get_chat_client()
-    vl = imgsearch.vl_model()
+def _ocr_pdf_by_vlm(path, client, model, prompt, num_predict=1024, num_ctx=None):
+    """视觉模型逐页 OCR：fitz 渲染 200dpi → base64 → chat。最多 30 页，
+    输出加 [第N页] 标记（rag 的 _locator 依赖它定位原文）。
+    num_ctx：Ollama 对带图请求不注入全局上下文窗口（防 OOM），长输出模型需显式给。"""
     import fitz
     import base64
+    options = {"temperature": 0.1, "num_predict": num_predict}
+    if num_ctx:
+        options["num_ctx"] = num_ctx
     doc = fitz.open(path)
     all_text = []
     try:
@@ -213,20 +257,46 @@ def _ocr_pdf_by_vl(path, llm, imgsearch):
                 r = client.chat(
                     messages=[{
                         "role": "user",
-                        "content": "请逐字转录此页中的所有文字，保持原始排版格式。如果没有文字则回复「无」。",
+                        "content": prompt,
                         "images": [b64],
                     }],
-                    model=vl,
-                    options={"temperature": 0.1, "num_predict": 1024},
+                    model=model,
+                    options=options,
                     think=False,
                 )
                 if r and r.strip() != "无":
-                    all_text.append(f"[第{page_num + 1}页]\n{r.strip()}")
+                    all_text.append(f"[第{page_num + 1}页]\n{_otsl_to_text(r.strip())}")
             except Exception:
                 continue
         return "\n\n".join(all_text).strip() or None
     finally:
         doc.close()
+
+
+def _otsl_to_text(text):
+    """OTSL 表格标记 → 制表符分隔的行文本（供 RAG 检索与引用展示）。
+    fcel=新单元格，ecel/lcel/ucel/xcel=空/延续单元格（各自成格），nl=换行；
+    无标记或不含表格时原样返回。"""
+    import re
+    if "<fcel>" not in text and "<ecel>" not in text:
+        return text
+    rows, prose = [], []
+    for seg in re.split(r"<nl>", text):
+        cells, loose = [], []
+        for tok in re.split(r"(<fcel>|<ecel>|<lcel>|<ucel>|<xcel>)", seg):
+            if tok in ("<fcel>", "<ecel>", "<lcel>", "<ucel>", "<xcel>"):
+                cells.append("")
+            elif cells:
+                cells[-1] += tok
+            elif tok.strip():
+                loose.append(tok.strip())
+        if cells:
+            if loose:
+                prose.append(" ".join(loose))
+            rows.append("\t".join(c.strip() for c in cells))
+        elif loose:
+            prose.append(" ".join(loose))
+    return "\n".join(prose + rows)
 
 
 def _parse_docx(path):

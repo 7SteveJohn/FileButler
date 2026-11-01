@@ -6,7 +6,7 @@
 成本受控（见 budgets()）：单文件大小上限、单文件正文字符上限、总篇数与总字节
 预算；默认**不**自动运行，由设置页手动启动，可随时停止并续跑（增量记账在
 doc_content_state，按 mtime+size+parse_ver 判断是否需要重抽，解析管线
-升版（parsers.PARSE_VER）后旧解析抽出的正文会自动按新管线重抽一遍）。
+升版或 OCR 模型设置变化（生效版本见 parsers.parse_ver()）后，旧解析抽出的正文会自动按新管线重抽一遍）。
 
 表设计说明：doc_content_fts 用独立表而非外部内容表（content=''），原因见
 db._ensure_fts 的注释——外部内容表 + trigram + WAL 在早期 SQLite 上 rebuild 会
@@ -125,7 +125,7 @@ def _cand_sql(select):
            "WHERE f.ext IN (" + marks + ") AND f.size > 0 AND f.size <= ? "
            "AND (s.path IS NULL OR s.mtime <> f.mtime OR s.size <> f.size "
            "OR s.parse_ver IS NOT ?)")
-    return sql, tuple(exts) + (MAX_FILE_BYTES, parsers.PARSE_VER)
+    return sql, tuple(exts) + (MAX_FILE_BYTES, parsers.parse_ver())
 
 
 def _candidates(conn, limit=None):
@@ -292,7 +292,7 @@ def _run(cb):
                     "(path,size,mtime,chars,bytes,err,fts_rowid,indexed_at,parse_ver) "
                     "VALUES(?,?,?,?,?,?,?,?,?)",
                     (path, size, mtime, chars, nbytes, err, rowid, time.time(),
-                     parsers.PARSE_VER))
+                     parsers.parse_ver()))
                 done += 1
                 batch += 1
                 if batch >= _BATCH_COMMIT:

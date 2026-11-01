@@ -150,7 +150,7 @@ def index_folder(folder_id, progress_cb=None, cancel=None):
     for fi in files:
         old = known.get(fi["path"])
         if old and abs(old["mtime"] - fi["mtime"]) < 1 and old["size"] == fi["size"] \
-                and (old["parse_ver"] or "") == parsers.PARSE_VER:
+                and (old["parse_ver"] or "") == parsers.parse_ver():
             skipped += 1
         else:
             todo.append(fi)
@@ -237,7 +237,7 @@ def _index_file_into_kb(client, fi, folder_id):
         cur = conn.execute(
             "INSERT INTO kb_files(folder_id,path,mtime,size,hash,parse_ver) "
             "VALUES(?,?,?,?,?,?)",
-            (folder_id, fi["path"], fi["mtime"], fi["size"], None, parsers.PARSE_VER))
+            (folder_id, fi["path"], fi["mtime"], fi["size"], None, parsers.parse_ver()))
         fid = cur.lastrowid
         rows = [(fid, seq, piece, db.chunk_btext(piece), _vec_to_blob(v))
                 for seq, (piece, v) in enumerate(zip(pieces, vectors))]
@@ -258,7 +258,7 @@ def _mark_parse_failed(folder_id, fi):
             "INSERT INTO kb_files(folder_id,path,mtime,size,hash,status,parse_ver) "
             "VALUES(?,?,?,?,?,?,?)",
             (folder_id, fi["path"], fi["mtime"], fi["size"], None,
-             "parse_failed", parsers.PARSE_VER))
+             "parse_failed", parsers.parse_ver()))
         conn.commit()
     finally:
         conn.close()
@@ -294,7 +294,7 @@ def index_files(paths, progress_cb=None):
         except OSError:
             continue
         if old and abs(old["mtime"] - st.st_mtime) < 1 and old["size"] == st.st_size \
-                and (old["parse_ver"] or "") == parsers.PARSE_VER \
+                and (old["parse_ver"] or "") == parsers.parse_ver() \
                 and _folder_id_of(path) is not None:
             skipped += 1
             continue

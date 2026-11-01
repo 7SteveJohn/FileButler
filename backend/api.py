@@ -857,6 +857,7 @@ class Api:
             "ollama_keep_alive": db.get_setting("ollama_keep_alive", "30m"),
             "ollama_preload": db.get_setting("ollama_preload", "0") == "1",
             "ollama_num_ctx": db.get_setting("ollama_num_ctx", "8192"),
+            "ocr_model": db.get_setting("ocr_model", ""),
             "kb": db.stats(),
             "winocr": winocr_status,
             "images_by_year": db.get_setting("images_by_year", "1"),
@@ -1889,7 +1890,7 @@ class Api:
     # ---------- Ollama 管理 ----------
 
     def save_ollama_settings(self, host, chat_model, keep_alive="", preload=None,
-                             num_ctx=""):
+                             num_ctx="", ocr_model=None):
         if host:
             db.set_setting("ollama_host", host.rstrip("/"))
         if chat_model:
@@ -1902,6 +1903,11 @@ class Api:
             # "0" 是合法值（=跟随模型默认不干预），只拒绝非数字
             if str(num_ctx).isdigit():
                 db.set_setting("ollama_num_ctx", str(num_ctx))
+        # OCR 模型：None = 调用方未带该参数，不动设置；字符串（含空串）整体
+        # 覆盖，空 = 关闭（扫描件走系统 OCR 链路）。变更会经 parse_ver()
+        # 触发旧扫描件下轮索引自动重解析
+        if ocr_model is not None:
+            db.set_setting("ocr_model", str(ocr_model).strip())
         return {"ok": True}
 
     # ---------- Rerank（检索结果精排，可选增强） ----------

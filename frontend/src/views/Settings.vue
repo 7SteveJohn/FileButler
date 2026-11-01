@@ -51,6 +51,7 @@ const recLine = computed(() => {
 const keepAlive = ref('30m')  // 模型常驻时长：默认 30m，避免空闲 5 分钟被卸载后重载几十秒
 const preload = ref(false)    // 启动时把模型预载进显存/内存
 const numCtx = ref('8192')    // 上下文窗口 token：默认 8192，防止长资料被 Ollama 默认窗口静默截断
+const ocrModel = ref('')      // 扫描件 OCR 模型：空 = 走 Windows 系统 OCR；变更随 saveOllama 保存
 const modelsDir = ref('')     // 模型目录：空 = 跟随 Ollama 默认（C 盘用户目录）
 const keepAliveOptions = computed(() => [
   { label: t('settings.keep5'), value: '5m' },
@@ -76,6 +77,7 @@ async function refresh() {
   keepAlive.value = status.value.ollama_keep_alive || '30m'
   preload.value = !!status.value.ollama_preload
   numCtx.value = status.value.ollama_num_ctx || '8192'
+  ocrModel.value = status.value.ocr_model || ''
   modelsDir.value = status.value.ollama_models_dir || ''
   const opts = []
   for (const m of status.value.ollama.models) {
@@ -84,8 +86,17 @@ async function refresh() {
   chatModelOptions.value = opts
 }
 
+// 所选 OCR 模型是否已在 Ollama 中（提示未安装时给出 pull 命令）。
+// 匹配规则与后端 has_model/_match_model 一致：全名或冒号前基名相同
+const ocrModelInstalled = computed(() => {
+  if (!ocrModel.value || !status.value) return true
+  const want = ocrModel.value
+  const wantBase = want.split(':')[0]
+  return status.value.ollama.models.some((m) => m === want || m.split(':')[0] === wantBase)
+})
+
 async function saveOllama() {
-  await api('save_ollama_settings', host.value, chatModel.value, keepAlive.value, preload.value, numCtx.value)
+  await api('save_ollama_settings', host.value, chatModel.value, keepAlive.value, preload.value, numCtx.value, ocrModel.value)
   message.success(t('settings.m.saved'))
   refresh()
   window.dispatchEvent(new CustomEvent('fb-refresh'))
@@ -928,6 +939,15 @@ onMounted(() => {
             <n-select v-model:value="numCtx" :options="numCtxOptions" style="width:320px" />
           </n-space>
           <n-space item-style="display:flex;align-items:center;gap:8px">
+            <n-text style="width:80px">{{ t('settings.ocrModel') }}</n-text>
+            <n-select v-model:value="ocrModel" :options="chatModelOptions" style="width:320px"
+              :placeholder="t('settings.ocrModelPh')" tag filterable clearable />
+            <n-button type="primary" @click="saveOllama">{{ t('settings.save') }}</n-button>
+          </n-space>
+          <n-text v-if="!ocrModelInstalled" depth="3" style="font-size:12px">
+            {{ t('settings.ocrModelMissing', { m: ocrModel }) }}
+          </n-text>
+          <n-space item-style="display:flex;align-items:center;gap:8px">
             <n-text style="width:80px">{{ t('settings.modelsDir') }}</n-text>
             <n-input v-model:value="modelsDir" style="width:320px" class="mono"
               :placeholder="t('settings.modelsDirPh')" />
@@ -937,6 +957,7 @@ onMounted(() => {
           <n-text depth="3" style="font-size:12px">
             {{ t('settings.keepHint') }}<br>
             {{ t('settings.ctxHint') }}<br>
+            {{ t('settings.ocrModelHint') }}<br>
             {{ t('settings.modelsDirHint') }}
           </n-text>
 
