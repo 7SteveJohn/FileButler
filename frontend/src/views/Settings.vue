@@ -170,6 +170,15 @@ async function installOllama() {
   message.info(t('settings.m.ollamaOpened'))
 }
 
+// 「去下载安装」引导面板：Windows 10/11 一条 winget 命令即可装好
+const WINGET_CMD = 'winget install --id Ollama.Ollama -e'
+async function copyWingetCmd() {
+  try {
+    await navigator.clipboard.writeText(WINGET_CMD)
+    message.success(t('settings.m.wingetCopied'))
+  } catch (e) { message.error(t('settings.m.wingetCopyFail')) }
+}
+
 // ---------- 规则 ----------
 const rules = ref({ categories: [], rules: [] })
 const showAdd = ref(false)
@@ -910,7 +919,20 @@ onMounted(() => {
         <n-space vertical size="large">
           <n-alert v-if="status && !status.ollama.running" type="error">
             {{ t('settings.ollamaMissing') }}
-            <n-button style="margin-left:12px" type="primary" size="small" @click="installOllama">{{ t('settings.downloadInstall') }}</n-button>
+            <n-popover trigger="click" placement="bottom-start" :width="380">
+              <template #trigger>
+                <n-button style="margin-left:12px" type="primary" size="small">{{ t('settings.downloadInstall') }}</n-button>
+              </template>
+              <n-space vertical :size="10">
+                <n-text strong>{{ t('settings.wingetLabel') }}</n-text>
+                <n-text depth="3" style="font-size:12px">{{ t('settings.wingetHint') }}</n-text>
+                <n-space align="center" :size="6">
+                  <code class="mono" style="padding:4px 8px;background:rgba(128,128,128,.14);border-radius:4px">{{ WINGET_CMD }}</code>
+                  <n-button size="tiny" tertiary @click="copyWingetCmd">{{ t('settings.copyCmd') }}</n-button>
+                </n-space>
+                <n-button size="small" tertiary @click="installOllama">{{ t('settings.openDownloadPage') }}</n-button>
+              </n-space>
+            </n-popover>
           </n-alert>
           <n-alert v-else-if="status && status.ollama.model_dirs && status.ollama.model_dirs.length" type="warning">
             {{ t('settings.modelsDirMismatch') }}
