@@ -17,6 +17,7 @@
     &nbsp;·&nbsp; <a href="#它到底能做什么">能做什么</a>
     &nbsp;·&nbsp; <a href="#常见问题">常见问题</a>
     &nbsp;·&nbsp; <a href="#技术实现">技术实现</a>
+    &nbsp;·&nbsp; <a href="#致谢">致谢</a>
   </p>
 </div>
 
@@ -253,6 +254,12 @@ cd frontend && npm run build && cd ..
 ```
 
 </details>
+
+## 致谢
+
+FileButler 站在这些开源项目的肩膀上，特别感谢小米开源的 **[Xiaomi-OCR-0](https://github.com/xiaomi-research/Xiaomi-OCR-0)**——0.8B 的文档解析模型，本应用扫描件 OCR 能力的核心。
+
+同时感谢 [Qwen3](https://github.com/QwenLM/Qwen3)（对话模型）、[bge-m3](https://huggingface.co/BAAI/bge-m3)（向量检索）、[pywebview](https://pywebview.flow.dev/)、[PyMuPDF](https://pymupdf.readthedocs.io/)、[pypinyin](https://github.com/mozillazg/python-pinyin) 与 [Naive UI](https://www.naiveui.com/)，以及所有被依赖项目的开源贡献者。
 
 ## 许可证
 

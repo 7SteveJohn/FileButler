@@ -17,6 +17,7 @@
     &nbsp;·&nbsp; <a href="#what-it-does">Features</a>
     &nbsp;·&nbsp; <a href="#faq">FAQ</a>
     &nbsp;·&nbsp; <a href="#architecture">Architecture</a>
+    &nbsp;·&nbsp; <a href="#acknowledgements">Acknowledgements</a>
   </p>
 </div>
 
@@ -249,6 +250,12 @@ cd frontend && npm run build && cd ..
 ```
 
 </details>
+
+## Acknowledgements
+
+FileButler stands on the shoulders of open source — special thanks to Xiaomi's **[Xiaomi-OCR-0](https://github.com/xiaomi-research/Xiaomi-OCR-0)**, an open 0.8B document-parsing model that powers the scanned-document OCR.
+
+Also thanks to [Qwen3](https://github.com/QwenLM/Qwen3) (chat), [bge-m3](https://huggingface.co/BAAI/bge-m3) (embeddings), [pywebview](https://pywebview.flow.dev/), [PyMuPDF](https://pymupdf.readthedocs.io/), [pypinyin](https://github.com/mozillazg/python-pinyin) and [Naive UI](https://www.naiveui.com/), and to every contributor of the projects FileButler depends on.
 
 ## License
 
