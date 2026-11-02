@@ -378,6 +378,7 @@ export default {
     fetchModels: '拉取模型列表', embed: '向量化',
     vecModelPh: '向量模型名', vecModelPh2: '向量模型名，如 text-embedding-3-small',
     provHint: 'LM Studio：启动其本地服务后点「检测本机服务」一键填入，无需密钥；向量化选「本地 bge-m3」则完全免费。密钥仅保存在本机数据库，除你填写的服务商外不经过任何第三方。',
+    provHintLabel: '接入说明',
     saveProvider: '保存', testConn: '测试连接', detectLocal: '检测本机服务',
     chatReason: '对话：{v}', embedReason: '向量：{v}',
     testOk: '✓ 连通正常 · {ms}ms · 回复「{reply}」',

@@ -950,28 +950,49 @@ onMounted(() => {
           </n-alert>
 
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">{{ t('settings.host') }}</n-text>
+            <n-text style="width:96px">{{ t('settings.host') }}</n-text>
             <n-input v-model:value="host" style="width:320px" class="mono" placeholder="http://127.0.0.1:11434" />
           </n-space>
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">{{ t('settings.chatModel') }}</n-text>
+            <n-text style="width:96px">{{ t('settings.chatModel') }}</n-text>
             <n-select v-model:value="chatModel" :options="chatModelOptions" style="width:320px"
               :placeholder="t('settings.pickInstalled')" tag filterable />
             <n-button type="primary" @click="saveOllama">{{ t('settings.save') }}</n-button>
           </n-space>
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">{{ t('settings.keepAlive') }}</n-text>
+            <n-text style="width:96px;display:inline-flex;align-items:center;white-space:nowrap;flex:none">
+              {{ t('settings.keepAlive') }}<n-popover trigger="hover" placement="top-start" :style="{ maxWidth: '420px' }">
+                <template #trigger>
+                  <n-button text size="tiny" style="padding:0 0 0 3px;font-size:12px">ⓘ</n-button>
+                </template>
+                {{ t('settings.keepHint') }}
+              </n-popover>
+            </n-text>
             <n-select v-model:value="keepAlive" :options="keepAliveOptions" style="width:320px" />
             <n-switch v-model:value="preload" size="small">
               <template #suffix>{{ t('settings.preload') }}</template>
             </n-switch>
           </n-space>
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">{{ t('settings.contextWin') }}</n-text>
+            <n-text style="width:96px;display:inline-flex;align-items:center;white-space:nowrap;flex:none">
+              {{ t('settings.contextWin') }}<n-popover trigger="hover" placement="top-start" :style="{ maxWidth: '420px' }">
+                <template #trigger>
+                  <n-button text size="tiny" style="padding:0 0 0 3px;font-size:12px">ⓘ</n-button>
+                </template>
+                {{ t('settings.ctxHint') }}
+              </n-popover>
+            </n-text>
             <n-select v-model:value="numCtx" :options="numCtxOptions" style="width:320px" />
           </n-space>
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">{{ t('settings.ocrModel') }}</n-text>
+            <n-text style="width:96px;display:inline-flex;align-items:center;white-space:nowrap;flex:none">
+              {{ t('settings.ocrModel') }}<n-popover trigger="hover" placement="top-start" :style="{ maxWidth: '420px' }">
+                <template #trigger>
+                  <n-button text size="tiny" style="padding:0 0 0 3px;font-size:12px">ⓘ</n-button>
+                </template>
+                {{ t('settings.ocrModelHint') }}
+              </n-popover>
+            </n-text>
             <n-select v-model:value="ocrModel" :options="chatModelOptions" style="width:320px"
               :placeholder="t('settings.ocrModelPh')" tag filterable clearable />
             <n-button type="primary" @click="saveOllama">{{ t('settings.save') }}</n-button>
@@ -980,18 +1001,19 @@ onMounted(() => {
             {{ t('settings.ocrModelMissing', { m: ocrModel }) }}
           </n-text>
           <n-space item-style="display:flex;align-items:center;gap:8px">
-            <n-text style="width:80px">{{ t('settings.modelsDir') }}</n-text>
+            <n-text style="width:96px;display:inline-flex;align-items:center;white-space:nowrap;flex:none">
+              {{ t('settings.modelsDir') }}<n-popover trigger="hover" placement="top-start" :style="{ maxWidth: '420px' }">
+                <template #trigger>
+                  <n-button text size="tiny" style="padding:0 0 0 3px;font-size:12px">ⓘ</n-button>
+                </template>
+                {{ t('settings.modelsDirHint') }}
+              </n-popover>
+            </n-text>
             <n-input v-model:value="modelsDir" style="width:320px" class="mono"
               :placeholder="t('settings.modelsDirPh')" />
             <n-button size="small" @click="pickModelsDir">{{ t('settings.browse') }}</n-button>
             <n-button type="primary" @click="saveModelsDir">{{ t('settings.save') }}</n-button>
           </n-space>
-          <n-text depth="3" style="font-size:12px">
-            {{ t('settings.keepHint') }}<br>
-            {{ t('settings.ctxHint') }}<br>
-            {{ t('settings.ocrModelHint') }}<br>
-            {{ t('settings.modelsDirHint') }}
-          </n-text>
 
           <n-descriptions v-if="recommend" :column="3" bordered size="small" label-placement="left">
             <n-descriptions-item :label="t('settings.ram')">{{ recommend.config.ram_gb }} GB</n-descriptions-item>
@@ -1238,8 +1260,13 @@ onMounted(() => {
               <n-input v-else-if="provEmbedSource === 'api'" v-model:value="provEmbedModel"
                 :placeholder="t('settings.vecModelPh2')" style="flex:1;min-width:240px" class="mono" />
             </div>
-            <n-text depth="3" style="font-size:12px">
-              {{ t('settings.provHint') }}
+            <n-text depth="3" style="font-size:12px;display:block;margin-top:4px">
+              <n-popover trigger="hover" placement="top-start" :style="{ maxWidth: '420px' }">
+                <template #trigger>
+                  <n-button text size="tiny" style="padding:0;font-size:12px">ⓘ {{ t('settings.provHintLabel') }}</n-button>
+                </template>
+                {{ t('settings.provHint') }}
+              </n-popover>
             </n-text>
           </template>
 
@@ -1339,11 +1366,17 @@ onMounted(() => {
       </n-card>
 
       <!-- ============ 全盘内容索引 ============ -->
-      <n-card :title="t('settings.ciTitle')">
+      <n-card>
+        <template #header>
+          {{ t('settings.ciTitle') }}<n-popover trigger="hover" placement="right-start" :style="{ maxWidth: '440px' }">
+            <template #trigger>
+              <n-button text size="tiny" style="font-size:12px;padding:0 0 0 4px;vertical-align:middle">ⓘ</n-button>
+            </template>
+            <div>{{ t('settings.ciHint') }}</div>
+            <div style="margin-top:6px">{{ t('settings.ciHint2') }}</div>
+          </n-popover>
+        </template>
         <n-space vertical size="small">
-          <n-text depth="3" style="font-size:12.5px">
-            {{ t('settings.ciHint') }}
-          </n-text>
           <n-space size="small" align="center" style="margin-top:4px">
             <n-button size="small" type="primary" ghost :disabled="ciRunning" :loading="ciBusy"
               @click="ciStart">{{ ciRunning ? t('settings.ciRunning') : t('settings.ciStart') }}</n-button>
@@ -1364,9 +1397,6 @@ onMounted(() => {
             {{ t('settings.ciPlan', { c: ci.plan.candidates, w: ci.plan.will_index }) }}
             {{ t('settings.ciBudget', { d: ci.plan.budget.max_docs, b: (ci.plan.budget.max_body_bytes / 1e9).toFixed(1) }) }}
           </n-text>
-          <n-text depth="3" style="font-size:12px">
-            {{ t('settings.ciHint2') }}
-          </n-text>
           <n-text v-if="ci?.status?.budget_hit || (ci?.plan && ci.plan.budget.docs_left === 0)"
             type="warning" style="font-size:12px">
             {{ t('settings.ciBudgetHit') }}
@@ -1375,11 +1405,16 @@ onMounted(() => {
       </n-card>
 
       <!-- ============ Rerank 检索精排 ============ -->
-      <n-card :title="t('settings.rerankTitle')">
-        <n-space vertical size="small">
-          <n-text depth="3" style="font-size:12.5px">
+      <n-card>
+        <template #header>
+          {{ t('settings.rerankTitle') }}<n-popover trigger="hover" placement="right-start" :style="{ maxWidth: '440px' }">
+            <template #trigger>
+              <n-button text size="tiny" style="font-size:12px;padding:0 0 0 4px;vertical-align:middle">ⓘ</n-button>
+            </template>
             {{ t('settings.rerankHint') }}
-          </n-text>
+          </n-popover>
+        </template>
+        <n-space vertical size="small">
           <n-space size="small" align="center" style="margin-top:4px">
             <n-switch
               :value="rerank?.enabled || false"

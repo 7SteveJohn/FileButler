@@ -380,6 +380,7 @@ export default {
     fetchModels: 'Fetch model list', embed: 'Embeddings',
     vecModelPh: 'Embedding model name', vecModelPh2: 'Embedding model, e.g. text-embedding-3-small',
     provHint: 'LM Studio: start its local server then click "Detect local server" to fill these in — no key needed; pick "local bge-m3" for embeddings and it stays free. The key is stored only in your local database and never passes through a third party other than the provider you configured.',
+    provHintLabel: 'How access works',
     saveProvider: 'Save', testConn: 'Test', detectLocal: 'Detect local server',
     chatReason: 'Chat: {v}', embedReason: 'Embeddings: {v}',
     testOk: '✓ Connected · {ms}ms · replied "{reply}"',
