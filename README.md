@@ -48,7 +48,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 
 > **Requirements**: Windows 10 / 11, 64-bit. Search, preview, organizing and deduplication are fully local and need no external service.
 >
-> **About the installer**: it is **not code-signed**, so Windows SmartScreen may warn about an "unknown publisher" — click **More info → Run anyway**. Every release carries the installer's SHA-256 so you can verify the download yourself.
+> **About the installer**: it is **not code-signed**, so Windows SmartScreen may warn about an "unknown publisher" — click **More info → Run anyway**.
 
 ## What it does
 
@@ -255,7 +255,7 @@ cd frontend && npm run build && cd ..
 
 FileButler stands on the shoulders of open source — special thanks to Xiaomi's **[Xiaomi-OCR-0](https://github.com/xiaomi-research/Xiaomi-OCR-0)**, an open 0.8B document-parsing model that powers the scanned-document OCR.
 
-Also thanks to [Qwen3](https://github.com/QwenLM/Qwen3) (chat), [bge-m3](https://huggingface.co/BAAI/bge-m3) (embeddings), [pywebview](https://pywebview.flow.dev/), [PyMuPDF](https://pymupdf.readthedocs.io/), [pypinyin](https://github.com/mozillazg/python-pinyin) and [Naive UI](https://www.naiveui.com/), and to every contributor of the projects FileButler depends on.
+Also thanks to [Qwen3](https://github.com/QwenLM/Qwen3) (chat), [bge-m3](https://huggingface.co/BAAI/bge-m3) (embeddings), [pywebview](https://pywebview.flow.dev/), [PyMuPDF](https://pymupdf.readthedocs.io/), [pypinyin](https://github.com/mozillazg/python-pinyin) and [Naive UI](https://www.naiveui.com/).
 
 ## License
 

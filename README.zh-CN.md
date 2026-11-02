@@ -47,7 +47,7 @@ AI 默认跑在你本机的 [Ollama](https://ollama.com) 开源模型上——�
 
 > **系统要求**：Windows 10 / 11 64 位。搜索、预览、整理、去重全部本地完成，不依赖任何外部服务。
 >
-> **安装说明**：安装包未做代码签名，Windows SmartScreen 可能提示「未知发布者」——点「更多信息」→「仍要运行」即可；每个 Release 附有安装包的 SHA-256，可自行核对下载是否完整。
+> **安装说明**：安装包未做代码签名，Windows SmartScreen 可能提示「未知发布者」——点「更多信息」→「仍要运行」即可。
 
 ## 它到底能做什么
 
@@ -259,7 +259,7 @@ cd frontend && npm run build && cd ..
 
 FileButler 站在这些开源项目的肩膀上，特别感谢小米开源的 **[Xiaomi-OCR-0](https://github.com/xiaomi-research/Xiaomi-OCR-0)**——0.8B 的文档解析模型，本应用扫描件 OCR 能力的核心。
 
-同时感谢 [Qwen3](https://github.com/QwenLM/Qwen3)（对话模型）、[bge-m3](https://huggingface.co/BAAI/bge-m3)（向量检索）、[pywebview](https://pywebview.flow.dev/)、[PyMuPDF](https://pymupdf.readthedocs.io/)、[pypinyin](https://github.com/mozillazg/python-pinyin) 与 [Naive UI](https://www.naiveui.com/)，以及所有被依赖项目的开源贡献者。
+同时感谢 [Qwen3](https://github.com/QwenLM/Qwen3)（对话模型）、[bge-m3](https://huggingface.co/BAAI/bge-m3)（向量检索）、[pywebview](https://pywebview.flow.dev/)、[PyMuPDF](https://pymupdf.readthedocs.io/)、[pypinyin](https://github.com/mozillazg/python-pinyin) 与 [Naive UI](https://www.naiveui.com/)。
 
 ## 许可证
 
