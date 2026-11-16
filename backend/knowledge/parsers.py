@@ -12,11 +12,12 @@ from backend.core.scanner import TEXT_EXTS
 # 生效版本见 parse_ver()：基础版本之外还会带上 OCR 模型设置，
 # 启停/更换 OCR 模型无需动这里也会触发扫描件重解析
 # v3: HTML 从「整文件按文本读」改为剥标签取正文；新增 eml 邮件解析
-PARSE_VER = "3"
+# v4: 文本型 PDF 也按页加 [第N页] 标记（此前只有扫描件/PPT 有），问答来源才能给页码
+PARSE_VER = "4"
 
-# 知识库支持的扩展名
+# 知识库支持的扩展名（doc 是旧版二进制 Word，无法按文本安全解析，不列入）
 SUPPORTED = {
-    "pdf", "docx", "pptx", "xlsx", "doc", "md", "markdown", "txt", "csv",
+    "pdf", "docx", "pptx", "xlsx", "md", "markdown", "txt", "csv",
 } | TEXT_EXTS | {"eml"}
 
 # 扫描件 OCR 可选的专用视觉模型（设置项 ocr_model，Ollama 模型名）。
@@ -66,9 +67,6 @@ def parse_file(path):
             return _parse_html(path)
         if ext in TEXT_EXTS:
             return _parse_text(path)
-        # doc（旧版二进制格式）python-docx 打不开时尝试按文本读
-        if ext == "doc":
-            return _parse_text(path) or None
         return None
     except Exception:
         return None
@@ -185,11 +183,18 @@ def _parse_pdf(path):
 
 
 def _pdf_text_fitz(path):
+    # 逐页加 [第N页] 标记：chunker 把它当块标题，rag._locator 据此给出页码。
+    # 只给有文字的页加，否则空白 PDF 会因标记本身凑够长度而被误判成文本版。
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(path)
         try:
-            return "\n\n".join((page.get_text(sort=True) or "") for page in doc).strip()
+            parts = []
+            for i, page in enumerate(doc):
+                t = (page.get_text(sort=True) or "").strip()
+                if t:
+                    parts.append(f"[第{i + 1}页]\n{t}")
+            return "\n\n".join(parts).strip()
         finally:
             doc.close()
     except Exception:
@@ -200,7 +205,12 @@ def _pdf_text_pypdf(path):
     try:
         from pypdf import PdfReader
         reader = PdfReader(path)
-        return "\n\n".join((p.extract_text() or "") for p in reader.pages).strip()
+        parts = []
+        for i, p in enumerate(reader.pages):
+            t = (p.extract_text() or "").strip()
+            if t:
+                parts.append(f"[第{i + 1}页]\n{t}")
+        return "\n\n".join(parts).strip()
     except Exception:
         return ""
 

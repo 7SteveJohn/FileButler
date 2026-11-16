@@ -50,15 +50,26 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 >
 > **About the installer**: it is **not code-signed**, so Windows SmartScreen may warn about an "unknown publisher" — click **More info → Run anyway**.
 
+## What needs configuring
+
+| Capability | Requirement |
+|---|---|
+| Search, preview, batch operations, duplicate detection, organizing with undo, cleanup, disk usage, weekly report, backups, config import/export | Works right after install — no model needed |
+| Q&A, natural-language search, AI classification, AI rename, file summaries | Needs a chat model: local Ollama / LM Studio / any OpenAI-compatible API |
+| Semantic image search, searching text inside images | Enable "Image semantic search" in Settings; uses the vision model when installed, otherwise Windows built-in OCR |
+| Automatic knowledge-base indexing, global hotkey, launch at login, reranking | Off by default — enable in Settings |
+| iPhone HEIC photos | Works right after install: thumbnails, full-size preview, capture date, similar-image detection |
+| Legacy `.doc` | Not parsed or previewed — save it as `.docx` in Word |
+
 ## What it does
 
 ### 🔍 Finding files — more than filename matching
 
 - **Automatic cataloging (Everything-style, read-only)**: scans your user folders — Desktop / Documents / Downloads / Pictures / Videos / Music — on startup, watches for changes in the background, new files become searchable within seconds
 - **Search syntax**: `ext:pdf`, `size:>100mb`, `dm:week`, `path:Desktop`, `cat:图片`, freely combined with keywords — `path:` matches the real on-disk path (Windows user folders are literally named `Desktop`; unlike `dm:`/`cat:` it takes no translated values). Long tokens go through an FTS5 full-text index, with pinyin and pinyin-initials matching for Chinese filenames (`baogao`, `bg` → 报告), sortable by relevance. Date keywords accept English (`today` / `week` / `month` / `year`) or Chinese (`本周` / `本月`); `cat:` values are the backend's fixed Chinese labels (`图片`, `文档`, …) in either UI language — the category tags shown in the list are display-only translations
-- **Real capture dates for photos**: date filters prefer EXIF capture time, so copying or reorganizing files never scrambles a photo timeline; files without EXIF fall back to modified time
+- **Real capture dates for photos**: date filters prefer EXIF capture time, so copying or reorganizing files never scrambles a photo timeline; files without EXIF fall back to modified time. iPhone HEIC works too — thumbnails, full-size preview, capture date and similar-image detection
 - **Natural-language search**: "that quote from last month" resolves through a local vector index (requires Ollama)
-- **Semantic image search + OCR**: a vision model (qwen2.5vl) captions images and transcribes the text inside them — search "sunset" for photos, search an invoice number for a screenshot. Without a vision model it degrades to the built-in Windows OCR
+- **Semantic image search + OCR**: a vision model (qwen2.5vl) captions images and transcribes the text inside them — search "sunset" for photos, search an invoice number for a screenshot. Without a vision model it degrades to the built-in Windows OCR (off by default; enable it in Settings)
 - **Built-in preview**: plain text and source code inline, rendered Markdown, PDFs opened in-window, full-size image preview; `Ctrl+F` focuses search, double-click opens the file
 - **Filters you don't have to rebuild**: save the current filter set and reopen it later; star, tag and annotate files you return to
 - **Batch operations**: multi-select to move / copy / rename / delete (to Recycle Bin) / copy path
@@ -67,7 +78,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 
 ### 💬 Asking your documents — a knowledge base that answers
 
-- **Automatic knowledge base**: new documents in watched folders are parsed, chunked and embedded on arrival (can be disabled). Content search and Q&A work without building an index by hand. Supported formats include PDF, Office documents, `.eml` mail, HTML, plain text and source code
+- **Automatic knowledge base**: off by default — flip the switch and new documents in watched folders are parsed, chunked and embedded on arrival, so content search and Q&A work without building an index by hand (while off you can still index a folder manually). Supported formats include PDF, Office documents (except legacy `.doc` — save it as `.docx` first), `.eml` mail, HTML, plain text and source code
 - **Q&A plus retrieval**: search raw passages only, or have a local model answer grounded in them. Retrieval fuses vectors with keyword search (reciprocal rank fusion), so keyword hits still work — with citations — even with no model installed. Follow-up questions rewrite the retrieval query automatically, and answers cite their sources (file · section · page)
 - **Optional reranking**: a local reranker (bge-reranker-v2-m3, CPU inference) can re-read and reorder the top results for tighter precision. Off by default, and any failure falls back to plain fusion ranking
 - **Index any folder**: add directories to the knowledge base manually
@@ -85,7 +96,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 - **Dashboard**: library size, this week's activity, disk usage by category and top directories on one screen
 - **Weekly report**: new files, total size, category breakdown and largest files, exportable
 - **Model management**: detects RAM and VRAM, recommends a suitable model, shows installed models with disk usage, one-click download and delete (with confirmation)
-- **Tray resident + global hotkey**: closing the window minimizes to tray; `Alt+Space` summons it by default; optional launch at login
+- **Tray resident + global hotkey**: closing the window minimizes to tray; the global hotkey is opt-in (default combo `Alt+Space`, changeable in Settings); optional launch at login
 - **Dark mode**: follow the system or set it manually
 - **Relocatable data directory**: move the database and caches anywhere through a pointer file with integrity checks
 - **Database backups**: automatic daily backup on exit, five kept; manual backup / restore / vacuum from Settings

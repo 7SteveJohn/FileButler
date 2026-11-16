@@ -172,8 +172,8 @@ def ocr_image(pil_im):
 
 def ocr_file(path):
     """图片文件 → 识别文本。"""
-    from PIL import Image
-    with Image.open(path) as im:
+    from backend import imgdecode
+    with imgdecode.open_image(path) as im:
         return ocr_image(im)
 
 

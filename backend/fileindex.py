@@ -105,9 +105,10 @@ def _photo_time_of(path):
     watcher 单文件路径可直接调用；全量扫描不读 EXIF（十几万张会把
     扫描拖长十几分钟），存量由 backfill 后台线程补齐。"""
     try:
-        from PIL import Image
-        with Image.open(path) as im:
-            exif = im._getexif()
+        from backend import imgdecode
+        with imgdecode.open_image(path) as im:
+            # 用公开的 getexif()：HEIC（pillow-heif）没有 JPEG 专用的 _getexif()
+            exif = im.getexif()
         if not exif:
             return None
         raw = exif.get(36867) or exif.get(36868) or exif.get(306)  # 拍摄/数字化/修改

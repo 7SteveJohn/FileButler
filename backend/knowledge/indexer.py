@@ -216,6 +216,10 @@ def _index_file_into_kb(client, fi, folder_id):
     mtime+size；11MB 扫描件算一遍哈希 = 白读一遍盘）。"""
     if folder_id is None:
         return "skip"
+    # 旧版 .doc 已不再声明支持：跳过而不是记为解析失败，
+    # 否则「失败文件」列表里会堆一片永远修不好的条目
+    if os.path.splitext(fi["path"])[1].lstrip(".").lower() == "doc":
+        return "skip"
     text = parsers.parse_file(fi["path"])
     if not text:
         _mark_parse_failed(folder_id, fi)

@@ -861,7 +861,7 @@ class Api:
             "kb": db.stats(),
             "winocr": winocr_status,
             "images_by_year": db.get_setting("images_by_year", "1"),
-            "auto_kb": db.get_setting("auto_kb", "1") == "1",
+            "auto_kb": db.get_setting("auto_kb", "0") == "1",
             "auto_start_ollama": db.get_setting("auto_start_ollama", "1") == "1",
             "stop_ollama_on_exit": db.get_setting("stop_ollama_on_exit", "1") == "1",
             "img_semantic": db.get_setting("img_semantic", "0") == "1",
@@ -1109,13 +1109,19 @@ class Api:
                     n += 1
             counts["templates"] = n
             id_map = {}
+            n = 0
             for t in data.get("tags", []):
                 if t.get("name") is None:
                     continue
+                existed = conn.execute("SELECT 1 FROM tags WHERE name=?",
+                                       (t["name"],)).fetchone()
                 conn.execute("INSERT OR IGNORE INTO tags(name) VALUES(?)", (t["name"],))
+                if not existed:
+                    n += 1
                 row = conn.execute("SELECT id FROM tags WHERE name=?",
                                    (t["name"],)).fetchone()
                 id_map[t.get("id")] = row["id"] if row else None
+            counts["tags"] = n
             n = 0
             for ft in data.get("file_tags", []):
                 tid = id_map.get(ft.get("tag_id"))
@@ -2524,7 +2530,7 @@ class Api:
                 return {"type": "unknown", "name": os.path.basename(path)}
             except Exception as e:
                 return {"error": str(e), "name": os.path.basename(path)}
-        if ext in TEXT_EXTS or ext == "doc":
+        if ext in TEXT_EXTS:
             try:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read(500_000)

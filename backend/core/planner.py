@@ -22,8 +22,8 @@ def _image_subdir(src, by_year):
         return ""
     year = None
     try:
-        from PIL import Image
-        with Image.open(src) as im:
+        from backend import imgdecode
+        with imgdecode.open_image(src) as im:
             exif = im.getexif()
             # 0x9003 = DateTimeOriginal
             dt = exif.get(0x9003) or exif.get(0x0132)

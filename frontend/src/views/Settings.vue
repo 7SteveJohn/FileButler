@@ -586,7 +586,7 @@ onUnmounted(() => ciOffs.forEach((f) => f()))
 loadContentIndex()
 
 // ---------- 功能开关 ----------
-const autoKb = ref(true)
+const autoKb = ref(false)
 const autostart = ref(false)
 const autoStartOllama = ref(true)
 const stopOllamaOnExit = ref(true)
@@ -785,6 +785,44 @@ async function pickOrganizeRoot() {
     await api('set_auto_organize', autoOrganize.value.enabled, autoOrganize.value.mode, p)
     message.success(t('settings.m.orgRootSet'))
   }
+}
+
+// ---------- 配置导出 / 导入 ----------
+const importFileEl = ref(null)
+
+async function exportConfig() {
+  try {
+    const r = await api('export_config')
+    if (!r.ok) { message.error(t('settings.cfgExportFail', { e: r.error || '' })); return }
+    const blob = new Blob([r.json], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `FileButler-config-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    message.success(t('settings.cfgExported'))
+  } catch (e) { message.error(t('settings.cfgExportFail', { e: String(e) })) }
+}
+
+function triggerImport() {
+  if (importFileEl.value) importFileEl.value.click()
+}
+
+async function onImportFile(ev) {
+  const input = ev.target
+  const f = input.files && input.files[0]
+  input.value = ''   // 清空，允许连续导入同一个文件
+  if (!f) return
+  try {
+    const text = await f.text()
+    const r = await api('import_config', text)
+    if (!r.ok) { message.error(t('settings.cfgImportFail', { e: r.error || '' })); return }
+    const n = Object.values(r.counts || {}).reduce((a, b) => a + b, 0)
+    message.success(t('settings.cfgImportOk', { n }))
+    loadRules().then(applyFilter)
+    loadExcludes()
+  } catch (e) { message.error(t('settings.cfgImportFail', { e: String(e) })) }
 }
 
 // ---------- 关于 ----------
@@ -1474,6 +1512,20 @@ onMounted(() => {
               <n-text depth="3" style="display:block;font-size:12px">
                 {{ t('settings.stopOllamaOnExitHint') }}
               </n-text>
+            </div>
+          </n-space>
+
+          <n-space item-style="display:flex;align-items:center;gap:10px">
+            <n-switch :value="hotkey.enabled" @update:value="toggleHotkey" />
+            <div>
+              <n-text strong>{{ t('settings.hotkey') }}</n-text>
+              <n-text depth="3" style="display:block;font-size:12px">
+                {{ t('settings.hotkeyHint', { k: hotkey.hotkey }) }}
+              </n-text>
+              <n-input-group style="margin-top:6px;max-width:300px">
+                <n-input v-model:value="hotkey.hotkey" size="small" placeholder="Alt+Space" />
+                <n-button size="small" @click="saveHotkeyCombo">{{ t('settings.hotkeyApply') }}</n-button>
+              </n-input-group>
             </div>
           </n-space>
 

@@ -59,7 +59,8 @@ def generate_thumb(src_path):
             return cache
         try:
             from PIL import Image, ImageOps
-            with Image.open(src_path) as im:
+            from backend import imgdecode
+            with imgdecode.open_image(src_path) as im:
                 im = ImageOps.exif_transpose(im)   # EXIF 方向矫正
                 if im.mode not in ("RGB", "L"):
                     im = im.convert("RGB")
@@ -254,6 +255,20 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         ext = os.path.splitext(src)[1].lstrip(".").lower()
+        if ext in ("heic", "heif"):
+            # 浏览器不解 HEIC：转成 JPEG 再发，这是 iPhone 照片唯一可预览的路径
+            try:
+                from backend import imgdecode
+                data = imgdecode.jpeg_bytes(src)
+            except Exception:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         ctype = {
             "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
             "gif": "image/gif", "bmp": "image/bmp", "webp": "image/webp",

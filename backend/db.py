@@ -590,6 +590,23 @@ def init_db():
                 [(chunk_btext(r["text"]), r["id"]) for r in conn.execute(
                     "SELECT id, text FROM chunks "
                     "WHERE btext IS NULL AND text IS NOT NULL").fetchall()])
+            # v1.4.4：.doc 不再声明支持（旧版二进制 Word 当文本读只会入库乱码）。
+            # 清掉历史残留：kb_files/chunks 与正文索引两套都要删，否则乱码仍能被搜到。
+            # 无匹配时只是一次 kb_files 扫描，有匹配才碰 chunks，启动开销可忽略。
+            stale = conn.execute(
+                "SELECT id FROM kb_files WHERE path LIKE '%.doc'").fetchall()
+            for r in stale:
+                conn.execute("DELETE FROM chunks WHERE file_id=?", (r["id"],))
+                conn.execute("DELETE FROM kb_files WHERE id=?", (r["id"],))
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='doc_content_state'").fetchone():
+                rows = conn.execute("SELECT fts_rowid FROM doc_content_state "
+                                    "WHERE path LIKE '%.doc'").fetchall()
+                for r in rows:
+                    if r["fts_rowid"]:
+                        conn.execute("DELETE FROM doc_content_fts WHERE rowid=?",
+                                     (r["fts_rowid"],))
+                conn.execute("DELETE FROM doc_content_state WHERE path LIKE '%.doc'")
             conn.commit()
             _ensure_fts(conn)
             _ensure_chunk_fts(conn)

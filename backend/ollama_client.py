@@ -444,8 +444,14 @@ class OllamaClient:
     def describe_image(self, image_path, vl_model):
         """用视觉模型生成图片中文描述 + 图中文字转录（用于图片语义搜索）。"""
         import base64
-        with open(image_path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode("ascii")
+        from backend import imgdecode
+        # HEIC 模型不认，先转 JPEG；其它格式保持原样上传，避免改变既有识别质量
+        if imgdecode.is_heic(image_path):
+            raw = imgdecode.jpeg_bytes(image_path)
+        else:
+            with open(image_path, "rb") as f:
+                raw = f.read()
+        b64 = base64.b64encode(raw).decode("ascii")
         s = _session_for(self.host)
         r = s.post(
             f"{self.host}/api/chat",

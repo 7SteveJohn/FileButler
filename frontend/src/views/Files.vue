@@ -723,6 +723,8 @@ function stepPreview(delta) {
 
 // ---------- 内置预览（文本/Markdown/PDF/图片） ----------
 const filePreview = ref(null)   // {type, content?, url?, name?}
+// 旧版 .doc 不支持预览与解析，给一句能照做的提示，而不是泛泛的「该格式不支持」
+const isLegacyDoc = (name) => /\.doc$/i.test(name || '')
 const previewLoading = ref(false)
 const summarizing = ref(false)
 const summaryText = ref(null)   // {ok, summary?, error?}
@@ -1405,7 +1407,8 @@ refresh()
         <div v-else-if="filePreview?.type === 'image'" class="fb-modal-image">
           <img :src="filePreview.url" :alt="filePreview.name" />
         </div>
-        <n-empty v-else-if="filePreview?.type === 'unknown'" :description="t('files.preview.unsupported')" />
+        <n-empty v-else-if="filePreview?.type === 'unknown'"
+          :description="isLegacyDoc(filePreview?.name) ? t('files.preview.docUnsupported') : t('files.preview.unsupported')" />
       </n-spin>
       <template #footer>
         <n-space>

@@ -129,8 +129,8 @@ def main():
         check("HTML 邮件剥标签取正文", "邮件里的正文段落" in (mtext or "")
               and "<p>" not in (mtext or ""), repr(mtext)[:100])
 
-        # PARSE_VER 已升到 3（HTML 行为变化触发旧库重解析）
-        check("PARSE_VER = 3", parsers.PARSE_VER == "3", parsers.PARSE_VER)
+        # PARSE_VER 已升到 4（文本型 PDF 也加页标记，触发旧库重解析）
+        check("PARSE_VER = 4", parsers.PARSE_VER == "4", parsers.PARSE_VER)
         check("SUPPORTED 含 eml", "eml" in parsers.SUPPORTED)
 
         print(f"\n{'ALL PASS' if FAIL == 0 else 'FAILURES'} ({PASS} passed, {FAIL} failed)")

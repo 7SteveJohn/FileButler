@@ -21,7 +21,8 @@ def dhash(path, hash_size=8):
     if Image is None:
         return None
     try:
-        with Image.open(path) as im:
+        from backend import imgdecode
+        with imgdecode.open_image(path) as im:
             im = im.convert("L").resize((hash_size + 1, hash_size), Image.LANCZOS)
         px = im.load()
         h = 0
