@@ -979,7 +979,7 @@ onMounted(() => {
     <n-space vertical size="large">
       <!-- ============ Ollama ============ -->
       <n-card :title="t('settings.ollamaTitle')">
-        <n-space vertical size="large">
+        <n-space vertical size="large" :key="'ollama-' + (status ? status.ollama.models.length : 0)">
           <n-alert v-if="ollamaDown" :type="hasApiConfig ? 'warning' : 'error'">
             {{ hasApiConfig
               ? t('settings.ollamaDownHasApi', { m: status.llm.api_chat_model })
