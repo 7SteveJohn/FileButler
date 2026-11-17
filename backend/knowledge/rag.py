@@ -72,21 +72,24 @@ def rrf_merge_by_file(channels, k=RRF_K):
     return [rep[p] for p, _ in sorted(scores.items(), key=lambda x: -x[1])]
 
 
-def _retrieve(query, k):
+def _retrieve(query, k, scope=None):
     """混合检索：返回 (picked, mode, query_vec)。
     picked 为 [(chunk_id, score)]，score 仅用于展示排序（hybrid 时是 RRF 分，
     vector 单路时是余弦，fts 单路时为 0）；query_vec 供图片语义通道复用，
-    嵌入不可用时为 None。mode ∈ hybrid / vector / fts / keyword。"""
+    嵌入不可用时为 None。mode ∈ hybrid / vector / fts / keyword。
+    scope 限定库文件夹/单文件，None 即全库。"""
+    allowed = db.chunk_ids_in_scope(scope)
     vec_hits = []
     query_vec = None
     if llm.embed_available():
         try:
             query_vec = llm.get_embed_client().embed_one(query)
-            vec_hits = db.vec_index.search(query_vec, k=max(k, FUSE_CHANNEL_K))
+            vec_hits = db.vec_index.search(query_vec, k=max(k, FUSE_CHANNEL_K),
+                                           allowed=allowed)
         except Exception:
             vec_hits = []
     try:
-        fts_ids = db.chunk_fts_search(query, k=max(k, FUSE_CHANNEL_K))
+        fts_ids = db.chunk_fts_search(query, k=max(k, FUSE_CHANNEL_K), scope=scope)
     except Exception:
         fts_ids = []
 
@@ -138,11 +141,12 @@ def _search_images(client, qv, k):
     return out
 
 
-def search(query, k=8):
+def search(query, k=8, scope=None):
     """混合检索（文档 + 图片描述/OCR 融合）；模型与 FTS 全不可用时降级 LIKE。
-    rerank 开启且可用时融合池扩到 50 精排回 top-k，结果附 reranked 标记。"""
+    rerank 开启且可用时融合池扩到 50 精排回 top-k，结果附 reranked 标记。
+    scope 限定库文件夹/单文件，None 即全库；图片语义通道不受 scope 约束。"""
     rerank_on = reranker.active()
-    picked, mode, qv = _retrieve(query, RERANK_POOL if rerank_on else k)
+    picked, mode, qv = _retrieve(query, RERANK_POOL if rerank_on else k, scope)
     results = []
     reranked = False
     if picked:
@@ -156,7 +160,7 @@ def search(query, k=8):
             if r:
                 results.append({**r, "score": round(score, 4)})
     if mode == "keyword":
-        results = db.keyword_search(query, k=k)
+        results = db.keyword_search(query, k=k, scope=scope)
 
     images = []
     if qv is not None:
@@ -233,11 +237,12 @@ def _parse_citations(answer, max_index):
     return out
 
 
-def ask(query, k=8, stream_cb=None, history=None):
+def ask(query, k=8, stream_cb=None, history=None, scope=None):
     """
     知识库问答。stream_cb(token) 逐段回调；返回 {"answer", "sources", "mode",
     "rewritten_query", "cited"}。rewritten_query 是检索实际用的词（改写未发生时
     等于原 query）；cited 是答案引用编号校验过滤后的列表。
+    scope 限定库文件夹/单文件，None 即全库。
     """
     client = llm.get_chat_client()
     if not llm.chat_available():
@@ -251,7 +256,8 @@ def ask(query, k=8, stream_cb=None, history=None):
         rewritten = _rewrite_query(client, query, history) or ""
     search_query = rewritten or query
 
-    picked, mode, _qv = _retrieve(search_query, RERANK_POOL if reranker.active() else k)
+    picked, mode, _qv = _retrieve(search_query, RERANK_POOL if reranker.active() else k,
+                                  scope)
     rows = _rows_in_order(picked) if picked else {}
     if reranker.active() and picked:
         picked = _apply_rerank(search_query, picked, rows, k)
@@ -285,6 +291,9 @@ def ask(query, k=8, stream_cb=None, history=None):
                     f"  - {p}" for p in listing)
             else:
                 answer = "知识库里还没有任何文件（点「+ 添加文件夹」索引文档后即可问答）。"
+        elif scope:
+            answer = ("在限定的范围内没有检索到相关内容。可以取消范围限制（切回「全部文档」）"
+                      "或换个说法再问一次。")
         else:
             answer = "知识库中没有检索到与问题相关的内容。可以先确认相关文件已加入知识库并完成索引，或者换个说法再问一次。"
         if stream_cb:

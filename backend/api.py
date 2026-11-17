@@ -1834,6 +1834,10 @@ class Api:
         """知识库里没能解析/嵌入成功的文件：回答"为什么这个文件搜不到"。"""
         return {"ok": True, "items": indexer.list_failed(folder_id)}
 
+    def kb_files(self, folder_id=None, limit=2000):
+        """已成功索引的文件清单，供问答范围选择（限定到单个文件）。"""
+        return {"ok": True, "items": db.kb_file_paths(folder_id=folder_id, limit=limit)}
+
     def kb_remove_folder(self, folder_id):
         indexer.remove_folder(folder_id)
         return {"ok": True}
@@ -1876,16 +1880,16 @@ class Api:
         ev.set()
         return {"ok": True}
 
-    def search(self, query, k=8):
-        return rag.search(query, k)
+    def search(self, query, k=8, scope=None):
+        return rag.search(query, k, scope=scope)
 
-    def ask(self, query, history=None):
-        """RAG 问答（同步执行；生成过程经 fb_event 流式推送）。"""
+    def ask(self, query, history=None, scope=None):
+        """RAG 问答（同步执行；生成过程经 fb_event 流式推送）。scope 限定范围。"""
         def cb(tok):
             self._emit("ask_delta", {"token": tok})
 
         try:
-            result = rag.ask(query, stream_cb=cb, history=history)
+            result = rag.ask(query, stream_cb=cb, history=history, scope=scope)
             self._emit("ask_done", result)
             return result
         except OllamaNotRunning as e:
@@ -2624,9 +2628,11 @@ class Api:
 
     # ---------- 重复文件清理 ----------
 
-    def dedupe_cleanup(self, groups, keep_rule="newest", dry_run=False):
-        """重复文件安全清理：每组保留一个，其余移入待清理文件夹（可撤销）。"""
-        return cleanup.dedupe_cleanup(groups, keep_rule=keep_rule, dry_run=dry_run)
+    def dedupe_cleanup(self, groups, keep_rule="newest", dry_run=False, keep_paths=None):
+        """重复文件安全清理：每组保留一个，其余移入待清理文件夹（可撤销）。
+        keep_paths：对比预览里人工指定要保留的文件，优先于 keep_rule。"""
+        return cleanup.dedupe_cleanup(groups, keep_rule=keep_rule, dry_run=dry_run,
+                                      keep_paths=keep_paths)
 
     # ---------- 每周报告 ----------
 

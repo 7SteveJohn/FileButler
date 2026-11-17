@@ -347,6 +347,9 @@ def chat_status():
             return {"ok": False, "code": "api_no_base", "reason": "服务地址未配置"}
         if not c.chat_model():
             return {"ok": False, "code": "api_no_model", "reason": "对话模型名未填写"}
+        # 云端服务没有密钥必然 401：提前给出可照做的提示，而不是等调用失败
+        if not api_key() and not is_local_base(api_base()):
+            return {"ok": False, "code": "api_no_key", "reason": "API Key 未填写"}
         return {"ok": True, "code": "api_local" if is_local_base(api_base()) else "api_cloud",
                 "reason": "本机服务" if is_local_base(api_base()) else "云端 API"}
     st = OllamaClient().status()
@@ -377,6 +380,8 @@ def embed_status():
     if not c.embed_model():
         return {"ok": False, "code": "embed_no_model",
                 "reason": "向量模型名未填写（或改用本地 bge-m3）"}
+    if not api_key() and not is_local_base(api_base()):
+        return {"ok": False, "code": "api_no_key", "reason": "API Key 未填写"}
     local = is_local_base(api_base())
     return {"ok": True, "code": "embed_api_local" if local else "embed_api_cloud",
             "args": {"model": c.embed_model()},

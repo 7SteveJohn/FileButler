@@ -70,7 +70,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 - **Real capture dates for photos**: date filters prefer EXIF capture time, so copying or reorganizing files never scrambles a photo timeline; files without EXIF fall back to modified time. iPhone HEIC works too — thumbnails, full-size preview, capture date and similar-image detection
 - **Natural-language search**: "that quote from last month" resolves through a local vector index (requires Ollama)
 - **Semantic image search + OCR**: a vision model (qwen2.5vl) captions images and transcribes the text inside them — search "sunset" for photos, search an invoice number for a screenshot. Without a vision model it degrades to the built-in Windows OCR (off by default; enable it in Settings)
-- **Built-in preview**: plain text and source code inline, rendered Markdown, PDFs opened in-window, full-size image preview; `Ctrl+F` focuses search, double-click opens the file
+- **Built-in preview**: plain text and source code inline, rendered Markdown, PDFs opened in-window, full-size image preview; `Ctrl+F` focuses search, double-click opens the file; opening a content-search hit jumps straight to the matching PDF page and highlights the term in text files
 - **Filters you don't have to rebuild**: save the current filter set and reopen it later; star, tag and annotate files you return to
 - **Batch operations**: multi-select to move / copy / rename / delete (to Recycle Bin) / copy path
 - **Two small utilities**: OCR text extraction from images, and SHA-256 checksums for any file
@@ -79,7 +79,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 ### 💬 Asking your documents — a knowledge base that answers
 
 - **Automatic knowledge base**: off by default — flip the switch and new documents in watched folders are parsed, chunked and embedded on arrival, so content search and Q&A work without building an index by hand (while off you can still index a folder manually). Supported formats include PDF, Office documents (except legacy `.doc` — save it as `.docx` first), `.eml` mail, HTML, plain text and source code
-- **Q&A plus retrieval**: search raw passages only, or have a local model answer grounded in them. Retrieval fuses vectors with keyword search (reciprocal rank fusion), so keyword hits still work — with citations — even with no model installed. Follow-up questions rewrite the retrieval query automatically, and answers cite their sources (file · section · page)
+- **Q&A plus retrieval**: search raw passages only, or have a local model answer grounded in them. Retrieval fuses vectors with keyword search (reciprocal rank fusion), so keyword hits still work — with citations — even with no model installed. Follow-up questions rewrite the retrieval query automatically, and answers cite their sources (file · section · page). You can scope a question to one library folder or a single file
 - **Optional reranking**: a local reranker (bge-reranker-v2-m3, CPU inference) can re-read and reorder the top results for tighter precision. Off by default, and any failure falls back to plain fusion ranking
 - **Index any folder**: add directories to the knowledge base manually
 - **Conversation history**: sessions are saved; revisit, continue or delete them from the sidebar
@@ -87,7 +87,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 ### 🗂️ Organizing and cleaning — you see the plan first
 
 - **Smart organizing**: triggered manually; rules plus a local LLM classify files in bulk → a plan is generated → you review and tick each item → moves are executed → **the whole batch can be undone** (and redone). Plans can be saved as templates
-- **Duplicate detection with safe cleanup**: three-level hashing finds duplicates → keep-rules (newest / oldest / shortest path) pick the survivor → the rest move to a quarantine folder (not deleted, fully undoable)
+- **Duplicate detection with safe cleanup**: three-level hashing finds duplicates → keep-rules (newest / oldest / shortest path) pick the survivor → the rest move to a quarantine folder (not deleted, fully undoable). Each group can be opened in a **side-by-side compare** view so you pick the keeper yourself
 - **Two extra health checks**: find large files, detect conflicting copies
 - **Never a silent move**: every operation is logged (time / source path / destination path) and undoable per batch
 

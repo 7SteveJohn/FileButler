@@ -46,7 +46,7 @@ class _State:
     rerank_calls = []
 
 
-def _stub_retrieve(query, k):
+def _stub_retrieve(query, k, scope=None):
     _State.retrieve_k = k
     return list(_PICKED_RRF), "hybrid", None
 
@@ -147,7 +147,7 @@ def test_rerank_fallback():
         restore()
 
     # 只有 1 条候选：不打分直接返回
-    def _one(query, k):
+    def _one(query, k, scope=None):
         return [(1, 0.9)], "vector", None
     _State.rerank_calls.clear()
     restore = _patch(retrieve=_one, rerank_obj=_StubReranker(), active=True)

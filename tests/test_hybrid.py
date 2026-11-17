@@ -165,7 +165,7 @@ def test_rag_channels():
 
         llm.get_embed_client = lambda: _FakeClient()
         orig_vec_search = db.vec_index.search
-        db.vec_index.search = lambda qv, k=8: [(other_id, 0.99), (a_id, 0.10)][:k]
+        db.vec_index.search = lambda qv, k=8, allowed=None: [(other_id, 0.99), (a_id, 0.10)][:k]
         try:
             r = rag.search("运费怎么结算", k=2)
             assert r["mode"] == "hybrid", r["mode"]

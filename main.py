@@ -294,6 +294,11 @@ def main():
     else:
         dist = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist", "index.html")
         url = dist if os.path.exists(dist) else "http://localhost:5173"
+    # 记下实际加载的前端文件与大小：排查「界面和代码对不上」时，
+    # 第一件事就是确认页面到底从哪加载、是不是同一个产物
+    applog.get().info("frontend url=%s exists=%s size=%s",
+                      url, os.path.exists(url),
+                      os.path.getsize(url) if os.path.exists(url) else 0)
 
     window = webview.create_window(
         f"FileButler v{_version()} · 本地智能文件管家",

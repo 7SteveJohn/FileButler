@@ -723,6 +723,7 @@ function stepPreview(delta) {
 
 // ---------- 内置预览（文本/Markdown/PDF/图片） ----------
 const filePreview = ref(null)   // {type, content?, url?, name?}
+const previewQuery = ref('')    // 从内容搜索进来时的关键词，用于文本高亮
 // 旧版 .doc 不支持预览与解析，给一句能照做的提示，而不是泛泛的「该格式不支持」
 const isLegacyDoc = (name) => /\.doc$/i.test(name || '')
 const previewLoading = ref(false)
@@ -762,18 +763,42 @@ async function copySummary() {
   }
 }
 
-async function previewFile(it) {
+async function previewFile(it, opts = {}) {
   previewLoading.value = true
+  previewQuery.value = opts.q || ''      // 只有从内容搜索进来才高亮，普通打开不留旧词
   try {
     const r = await api('preview_file', it.path)
     if (r.type === 'image' || r.type === 'pdf') {
       r.url = `http://127.0.0.1:${thumbBase.value.split(':').pop()}/preview?p=${encodeURIComponent(it.path)}`
+      // PDF 命中页码：Chromium 内置阅读器认 #page=N（片断不发往服务端）
+      if (r.type === 'pdf' && opts.page) r.url += `#page=${opts.page}`
     }
     r.path = it.path
     filePreview.value = r
   } catch (e) { message.error(String(e)) }
   previewLoading.value = false
 }
+
+// 文本预览的命中高亮：拆成片段渲染，不走 v-html，避免把文件内容当 HTML 解析
+const previewHits = computed(() => {
+  const text = filePreview.value?.type === 'text' ? filePreview.value.content : ''
+  const q = previewQuery.value
+  if (!text || !q) return null
+  const lower = text.toLowerCase()
+  const lq = q.toLowerCase()
+  const out = []
+  let i = 0
+  while (out.length < 400) {
+    const at = lower.indexOf(lq, i)
+    if (at === -1) break
+    if (at > i) out.push({ t: text.slice(i, at) })
+    out.push({ t: text.slice(at, at + q.length), hit: true })
+    i = at + q.length
+  }
+  if (!out.length) return null
+  if (i < text.length) out.push({ t: text.slice(i) })
+  return out
+})
 
 function renderMd(src) {
   // 轻量 Markdown 渲染（无外部依赖）：标题/加粗/代码/链接/列表
@@ -943,7 +968,13 @@ async function searchContent() {
   } catch (e) { message.error(String(e)) }
   contentLoading.value = false
 }
-function openContentFile(p) { api('open_path', p) }
+// 内容命中：图片走灯箱，其余走内置预览；PDF 按命中块的 [第N页] 直接定位
+function openContentFile(p, hint) {
+  if (isContentImg({ file_path: p })) { openPreviewByPath(p); return }
+  const m = /\[第(\d+)页\]/.exec(hint || '')
+  return previewFile({ path: p }, { page: m ? Number(m[1]) : 0,
+    q: (query.value || '').trim() })
+}
 function isContentImg(r) {
   return r.type === 'image' || /\.(jpe?g|png|gif|bmp|webp)$/i.test(r.file_path || '')
 }
@@ -1255,7 +1286,7 @@ refresh()
           <div style="max-height:300px;overflow:auto">
             <div v-for="(r, i) in contentResults.results" :key="i"
               style="padding:6px 0;border-bottom:1px dashed #eee">
-              <n-text class="mono" style="cursor:pointer;color:#5a9cf8" @click="openContentFile(r.file_path)">
+              <n-text class="mono" style="cursor:pointer;color:#5a9cf8" @click="openContentFile(r.file_path, r.text)">
                 📄 {{ r.file_path }}
               </n-text>
               <div style="color:#666;font-size:12px;margin-top:2px">{{ (r.text || '').slice(0, 160) }}…</div>
@@ -1399,7 +1430,7 @@ refresh()
         <div v-else-if="filePreview?.type === 'html'" class="fb-office"
           v-html="filePreview.content"></div>
         <pre v-else-if="filePreview?.type === 'text'" class="mono"
-          style="white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.6">{{ filePreview.content }}</pre>
+          style="white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.6"><template v-if="previewHits"><span v-for="(s, i) in previewHits" :key="i" :class="{ 'fb-hit': s.hit }">{{ s.t }}</span></template><template v-else>{{ filePreview.content }}</template></pre>
         <iframe v-else-if="filePreview?.type === 'pdf'" :src="filePreview.url"
           style="width:100%;height:70vh;border:0;border-radius:6px"></iframe>
         <video v-else-if="filePreview?.type === 'video'" :src="filePreview.url"
@@ -1424,6 +1455,7 @@ refresh()
 </template>
 
 <style scoped>
+.fb-hit { background: #ffe08a; color: #1a1a1a; border-radius: 2px; padding: 0 1px; }
 .md-body { line-height: 1.7; }
 .md-body :deep(h1) { font-size: 1.5em; margin: 0.6em 0 0.3em; }
 .md-body :deep(h2) { font-size: 1.3em; margin: 0.6em 0 0.3em; }

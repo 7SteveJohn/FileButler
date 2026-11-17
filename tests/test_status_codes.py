@@ -86,8 +86,15 @@ def test_chat_status_codes():
 
         llm.api_base = lambda: "https://api.deepseek.com/v1"
         llm.is_local_base = lambda b: False
+        # 云端没密钥：先提示补 Key，而不是等真正调用时 401
+        orig_key = llm.api_key
+        llm.api_key = lambda: ""
+        r = llm.chat_status()
+        check("api 云端缺 Key → api_no_key", r["code"] == "api_no_key" and not r["ok"], r)
+        llm.api_key = lambda: "sk-test"
         r = llm.chat_status()
         check("api 云端 → api_cloud", r["code"] == "api_cloud" and r["ok"], r)
+        llm.api_key = orig_key
         llm.OpenAICompatClient = orig_client
 
         llm.mode = lambda: "ollama"

@@ -174,7 +174,56 @@ const dedupeColumns = computed(() => [
       onClick: () => api('open_path', p),
       title: p,
     }, (i === 0 ? t('org.keepSuggest') : t('org.dupMark')) + p))) },
+  compareCol('dup'),
 ])
+
+// ---------- 组内对比预览（重复文件与相似图共用） ----------
+const compare = ref(null)          // {hash, paths: [], keep: '', from: 'dup' | 'sim'}
+const comparing = ref(false)
+const thumbBase = ref(null)
+const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'tiff', 'ico', 'svg'])
+
+const isImgPath = (p) => IMG_EXT.has((p.split('.').pop() || '').toLowerCase())
+
+function thumbUrl(p) {
+  const b = thumbBase.value
+  if (!b) return ''
+  const ext = (p.split('.').pop() || '').toLowerCase()
+  return isImgPath(p) ? `${b}/thumb?p=${encodeURIComponent(p)}`
+    : `${b}/icon?ext=${encodeURIComponent(ext)}`
+}
+
+async function openCompare(row, from) {
+  if (!thumbBase.value) {
+    try { thumbBase.value = (await api('get_status')).thumb_base } catch (e) { /* 图标缺失不影响选留 */ }
+  }
+  compare.value = { hash: row.hash, paths: [...row.paths], keep: row.paths[0], from }
+}
+
+const compareCol = (from) => ({
+  title: '', key: 'cmp', width: 78,
+  render: (r) => h(NButton, {
+    size: 'tiny', quaternary: true, type: 'primary',
+    onClick: () => openCompare(r, from),
+  }, { default: () => t('org.compare') }),
+})
+
+async function cleanupCompare() {
+  const c = compare.value
+  if (!c || !c.keep) return
+  comparing.value = true
+  try {
+    const r = await api('dedupe_cleanup', [{ hash: c.hash, paths: c.paths }],
+      keepRule.value, false, [c.keep])
+    message.success(t('org.msgMovedClean', { moved: r.moved, kept: r.kept, id: r.batch_id }))
+    // 只摘掉这一组：其余组的检测结果依然有效，不必重跑整轮检测
+    const list = c.from === 'sim' ? similar.value : dedupe.value
+    if (list) list.groups = list.groups.filter((g) => g.hash !== c.hash)
+    compare.value = null
+    loadHistory()
+  } catch (e) { message.error(String(e)) }
+  comparing.value = false
+}
 
 // ---------- 重复清理 ----------
 const selectedDupGroups = ref([])
@@ -250,6 +299,7 @@ const simColumns = computed(() => [
         class: 'mono', style: 'font-size:12px;color:' + (i === 0 ? '#18a058' : '#888'),
       }, (i === 0 ? t('org.keepSuggest') : t('org.simMark')) + p),
     ]))) },
+  compareCol('sim'),
 ])
 
 const simColumnsWithSelection = computed(() => [{ type: 'selection' }, ...simColumns.value])
@@ -711,6 +761,36 @@ loadTemplates()
       </n-tab-pane>
     </n-tabs>
 
+    <!-- 组内对比：亲自看一眼再决定留哪一个 -->
+    <n-modal :show="!!compare" preset="card" :title="t('org.cmpTitle')" style="width:880px"
+      @update:show="(v) => { if (!v) compare = null }">
+      <n-space vertical size="medium">
+        <n-text depth="3" style="font-size:12px">{{ t('org.cmpHint') }}</n-text>
+        <div class="fb-cmp-grid">
+          <div v-for="p in (compare?.paths || [])" :key="p" class="fb-cmp-card"
+            :class="{ 'is-keep': compare?.keep === p }" @click="compare.keep = p">
+            <img v-if="isImgPath(p) && thumbBase" :src="thumbUrl(p)" alt="" class="fb-cmp-img" />
+            <div v-else class="fb-cmp-noimg">{{ (p.split('.').pop() || '').toUpperCase() }}</div>
+            <div class="fb-cmp-name" :title="p">{{ p.split(/[\\/]/).pop() }}</div>
+            <div class="fb-cmp-meta mono" :title="p">{{ p }}</div>
+            <n-space size="small" align="center" style="margin-top:6px">
+              <n-tag v-if="compare?.keep === p" size="tiny" type="success">{{ t('org.cmpKeep') }}</n-tag>
+              <n-button v-else size="tiny" quaternary @click.stop="compare.keep = p">{{ t('org.cmpKeep') }}</n-button>
+              <n-button size="tiny" quaternary @click.stop="api('open_path', p)">{{ t('org.open') }}</n-button>
+            </n-space>
+          </div>
+        </div>
+      </n-space>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="compare = null">{{ t('org.cancel') }}</n-button>
+          <n-button type="warning" :loading="comparing" :disabled="!compare?.keep" @click="cleanupCompare">
+            {{ t('org.cmpClean', { n: (compare?.paths.length || 1) - 1 }) }}
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <n-modal v-model:show="showBatchOps" preset="card" :title="t('org.batchDetail')" style="width:860px">
       <n-data-table :columns="[
         { title: t('org.colTime'), key: 'ts', width: 160, render: (r) => fmtTime(r.ts) },
@@ -726,3 +806,20 @@ loadTemplates()
     </n-modal>
   </div>
 </template>
+
+<style scoped>
+.fb-cmp-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.fb-cmp-card {
+  width: 196px; padding: 8px; border-radius: 8px; cursor: pointer;
+  border: 2px solid transparent; background: rgba(127, 127, 127, .08);
+}
+.fb-cmp-card.is-keep { border-color: #18a058; background: rgba(24, 160, 88, .12); }
+.fb-cmp-img { width: 100%; height: 132px; object-fit: cover; border-radius: 6px; display: block; }
+.fb-cmp-noimg {
+  width: 100%; height: 132px; display: flex; align-items: center; justify-content: center;
+  font-size: 17px; letter-spacing: 1px; opacity: .55; border-radius: 6px;
+  background: rgba(127, 127, 127, .12);
+}
+.fb-cmp-name { font-size: 12px; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-cmp-meta { font-size: 11px; opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>

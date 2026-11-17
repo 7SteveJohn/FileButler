@@ -32,6 +32,31 @@ function pickTheme(k) {
 }
 // ---------- Ollama ----------
 const status = ref(null)
+// 本地模型的提示只在「确实在用本地」时才打扰：切到云端 API 后不该再报 Ollama 未运行
+const ollamaMode = computed(() => status.value?.llm?.mode === 'ollama')
+const ollamaDown = computed(() => ollamaMode.value && !status.value.ollama.running)
+const apiNoKey = computed(() => status.value?.llm?.chat?.code === 'api_no_key')
+// 已经存好云端配置（地址+密钥+模型）只是没切模式：不报错，直接给一键切换
+const hasApiConfig = computed(() => {
+  const l = status.value?.llm
+  return !!(l && l.api_base && l.has_key && l.api_chat_model)
+})
+const apiSwitching = ref(false)
+
+async function switchToApi() {
+  const l = status.value.llm
+  apiSwitching.value = true
+  const r = await api('save_llm_provider', 'api', l.api_base, '',
+    l.api_chat_model, l.embed_source, l.api_embed_model)
+  apiSwitching.value = false
+  if (r.ok) {
+    // 云端对话已通，但向量化可能还没配：如实说，别让用户以为全好了
+    const embedOk = r.summary?.embed?.ok
+    if (embedOk) message.success(t('settings.switchedApi'))
+    else message.warning(t('settings.switchedApiNoEmbed'))
+    refresh()
+  } else message.error(t('settings.m.setFail', { e: r.error || '?' }))
+}
 const host = ref('')
 const chatModel = ref('')
 const chatModelOptions = ref([])
@@ -955,11 +980,15 @@ onMounted(() => {
       <!-- ============ Ollama ============ -->
       <n-card :title="t('settings.ollamaTitle')">
         <n-space vertical size="large">
-          <n-alert v-if="status && !status.ollama.running" type="error">
-            {{ t('settings.ollamaMissing') }}
+          <n-alert v-if="ollamaDown" :type="hasApiConfig ? 'warning' : 'error'">
+            {{ hasApiConfig
+              ? t('settings.ollamaDownHasApi', { m: status.llm.api_chat_model })
+              : t('settings.ollamaMissing') }}
+            <n-button v-if="hasApiConfig" style="margin-left:12px" type="primary" size="small"
+              :loading="apiSwitching" @click="switchToApi">{{ t('settings.switchToApi') }}</n-button>
             <n-popover trigger="click" placement="bottom-start" :width="380">
               <template #trigger>
-                <n-button style="margin-left:12px" type="primary" size="small">{{ t('settings.downloadInstall') }}</n-button>
+                <n-button style="margin-left:12px" :type="hasApiConfig ? 'default' : 'primary'" size="small">{{ t('settings.downloadInstall') }}</n-button>
               </template>
               <n-space vertical :size="10">
                 <n-text strong>{{ t('settings.wingetLabel') }}</n-text>
@@ -972,7 +1001,10 @@ onMounted(() => {
               </n-space>
             </n-popover>
           </n-alert>
-          <n-alert v-else-if="status && status.ollama.model_dirs && status.ollama.model_dirs.length" type="warning">
+          <n-alert v-else-if="apiNoKey" type="warning">
+            {{ t('settings.apiNoKey') }}
+          </n-alert>
+          <n-alert v-else-if="ollamaMode && status.ollama.model_dirs && status.ollama.model_dirs.length" type="warning">
             {{ t('settings.modelsDirMismatch') }}
             <div v-for="d in status.ollama.model_dirs" :key="d.path" style="margin-top:6px">
               <span class="mono">{{ d.path }}</span>
@@ -980,7 +1012,7 @@ onMounted(() => {
               <n-button size="tiny" type="primary" style="margin-left:8px" @click="useModelsDir(d.path)">{{ t('settings.useThisDir') }}</n-button>
             </div>
           </n-alert>
-          <n-alert v-else-if="status && (!status.ollama.chat_ready || !status.ollama.embed_ready)" type="warning">
+          <n-alert v-else-if="ollamaMode && (!status.ollama.chat_ready || !status.ollama.embed_ready)" type="warning">
             {{ t('settings.ollamaNoModel') }}
             <n-tag v-if="!status.ollama.chat_ready" size="small">{{ t('settings.tagChat') }}</n-tag>
             <n-tag v-if="!status.ollama.embed_ready" size="small">{{ t('settings.tagEmbed') }}</n-tag>

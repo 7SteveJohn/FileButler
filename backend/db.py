@@ -842,19 +842,55 @@ def chunk_fts_expr(query):
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in toks[:24])
 
 
-_SQL_CHUNK_FTS = ("SELECT rowid AS id FROM chunk_fts WHERE chunk_fts MATCH ? "
+_SQL_CHUNK_FTS = ("SELECT rowid AS id FROM chunk_fts WHERE chunk_fts MATCH ?{cond} "
                   "ORDER BY rank LIMIT ?")
 
 
-def chunk_fts_search(query, k=24):
+def _scope_where(scope, rowid_col):
+    """知识库检索范围 → (SQL 条件, 参数)；空范围返回 (None, []) 即全库。
+    scope: {"folder_id": int} 或 {"path": str}。rowid_col 是该表指向 chunk 的列名
+    （chunk_fts 用 rowid，chunks 用 id）——列名来自内部常量，不接用户输入。"""
+    if not scope:
+        return None, []
+    try:
+        fid = int(scope.get("folder_id") or 0)
+    except (TypeError, ValueError):
+        fid = 0
+    if fid:
+        return (f"{rowid_col} IN (SELECT id FROM chunks WHERE file_id IN "
+                f"(SELECT id FROM kb_files WHERE folder_id=?))", [fid])
+    path = (scope.get("path") or "").strip()
+    if path:
+        return (f"{rowid_col} IN (SELECT id FROM chunks WHERE file_id IN "
+                f"(SELECT id FROM kb_files WHERE path=?))", [path])
+    return None, []
+
+
+def chunk_ids_in_scope(scope):
+    """范围内的 chunk id 集合。None = 不限范围；空集 = 范围内没有已索引内容。"""
+    where, params = _scope_where(scope, "id")
+    if not where:
+        return None
+    conn = get_conn()
+    try:
+        return {r["id"] for r in conn.execute(
+            f"SELECT id FROM chunks WHERE {where}", params).fetchall()}
+    finally:
+        conn.close()
+
+
+def chunk_fts_search(query, k=24, scope=None):
     """词法通道：返回按 bm25 相关性降序的 chunk id 列表。FTS 不可用返回 []。"""
     expr = chunk_fts_expr(query)
     if not expr:
         return []
+    where, wparams = _scope_where(scope, "rowid")
+    cond = (" AND " + where) if where else ""
     conn = get_conn()
     try:
         try:
-            rows = conn.execute(_SQL_CHUNK_FTS, (expr, k)).fetchall()
+            rows = conn.execute(_SQL_CHUNK_FTS.format(cond=cond),
+                                [expr, *wparams, k]).fetchall()
         except sqlite3.OperationalError:
             return []   # 表缺失/损坏等：词法通道静默缺席，调用方走单路降级
         return [r["id"] for r in rows]
@@ -1097,8 +1133,11 @@ class VectorIndex:
             self._ids = ids
             self._matrix = vecs / norms
 
-    def search(self, query_vec, k=8):
-        """返回 [(id, score)]，按相似度降序。float32 走 BLAS，分块控制峰值内存。"""
+    def search(self, query_vec, k=8, allowed=None):
+        """返回 [(id, score)]，按相似度降序。float32 走 BLAS，分块控制峰值内存。
+        allowed：允许命中的 id 集合（知识库限定范围时用）；None 表示全量。
+        范围外的分数置 -inf 再取 top-k——不能先取全库 top-k 再过滤，
+        否则限定到小范围时会把范围内的内容整体挤掉。"""
         import numpy as np
         self._ensure_loaded()
         with self._lock:
@@ -1106,6 +1145,13 @@ class VectorIndex:
             matrix = self._matrix
             if ids is None or matrix is None or len(ids) == 0:
                 return []
+            mask = None
+            if allowed is not None:
+                if not allowed:
+                    return []
+                mask = np.isin(ids, np.fromiter(allowed, dtype=np.int64))
+                if not mask.any():
+                    return []
             q = np.asarray(query_vec, dtype=np.float32).reshape(-1)
             n = np.linalg.norm(q)
             if n == 0:
@@ -1116,10 +1162,13 @@ class VectorIndex:
             step = 8192
             for start in range(0, len(ids), step):
                 scores = matrix[start:start + step] @ q
+                if mask is not None:
+                    scores = np.where(mask[start:start + step], scores, -np.inf)
                 m = len(scores)
                 top = min(k, m)
                 idx = np.argpartition(-scores, top - 1)[:top]
-                best += [(start + int(i), float(scores[i])) for i in idx]
+                best += [(start + int(i), float(scores[i]))
+                         for i in idx if scores[i] > -np.inf]
             best.sort(key=lambda x: -x[1])
             return [(int(ids[g]), s) for g, s in best[:k]]
 
@@ -1474,14 +1523,34 @@ def search_chunks_by_ids(ids):
         conn.close()
 
 
-def keyword_search(query, k=8):
-    """降级检索：Ollama 不可用时用 LIKE 全文匹配。"""
+def kb_file_paths(folder_id=None, limit=2000):
+    """知识库已索引成功的文件路径（问答范围选择用）。"""
     conn = get_conn()
     try:
-        rows = conn.execute(
-            "SELECT c.id, c.seq, c.text, f.path AS file_path FROM chunks c "
-            "JOIN kb_files f ON f.id=c.file_id WHERE c.text LIKE ? LIMIT ?",
-            (f"%{query}%", k)).fetchall()
+        if folder_id:
+            rows = conn.execute(
+                "SELECT path FROM kb_files WHERE status='ok' AND folder_id=? "
+                "ORDER BY path LIMIT ?", (int(folder_id), limit)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT path FROM kb_files WHERE status='ok' "
+                "ORDER BY path LIMIT ?", (limit,)).fetchall()
+        return [r["path"] for r in rows]
+    finally:
+        conn.close()
+
+
+def keyword_search(query, k=8, scope=None):
+    """降级检索：Ollama 不可用时用 LIKE 全文匹配。scope 传知识库范围，同其他通道。"""
+    where, wparams = _scope_where(scope, "c.id")
+    sql = ("SELECT c.id, c.seq, c.text, f.path AS file_path FROM chunks c "
+           "JOIN kb_files f ON f.id=c.file_id WHERE c.text LIKE ?")
+    if where:
+        sql += " AND " + where
+    sql += " LIMIT ?"
+    conn = get_conn()
+    try:
+        rows = conn.execute(sql, [f"%{query}%", *wparams, k]).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()

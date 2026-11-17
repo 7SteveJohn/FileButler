@@ -3,6 +3,7 @@ import { ref, computed, nextTick, onUnmounted, h } from 'vue'
 import {
   NCard, NButton, NSpace, NInput, NText, NTag, NDataTable, NProgress,
   NTabs, NTabPane, NEmpty, NAlert, NPopover, NList, NListItem, useMessage, NSpin, NModal,
+  NSelect,
 } from 'naive-ui'
 import { api, on } from '../lib/bridge'
 import { useI18n } from 'vue-i18n'
@@ -24,6 +25,28 @@ async function loadFolders() {
   } catch (e) { message.error(String(e)) }
   foldersLoading.value = false
 }
+
+// ---------- 问答/检索范围（限定某个库或某个文件） ----------
+const scopeFolder = ref(null)
+const scopePath = ref(null)
+const scopeFiles = ref([])
+
+const scopeFolderOptions = computed(() =>
+  folders.value.map((f) => ({ label: f.path, value: f.id })))
+const scopeFileOptions = computed(() =>
+  scopeFiles.value.map((p) => ({ label: p.split(/[\\/]/).pop(), value: p })))
+
+async function onScopeFolder(id) {
+  scopePath.value = null
+  scopeFiles.value = []
+  if (!id) return
+  try {
+    scopeFiles.value = (await api('kb_files', id)).items || []
+  } catch (e) { /* 文件清单拿不到时仍可按整个文件夹限定 */ }
+}
+
+const scopeArg = () => (scopePath.value ? { path: scopePath.value }
+  : scopeFolder.value ? { folder_id: scopeFolder.value } : null)
 
 async function addFolder() {
   const p = await api('pick_folder')
@@ -194,7 +217,7 @@ async function doAsk() {
     scrollToBottom()
   })
   try {
-    const result = await api('ask', q, JSON.parse(JSON.stringify(history)))
+    const result = await api('ask', q, JSON.parse(JSON.stringify(history)), scopeArg())
     if (result.error) {
       assistantMsg.content = '❌ ' + result.error
     } else {
@@ -224,7 +247,7 @@ async function doSearch() {
   const q = question.value.trim()
   if (!q) return
   searchResults.value = null
-  const r = await api('search', q, 10)
+  const r = await api('search', q, 10, scopeArg())
   searchResults.value = r
   tab.value = 'results'
 }
@@ -326,6 +349,15 @@ loadSessions()
                 </div>
               </div>
             </div>
+            <n-space align="center" :size="8" style="padding-top:10px">
+              <n-text depth="3" style="font-size:12px">{{ t('kb.scope') }}</n-text>
+              <n-select v-model:value="scopeFolder" size="small" style="width:190px"
+                :options="scopeFolderOptions" clearable :placeholder="t('kb.scopeAll')"
+                @update:value="onScopeFolder" />
+              <n-select v-if="scopeFolder" v-model:value="scopePath" size="small"
+                style="width:260px" :options="scopeFileOptions" filterable clearable
+                :placeholder="t('kb.scopeAllFiles')" />
+            </n-space>
             <n-space style="padding-top:12px" :wrap="false">
               <n-input v-model:value="question" :placeholder="t('kb.askPh')"
                 :disabled="asking" @keyup.enter="doAsk" />

@@ -10,15 +10,18 @@ def cleanup_dir():
     return os.path.join(db.get_data_dir(), "待清理")
 
 
-def dedupe_cleanup(groups, keep_rule="newest", dry_run=False):
+def dedupe_cleanup(groups, keep_rule="newest", dry_run=False, keep_paths=None):
     """
     groups: [{paths: [...]}, ...] 每组保留一个，其余移入 待清理/<时间戳>/
     keep_rule: newest（最新）/ oldest（最早）/ shortest（路径最短）
+    keep_paths: 用户在对比预览里亲自点选的保留项；命中本组则优先于 keep_rule，
+                没命中（文件已不在等）时照旧按规则选——不把「指定失效」变成误删。
     返回 {moved: n, kept: n, failed: n, batch_id, dir}
     """
     batch_id = db.new_batch_id()
     stamp = time.strftime("%Y%m%d-%H%M%S")
     target_dir = os.path.join(cleanup_dir(), stamp)
+    pinned = set(keep_paths or ())
 
     def key_fn(p):
         st = os.stat(p)
@@ -33,10 +36,16 @@ def dedupe_cleanup(groups, keep_rule="newest", dry_run=False):
         paths = [p for p in group.get("paths", []) if os.path.exists(p)]
         if len(paths) < 2:
             continue
-        paths_by_key = sorted(paths, key=key_fn)
-        keep = paths_by_key[0]
+        chosen = [p for p in paths if p in pinned]
+        if chosen:
+            keep = chosen[0]
+            rest = [p for p in paths if p != keep]
+        else:
+            paths_by_key = sorted(paths, key=key_fn)
+            keep = paths_by_key[0]
+            rest = paths_by_key[1:]
         kept += 1
-        for p in paths_by_key[1:]:
+        for p in rest:
             if dry_run:
                 moved += 1
                 continue

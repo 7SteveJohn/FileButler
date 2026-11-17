@@ -53,7 +53,7 @@ jobs:
             "test_kb_cancel", "test_datadir", "test_hardening",
             "test_session_followups", "test_config", "test_exclude_defaults",
             "test_ocr_model", "test_ollama_models_dir", "test_status_codes",
-            "test_ui_bindings"
+            "test_ui_bindings", "test_cleanup_keep", "test_rag_scope"
           )
           $failed = @()
           # 少数套件按目录名做门禁：test_datadir 要求含 fb_datadir，
