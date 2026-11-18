@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, h, onUnmounted } from 'vue'
+import { ref, computed, h, onUnmounted, onActivated } from 'vue'
 import {
   NCard, NButton, NSpace, NInput, NText, NTag, NDataTable, NProgress,
   NTabs, NTabPane, NSelect, NModal, NList, NListItem, NDescriptions, NDescriptionsItem,
@@ -36,8 +36,8 @@ let offs = []
 offs.push(on('ai_classify_start', (p) => { aiRunning.value = true }))
 offs.push(on('ai_classify_progress', (p) => { aiProgress.value = p }))
 offs.push(on('ai_classify_done', (p) => {
-  // 后端回传补全 ai_category 的 files
-  scanInfo.value.files = p.files
+  // 后端回传补全 ai_category 的 files（防御性判空：防止运行中途重新扫描清空过 scanInfo）
+  if (scanInfo.value) scanInfo.value.files = p.files
   aiRunning.value = false
   aiProgress.value = null
   message.success(t('org.aiDone'))
@@ -61,6 +61,7 @@ async function scan() {
   scanning.value = true
   scanInfo.value = null
   planData.value = null
+  overrides.value = {}
   try {
     scanInfo.value = await api('scan_folder', rootPath.value)
     targetRoot.value = rootPath.value
@@ -76,10 +77,13 @@ const ambiguousFiles = computed(() =>
 
 const scanColumns = computed(() => [
   { title: t('org.colName'), key: 'name', ellipsis: { tooltip: (r) => r.ai_reason || r.name } },
-  { title: t('org.colCategory'), key: 'category', width: 110, render: (r) => h(NTag, {
-      size: 'small', bordered: false,
-      type: r.ai_category ? 'success' : (r.rule_hit ? 'default' : 'warning'),
-    }, { default: () => catLabel(r.final_category || r.category) }) },
+  { title: t('org.colCategory'), key: 'category', width: 132, render: (r) => h(NSelect, {
+      size: 'tiny',
+      value: r.final_category || r.category,
+      options: categoryOptions.value,
+      style: 'width:112px',
+      onUpdateValue: (v) => { overrides.value[r.path] = v },
+    }) },
   { title: t('org.colExt'), key: 'ext', width: 90, render: (r) => h('span', { class: 'mono' }, r.ext || '-') },
   { title: t('org.colSize'), key: 'size', width: 100, render: (r) => fmtSize(r.size) },
 ])
@@ -170,7 +174,7 @@ const dedupeColumns = computed(() => [
   { title: t('org.colSize'), key: 'size', width: 90, render: (r) => fmtSize(r.size) },
   { title: t('org.colPaths'), key: 'paths', render: (r) =>
     h('div', null, r.paths.map((p, i) => h('div', {
-      class: 'mono', style: 'cursor:pointer;color:' + (i === 0 ? '#18a058' : '#666') + ';padding:1px 0',
+      class: 'mono', style: 'cursor:pointer;color:' + (i === 0 ? 'var(--fb-accent, #18a058)' : 'var(--fb-text-dim, #888)') + ';padding:1px 0',
       onClick: () => api('open_path', p),
       title: p,
     }, (i === 0 ? t('org.keepSuggest') : t('org.dupMark')) + p))) },
@@ -181,9 +185,15 @@ const dedupeColumns = computed(() => [
 const compare = ref(null)          // {hash, paths: [], keep: '', from: 'dup' | 'sim'}
 const comparing = ref(false)
 const thumbBase = ref(null)
-const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'tiff', 'ico', 'svg'])
-
-const isImgPath = (p) => IMG_EXT.has((p.split('.').pop() || '').toLowerCase())
+const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'heif', 'tif', 'tiff', 'ico'])
+const brokenCmpThumbs = ref(new Set())
+const isImgPath = (p) => IMG_EXT.has((p.split('.').pop() || '').toLowerCase()) && !brokenCmpThumbs.value.has(p)
+function markCmpThumbBroken(p) {
+  if (!p || brokenCmpThumbs.value.has(p)) return
+  const next = new Set(brokenCmpThumbs.value)
+  next.add(p)
+  brokenCmpThumbs.value = next
+}
 
 function thumbUrl(p) {
   const b = thumbBase.value
@@ -221,6 +231,7 @@ async function cleanupCompare() {
     if (list) list.groups = list.groups.filter((g) => g.hash !== c.hash)
     compare.value = null
     loadHistory()
+    loadQuarantine()
   } catch (e) { message.error(String(e)) }
   comparing.value = false
 }
@@ -255,6 +266,7 @@ async function cleanupDuplicates() {
       message.warning(t('org.msgMovePartial', { moved: r.moved, failed: r.failed }))
     }
     loadHistory()
+    loadQuarantine()
     scan()
   } catch (e) { message.error(String(e)) }
   cleaning.value = false
@@ -319,6 +331,7 @@ async function cleanupSimilar() {
       message.warning(t('org.msgMovePartial', { moved: r.moved, failed: r.failed }))
     }
     loadHistory()
+    loadQuarantine()
     scan()
   } catch (e) { message.error(String(e)) }
   cleaning.value = false
@@ -393,9 +406,9 @@ async function findConflicts() {
 
 const conflictColumns = computed(() => [
   { type: 'selection' },
-  { title: t('org.colReason'), key: 'reason', width: 100,
+  { title: t('org.colReason'), key: 'reason', width: 110,
     render: (r) => h(NTag, { size: 'small', type: r.reason === '同步冲突' ? 'error' : 'warning', bordered: false },
-      { default: () => r.reason }) },
+      { default: () => (r.reason === '同步冲突' ? t('org.reasonSync') : t('org.reasonCopy')) }) },
   { title: t('org.colName'), key: 'name', ellipsis: { tooltip: (r) => r.path },
     render: (r) => r.path.split(/[\\/]/).pop() },
   { title: t('org.colSize'), key: 'size', width: 100, render: (r) => fmtSize(r.size) },
@@ -425,7 +438,11 @@ async function loadTemplates() {
 }
 
 function applyTemplate(tp) {
+  if (!tp) return
   targetRoot.value = tp.target_root
+  if (tp.images_by_year != null) {
+    api('set_images_by_year', !!tp.images_by_year).catch(() => {})
+  }
   message.info(t('org.msgTplApplied', { name: tp.name }))
 }
 
@@ -485,6 +502,7 @@ async function undo(batchId) {
     message.info(t('org.msgUndoNone'))
   } else message.success(t('org.msgUndoneAll', { n: r.undone }))
   loadHistory()
+  loadQuarantine()
 }
 
 async function redo(batchId) {
@@ -492,6 +510,64 @@ async function redo(batchId) {
   if (r.failed === 0) message.success(t('org.msgRedone', { n: r.redone }))
   else message.warning(t('org.msgRedoPartial', { done: r.redone, fail: r.failed }))
   loadHistory()
+  loadQuarantine()
+}
+
+// ---------- 待清理隔离区管理 ----------
+const quarantine = ref(null)   // {dir, items:[{name,path,files,size,mtime}], total_files, total_size}
+const quarLoading = ref(false)
+const quarPurging = ref(false)
+const quarChecked = ref([])
+
+async function loadQuarantine() {
+  quarLoading.value = true
+  try {
+    quarantine.value = await api('quarantine_status')
+    quarChecked.value = []
+  } catch (e) { /* 忽略 */ }
+  quarLoading.value = false
+}
+
+const quarColumns = computed(() => [
+  { type: 'selection' },
+  { title: t('org.quarColBatch'), key: 'name', width: 180,
+    render: (r) => h('span', { class: 'mono', style: 'cursor:pointer;color:#5a9cf8',
+      onClick: () => api('open_path', r.path) }, r.name) },
+  { title: t('org.quarColFiles'), key: 'files', width: 100 },
+  { title: t('org.quarColSize'), key: 'size', width: 120, render: (r) => fmtSize(r.size) },
+  { title: t('org.colMtime'), key: 'mtime', width: 180, render: (r) => fmtTime(r.mtime) },
+  { title: '', key: 'ops', width: 90, render: (r) => h(NButton, {
+      size: 'tiny', quaternary: true, onClick: () => api('open_path', r.path),
+    }, { default: () => t('org.open') }) },
+])
+
+async function purgeQuarantineSelected() {
+  if (!quarChecked.value.length) return
+  if (!window.confirm(t('org.quarConfirmSel', { n: quarChecked.value.length }))) return
+  quarPurging.value = true
+  try {
+    const r = await api('quarantine_purge', JSON.parse(JSON.stringify(quarChecked.value)))
+    message.success(t('org.quarPurged', { n: r.purged || 0, size: fmtSize(r.freed_bytes || 0) }))
+    loadQuarantine()
+    loadHistory()
+  } catch (e) { message.error(String(e)) }
+  quarPurging.value = false
+}
+
+async function purgeQuarantineAll() {
+  const items = quarantine.value?.items || []
+  if (!items.length) return
+  if (!window.confirm(t('org.quarConfirmAll', {
+    n: items.length, size: fmtSize(quarantine.value?.total_size || 0),
+  }))) return
+  quarPurging.value = true
+  try {
+    const r = await api('quarantine_purge', null)
+    message.success(t('org.quarPurged', { n: r.purged || 0, size: fmtSize(r.freed_bytes || 0) }))
+    loadQuarantine()
+    loadHistory()
+  } catch (e) { message.error(String(e)) }
+  quarPurging.value = false
 }
 
 async function showOps(batchId) {
@@ -511,6 +587,12 @@ function fmtTime(ts) { return new Date(ts * 1000).toLocaleString() }
 
 loadHistory()
 loadTemplates()
+loadQuarantine()
+onActivated(() => {
+  loadHistory()
+  loadQuarantine()
+  loadTemplates()
+})
 </script>
 
 <template>
@@ -676,6 +758,43 @@ loadTemplates()
         </n-card>
       </n-tab-pane>
 
+      <!-- ================= 待清理区 ================= -->
+      <n-tab-pane name="quarantine"
+        :tab="t('org.tabQuarantine') + (quarantine?.items?.length ? ' (' + quarantine.items.length + ')' : '')">
+        <n-card>
+          <n-space vertical size="large">
+            <n-text depth="3" style="font-size:12.5px">{{ t('org.quarHint') }}</n-text>
+            <n-space align="center">
+              <n-button size="small" :loading="quarLoading" @click="loadQuarantine">{{ t('org.quarRefresh') }}</n-button>
+              <n-button v-if="quarantine?.dir && quarantine?.items?.length" size="small"
+                @click="api('open_path', quarantine.dir)">{{ t('org.quarOpenDir') }}</n-button>
+              <template v-if="quarantine?.items?.length">
+                <n-button size="small" type="warning" ghost :loading="quarPurging"
+                  :disabled="!quarChecked.length" @click="purgeQuarantineSelected">
+                  {{ t('org.quarPurgeSel', { n: quarChecked.length }) }}
+                </n-button>
+                <n-button size="small" type="error" ghost :loading="quarPurging"
+                  @click="purgeQuarantineAll">
+                  {{ t('org.quarPurgeAll') }}
+                </n-button>
+                <n-text depth="3" style="font-size:12px">
+                  {{ t('org.quarStat', {
+                    n: quarantine.items.length,
+                    files: quarantine.total_files,
+                    size: fmtSize(quarantine.total_size),
+                  }) }}
+                </n-text>
+              </template>
+            </n-space>
+            <n-data-table v-if="quarantine?.items?.length"
+              v-model:checked-row-keys="quarChecked"
+              :columns="quarColumns" :data="quarantine.items"
+              :max-height="420" size="small" :row-key="(r) => r.name" />
+            <n-empty v-else-if="!quarLoading" :description="t('org.quarEmpty')" />
+          </n-space>
+        </n-card>
+      </n-tab-pane>
+
       <!-- ================= 大文件 ================= -->
       <n-tab-pane name="bigfiles" :tab="t('org.tabBig')">
         <n-card>
@@ -769,7 +888,8 @@ loadTemplates()
         <div class="fb-cmp-grid">
           <div v-for="p in (compare?.paths || [])" :key="p" class="fb-cmp-card"
             :class="{ 'is-keep': compare?.keep === p }" @click="compare.keep = p">
-            <img v-if="isImgPath(p) && thumbBase" :src="thumbUrl(p)" alt="" class="fb-cmp-img" />
+            <img v-if="isImgPath(p) && thumbBase" :src="thumbUrl(p)" alt="" class="fb-cmp-img"
+              @error="markCmpThumbBroken(p)" />
             <div v-else class="fb-cmp-noimg">{{ (p.split('.').pop() || '').toUpperCase() }}</div>
             <div class="fb-cmp-name" :title="p">{{ p.split(/[\\/]/).pop() }}</div>
             <div class="fb-cmp-meta mono" :title="p">{{ p }}</div>

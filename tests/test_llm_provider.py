@@ -127,12 +127,26 @@ def main():
 
         # ---------- 4. 省钱混搭：API 对话 + 本地向量 ----------
         db.set_setting("embed_source", "ollama")
-        check("hybrid embed uses ollama",
-              type(llm.get_embed_client()).__name__ == "OllamaClient")
-        es = llm.embed_status()
-        check("hybrid embed status", es["ok"] == True and "本地" in es["reason"], str(es))
-        check("hybrid chat still api",
-              isinstance(llm.get_chat_client(), llm.OpenAICompatClient))
+        orig_oc = llm.OllamaClient
+
+        class _FakeLocalEmbedOllama:
+            def status(self):
+                return {"running": True, "chat_ready": False,
+                        "embed_ready": True, "chat_model": ""}
+
+            def embed_model(self):
+                return "bge-m3"
+
+        try:
+            check("hybrid embed uses ollama",
+                  type(llm.get_embed_client()).__name__ == "OllamaClient")
+            llm.OllamaClient = _FakeLocalEmbedOllama
+            es = llm.embed_status()
+            check("hybrid embed status", es["ok"] is True and "本地" in es["reason"], str(es))
+            check("hybrid chat still api",
+                  isinstance(llm.get_chat_client(), llm.OpenAICompatClient))
+        finally:
+            llm.OllamaClient = orig_oc
 
         # ---------- 5. 端点归一化 ----------
         c2 = llm.OpenAICompatClient(base=base + "/chat/completions",

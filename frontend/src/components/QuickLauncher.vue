@@ -1,9 +1,11 @@
 <script setup>
 // Ctrl+K 快速唤起：搜文件（FTS 现成）+ 页面/主题命令（Raycast 式）
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api } from '../lib/bridge'
 import { THEMES, saveThemeKey, CATEGORY_HUES } from '../lib/theme'
 
+const { t } = useI18n()
 const show = ref(false)
 const query = ref('')
 const active = ref(0)
@@ -11,29 +13,34 @@ const files = ref([])
 const inputEl = ref(null)
 let debounceTimer = null
 
-const PAGES = [
-  { kind: 'page', key: 'dashboard', label: '概览', hint: '页面' },
-  { kind: 'page', key: 'files', label: '文件', hint: '页面' },
-  { kind: 'page', key: 'organizer', label: '文件整理', hint: '页面' },
-  { kind: 'page', key: 'knowledge', label: '知识库', hint: '页面' },
-  { kind: 'page', key: 'settings', label: '设置', hint: '页面' },
-]
-const THEME_CMDS = [
-  { kind: 'theme', key: 'theme:auto', label: '切换主题：跟随系统', hint: '命令',
-    swatch: 'linear-gradient(135deg,#f4f6f4 50%,#0b0e13 50%)' },
-  ...Object.values(THEMES).map((t) => ({
-    kind: 'theme', key: 'theme:' + t.key, label: '切换主题：' + t.name, hint: '命令', swatch: t.swatch,
+const commands = computed(() => [
+  { kind: 'page', key: 'dashboard', label: t('nav.dashboard'), hint: t('ql.pageHint'), kw: 'dashboard overview 概览' },
+  { kind: 'page', key: 'files', label: t('nav.files'), hint: t('ql.pageHint'), kw: 'files search 文件' },
+  { kind: 'page', key: 'organizer', label: t('nav.organizer'), hint: t('ql.pageHint'), kw: 'organizer clean dedupe 文件整理' },
+  { kind: 'page', key: 'knowledge', label: t('nav.knowledge'), hint: t('ql.pageHint'), kw: 'knowledge rag ask 知识库' },
+  { kind: 'page', key: 'settings', label: t('nav.settings'), hint: t('ql.pageHint'), kw: 'settings config 设置' },
+  { kind: 'theme', key: 'theme:auto', label: t('ql.switchTheme', { name: t('theme.auto') }), hint: t('ql.cmdHint'),
+    swatch: 'linear-gradient(135deg,#f4f6f4 50%,#0b0e13 50%)', kw: 'theme auto dark light 主题 跟随系统' },
+  ...Object.values(THEMES).map((th) => ({
+    kind: 'theme', key: 'theme:' + th.key,
+    label: t('ql.switchTheme', { name: t('theme.' + th.key) }),
+    hint: t('ql.cmdHint'), swatch: th.swatch,
+    kw: `theme ${th.key} ${th.name} 主题`,
   })),
-]
-const COMMANDS = [...PAGES, ...THEME_CMDS]
+])
 
 const cmdResults = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return q ? COMMANDS.filter((c) => c.label.toLowerCase().includes(q)) : COMMANDS
+  return q
+    ? commands.value.filter((c) => c.label.toLowerCase().includes(q) || (c.kw && c.kw.toLowerCase().includes(q)))
+    : commands.value
 })
 const items = computed(() => [
   ...cmdResults.value,
-  ...files.value.map((f) => ({ kind: 'file', key: f.path, label: f.name, hint: f.path })),
+  ...files.value.map((f) => ({
+    kind: 'file', key: f.path, label: f.name, hint: f.path,
+    category: f.category, ext: f.ext,
+  })),
 ])
 
 watch(query, () => {
@@ -42,20 +49,25 @@ watch(query, () => {
   active.value = 0
 })
 
+let searchSeq = 0
 async function searchFiles() {
   const q = query.value.trim()
-  if (!q) { files.value = []; return }
+  if (!q) { searchSeq++; files.value = []; return }
+  const seq = ++searchSeq
   try {
     const r = await api('quick_search', q, 8)
+    if (seq !== searchSeq) return
     const ql = q.toLowerCase()
-    // 准度：名字以输入开头的排前面，其余按最近修改
-    const items = (r.items || []).slice().sort((a, b) => {
-      const al = a.name.toLowerCase().startsWith(ql) ? 0 : 1
-      const bl = b.name.toLowerCase().startsWith(ql) ? 0 : 1
-      return al - bl || (b.mtime || 0) - (a.mtime || 0)
+    // 准度：前缀精确命中排最前，其余保留后端 FTS5 BM25 相关度顺序（ES2019 稳定排序）
+    const list = (r.items || []).slice().sort((a, b) => {
+      const al = (a.name || '').toLowerCase().startsWith(ql) ? 0 : 1
+      const bl = (b.name || '').toLowerCase().startsWith(ql) ? 0 : 1
+      return al - bl
     })
-    files.value = items
-  } catch (e) { files.value = [] }
+    files.value = list
+  } catch (e) {
+    if (seq === searchSeq) files.value = []
+  }
 }
 
 function open() {
@@ -129,7 +141,7 @@ onUnmounted(() => {
     <div v-if="show" class="fb-ql-backdrop" @click.self="close">
       <div class="fb-ql">
         <input ref="inputEl" v-model="query" class="fb-ql-input"
-          placeholder="搜索文件，或输入命令…" spellcheck="false" @keydown="onInputKeydown" />
+          :placeholder="t('ql.ph')" spellcheck="false" @keydown="onInputKeydown" />
         <div class="fb-ql-list">
           <div v-for="(it, idx) in items" :key="it.kind + ':' + it.key"
             class="fb-ql-item" :class="{ active: idx === active }"
@@ -139,13 +151,13 @@ onUnmounted(() => {
               <path d="M1.5 4.5a1.5 1.5 0 0 1 1.5-1.5h3l1.5 1.8h6A1.5 1.5 0 0 1 15 6.3v5.2a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 2 11.5Z"
                 stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
-            <span v-else class="fb-ql-badge" :style="{ '--h': String(CATEGORY_HUES[it.category] || 220) }">{{ (it.key.split('.').pop() || '').slice(0, 4).toUpperCase() }}</span>
+            <span v-else class="fb-ql-badge" :style="{ '--h': String(CATEGORY_HUES[it.category] || 220) }">{{ (it.ext || 'file').slice(0, 4).toUpperCase() }}</span>
             <span class="fb-ql-label">{{ it.label }}</span>
             <span class="fb-ql-hint" :title="it.kind === 'file' ? it.hint : ''">{{ it.hint }}</span>
           </div>
-          <div v-if="!items.length" class="fb-ql-empty">没有匹配的文件或命令</div>
+          <div v-if="!items.length" class="fb-ql-empty">{{ t('ql.empty') }}</div>
         </div>
-        <div class="fb-ql-foot">↑↓ 选择 · Enter 执行 · Esc 关闭</div>
+        <div class="fb-ql-foot">{{ t('ql.foot') }}</div>
       </div>
     </div>
   </teleport>

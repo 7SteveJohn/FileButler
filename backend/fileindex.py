@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_fi_root ON file_index(root_id);
 CREATE INDEX IF NOT EXISTS idx_fi_category ON file_index(category);
 """
 
-IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "tiff", "ico", "svg"}
+IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "tif", "tiff", "ico", "svg"}
 
 
 # 加速索引：(名字, 表与列, 用途)。
@@ -106,15 +106,10 @@ def _photo_time_of(path):
     扫描拖长十几分钟），存量由 backfill 后台线程补齐。"""
     try:
         from backend import imgdecode
-        with imgdecode.open_image(path) as im:
-            # 用公开的 getexif()：HEIC（pillow-heif）没有 JPEG 专用的 _getexif()
-            exif = im.getexif()
-        if not exif:
-            return None
-        raw = exif.get(36867) or exif.get(36868) or exif.get(306)  # 拍摄/数字化/修改
+        raw = imgdecode.exif_datetime_str(path)
         if not raw:
             return None
-        return time.mktime(time.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S"))
+        return time.mktime(time.strptime(raw[:19], "%Y:%m:%d %H:%M:%S"))
     except Exception:
         return None
 
@@ -539,11 +534,21 @@ def remove_file(path):
         conn.close()
 
 
+def like_dir_prefix(dir_path):
+    """目录路径 → SQLite LIKE 前缀模式（配合 ESCAPE '\\'）。
+    强制带尾部分隔符并转义 % / _，避免 D:\\foo 误伤 D:\\foobar 或 D:\\a_b 匹配 D:\\axb。"""
+    base = os.path.abspath(dir_path).rstrip("\\/") + os.sep
+    esc = base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return esc + "%"
+
+
 def remove_under(dir_path):
     conn = db.get_conn()
     try:
-        prefix = os.path.abspath(dir_path) + "%"
-        conn.execute("DELETE FROM file_index WHERE path LIKE ?", (prefix,))
+        conn.execute(
+            "DELETE FROM file_index WHERE path LIKE ? ESCAPE '\\'",
+            (like_dir_prefix(dir_path),),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -728,19 +733,21 @@ import time as _time
 
 
 def parse_query(query):
-    """解析搜索语法：ext:pdf,docx | size:>100mb | dm:week | path:Desktop | cat:图片
+    """解析搜索语法：ext:pdf,docx | size:>100mb | dm:week | path:Desktop | path:"D:\\my dir" | cat:图片
     返回 (纯文本关键词, {exts, min_size, max_size, days, path_sub, category})。"""
     filters = {"exts": None, "min_size": None, "max_size": None,
                "days": None, "path_sub": None, "category": None}
     if not query:
         return "", filters
-    tokens = _re.findall(r'(\w+):([^\s]+)', query)
     rest = query
-    for key, val in tokens:
+    for m_tok in _re.finditer(r'(\w+):(?:"([^"]+)"|([^\s]+))', query):
+        full_tok = m_tok.group(0)
+        key = m_tok.group(1)
+        val = m_tok.group(2) if m_tok.group(2) is not None else m_tok.group(3)
         k = key.lower()
         if k == "ext":
             filters["exts"] = [e.lower().lstrip(".") for e in val.split(",") if e]
-            rest = rest.replace(f"{key}:{val}", "", 1)
+            rest = rest.replace(full_tok, "", 1)
         elif k == "size":
             m = _re.match(r'^([<>>=]+)\s*([\d.]+)\s*([kmgt]?b?)$', val.lower())
             if m:
@@ -753,19 +760,19 @@ def parse_query(query):
                     filters["max_size"] = size
                 else:
                     filters["min_size"] = size
-                rest = rest.replace(f"{key}:{val}", "", 1)
+                rest = rest.replace(full_tok, "", 1)
         elif k == "dm":
             days = {"today": 1, "今天": 1, "yesterday": 2, "昨天": 2,
                     "week": 7, "本周": 7, "month": 30, "本月": 30, "year": 365}.get(val.lower())
             if days:
                 filters["days"] = days
-                rest = rest.replace(f"{key}:{val}", "", 1)
+                rest = rest.replace(full_tok, "", 1)
         elif k == "path":
             filters["path_sub"] = val
-            rest = rest.replace(f"{key}:{val}", "", 1)
+            rest = rest.replace(full_tok, "", 1)
         elif k in ("cat", "category"):
             filters["category"] = val
-            rest = rest.replace(f"{key}:{val}", "", 1)
+            rest = rest.replace(full_tok, "", 1)
     return rest.strip(), filters
 
 

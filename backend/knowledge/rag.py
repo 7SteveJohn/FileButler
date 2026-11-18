@@ -266,10 +266,10 @@ def ask(query, k=8, stream_cb=None, history=None, scope=None):
     # 用户只加文本文件夹时，QQMusic 封面/应用图标等全盘图片描述会污染答案
     # 图片语义检索走独立的 search() API（Files 页"图片语义搜索"）
 
-    # list intent 优先：用户问"知识库里有什么文件/什么文档"时直接返回文件清单
+    # list intent 优先：用户明确问"知识库里有什么文件/什么文档"时直接返回文件清单
     # 防止旧残留索引（如 README.md/截图等）被命中回答，跑题
     if _is_list_intent(query):
-        listing = _list_kb_files(limit=20)
+        listing = _list_kb_files(limit=20, scope=scope)
         if listing:
             answer = "知识库里已有以下文件（前 20 个）：\n" + "\n".join(
                 f"  - {p}" for p in listing)
@@ -285,7 +285,7 @@ def ask(query, k=8, stream_cb=None, history=None, scope=None):
         # 0 命中 fallback：用户问"什么文件/什么文档"时直接返回 KB 文件清单
         # 否则提示"未检索到"
         if _is_list_intent(query):
-            listing = _list_kb_files(limit=20)
+            listing = _list_kb_files(limit=20, scope=scope)
             if listing:
                 answer = "知识库里已有以下文件（前 20 个）：\n" + "\n".join(
                     f"  - {p}" for p in listing)
@@ -340,25 +340,29 @@ def ask(query, k=8, stream_cb=None, history=None, scope=None):
             "cited": _parse_citations(answer, len(sources))}
 
 
+_LIST_META_RE = re.compile(
+    r"(?:知识库|库里|资料库|已索引).*(?:有什么|有哪些|有些什么|有那些|全部|所有|列表|清单)"
+    r"|(?:有什么|有哪些|有些什么|有那些|列出|列一下|查看|看看)\s*(?:文件|文档|资料)"
+    r"|^(?:全部文件|所有文件|文件列表|文件清单|文档列表|文档清单|看过什么|list\s+files?|all\s+files?)\s*[?？。!！]*$",
+    re.I,
+)
+
+
 def _is_list_intent(query):
-    """用户是否想问"知识库里有什么"（列清单意图）。"""
+    """用户是否明确想问"知识库里有什么文件"（列文件清单元意图）。
+    避免把「报价清单」「违约条款有哪些」「Checklist」等正常业务问题误拦成列文件。"""
     if not query:
         return False
-    q = query.strip().lower()
-    triggers = ("什么文件", "什么文档", "哪些文件", "哪些文档", "有那些",
-                "有哪些", "列出来", "列一下", "列表", "list", "all files",
-                "全部文件", "清单", "看过什么")
-    return any(t in q for t in triggers)
+    return bool(_LIST_META_RE.search(query.strip()))
 
 
-def _list_kb_files(limit=20):
-    """返回知识库里已索引的文件路径列表（去重 + 按字母序）。"""
-    import os
-    conn = db.get_conn()
-    try:
-        rows = conn.execute(
-            "SELECT DISTINCT path FROM kb_files WHERE status='ok' ORDER BY path"
-        ).fetchall()
-    finally:
-        conn.close()
-    return [r["path"] for r in rows[:limit]]
+def _list_kb_files(limit=20, scope=None):
+    """返回知识库里已索引的文件路径列表（遵守 scope 范围）。"""
+    if scope:
+        p = (scope.get("path") or "").strip()
+        if p:
+            return [p]
+        fid = scope.get("folder_id")
+        if fid:
+            return db.kb_file_paths(folder_id=fid, limit=limit)
+    return db.kb_file_paths(limit=limit)

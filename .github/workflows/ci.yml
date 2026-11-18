@@ -38,43 +38,7 @@ jobs:
       - name: Byte-compile
         run: python -m compileall -q backend main.py tests
 
-      # 这些套件不依赖 Ollama：规则/索引/FTS/解析/去重/拼音/LLM 打桩。
-      # 需要真实模型或真实知识库的套件（test_rag / test_upgrade /
-      # test_llm_provider / test_ai_classify / test_winocr）不在此列。
+      # 统一测试入口（自动发现全部离线可跑的 test_*.py 套件，为每套分配独立 APPDATA 沙盒；
+      # 仅需真实 Ollama 模型的 E2E 套件在 run_all.py 内跳过，永不发生 CI 清单漏加漂移）
       - name: Run test suites
-        shell: pwsh
-        run: |
-          # 测试脚本以打印 FAIL 计数为准，退出码恒为 0，所以解析输出判断失败。
-          $suites = @(
-            "test_core", "test_fileindex", "test_batch2", "test_content_index",
-            "test_contentver", "test_rel_sort", "test_parse_chunk", "test_maint",
-            "test_hybrid", "test_pinyin", "test_llm_robust", "test_kb_followup",
-            "test_rerank", "test_update", "test_applog", "test_kb_failed",
-            "test_kb_cancel", "test_datadir", "test_hardening",
-            "test_session_followups", "test_config", "test_exclude_defaults",
-            "test_ocr_model", "test_ollama_models_dir", "test_status_codes",
-            "test_ui_bindings", "test_cleanup_keep", "test_rag_scope"
-          )
-          $failed = @()
-          # 少数套件按目录名做门禁：test_datadir 要求含 fb_datadir，
-          # test_session_followups 要求含 fb_captest，其余含 fb_ 即可。
-          $appdataNames = @{
-            "test_datadir" = "fb_datadir"
-            "test_session_followups" = "fb_captest"
-          }
-          foreach ($s in $suites) {
-            $name = if ($appdataNames.ContainsKey($s)) { $appdataNames[$s] } else { "fb_ci_$s" }
-            $env:APPDATA = Join-Path $env:RUNNER_TEMP $name
-            New-Item -ItemType Directory -Force -Path $env:APPDATA | Out-Null
-            Write-Host "`n=== $s ==="
-            $out = & python "tests/$s.py" 2>&1 | Out-String
-            Write-Host $out
-            if ($out -match "(?m)^\s*FAIL|FAILURES:|Traceback \(most recent call last\)") {
-              $failed += $s
-            }
-          }
-          if ($failed.Count -gt 0) {
-            Write-Host "::error::失败的套件: $($failed -join ', ')"
-            exit 1
-          }
-          Write-Host "所有套件通过"
+        run: python tests/run_all.py

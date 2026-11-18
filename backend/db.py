@@ -590,6 +590,11 @@ def init_db():
                 [(chunk_btext(r["text"]), r["id"]) for r in conn.execute(
                     "SELECT id, text FROM chunks "
                     "WHERE btext IS NULL AND text IS NOT NULL").fetchall()])
+            # 规则表 pattern 唯一化迁移：历史版本无 UNIQUE 约束，重复添加会堆冗余行
+            conn.execute(
+                "DELETE FROM rules WHERE id NOT IN (SELECT MAX(id) FROM rules GROUP BY pattern)"
+            )
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_rules_pattern ON rules(pattern)")
             # v1.4.4：.doc 不再声明支持（旧版二进制 Word 当文本读只会入库乱码）。
             # 清掉历史残留：kb_files/chunks 与正文索引两套都要删，否则乱码仍能被搜到。
             # 无匹配时只是一次 kb_files 扫描，有匹配才碰 chunks，启动开销可忽略。
@@ -1017,11 +1022,16 @@ def get_rules():
 
 
 def add_rule(pattern, category, sub=None):
+    pat = (pattern or "").lower().lstrip(".").strip()
+    if not pat:
+        return
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO rules(pattern,category,sub) VALUES(?,?,?)",
-            (pattern.lower().lstrip("."), category, sub),
+            "INSERT INTO rules(pattern,category,sub,enabled) VALUES(?,?,?,1) "
+            "ON CONFLICT(pattern) DO UPDATE SET category=excluded.category, "
+            "sub=excluded.sub, enabled=1",
+            (pat, category, sub or ""),
         )
         conn.commit()
     finally:
@@ -1031,7 +1041,11 @@ def add_rule(pattern, category, sub=None):
 def delete_rule(rule_id):
     conn = get_conn()
     try:
-        conn.execute("DELETE FROM rules WHERE id=?", (rule_id,))
+        if isinstance(rule_id, str) and not rule_id.isdigit():
+            pat = rule_id.lower().lstrip(".").strip()
+            conn.execute("DELETE FROM rules WHERE pattern=?", (pat,))
+        else:
+            conn.execute("DELETE FROM rules WHERE id=?", (rule_id,))
         conn.commit()
     finally:
         conn.close()
@@ -1105,16 +1119,18 @@ class VectorIndex:
         self._select_sql = select_sql
         self._ids = None
         self._matrix = None
+        self._by_dim = None   # {dim: (ids_int64, norm_matrix_float32)}
         self._lock = threading.Lock()
 
     def invalidate(self):
         with self._lock:
             self._ids = None
             self._matrix = None
+            self._by_dim = None
 
     def _ensure_loaded(self):
         with self._lock:
-            if self._ids is not None:
+            if self._by_dim is not None:
                 return
             import numpy as np
             conn = _connect()
@@ -1123,27 +1139,55 @@ class VectorIndex:
             finally:
                 conn.close()
             if not rows:
-                self._ids = np.array([], dtype=np.int64)
-                self._matrix = np.zeros((0, 1), dtype=np.float32)
+                self._ids = np.empty(0, dtype=np.int64)
+                self._matrix = np.empty((0, 0), dtype=np.float32)
+                self._by_dim = {}
                 return
-            ids = np.array([r["id"] for r in rows], dtype=np.int64)
-            vecs = np.stack([np.frombuffer(r["vec"], dtype=np.float32) for r in rows])
-            norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-            norms[norms == 0] = 1.0
-            self._ids = ids
-            self._matrix = vecs / norms
+            buckets = {}
+            for r in rows:
+                blob = r["vec"]
+                if not blob or len(blob) % 4 != 0:
+                    continue
+                v = np.frombuffer(blob, dtype=np.float32)
+                if v.size == 0:
+                    continue
+                buckets.setdefault(int(v.size), ([], []))[0].append(r["id"])
+                buckets[int(v.size)][1].append(v)
+            by_dim = {}
+            for dim, (id_list, vec_list) in buckets.items():
+                ids = np.array(id_list, dtype=np.int64)
+                vecs = np.stack(vec_list)
+                norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+                norms[norms == 0] = 1.0
+                by_dim[dim] = (ids, vecs / norms)
+            self._by_dim = by_dim
+            if by_dim:
+                primary_dim = max(by_dim, key=lambda d: len(by_dim[d][0]))
+                self._ids, self._matrix = by_dim[primary_dim]
+            else:
+                self._ids = np.empty(0, dtype=np.int64)
+                self._matrix = np.empty((0, 0), dtype=np.float32)
 
     def search(self, query_vec, k=8, allowed=None):
         """返回 [(id, score)]，按相似度降序。float32 走 BLAS，分块控制峰值内存。
         allowed：允许命中的 id 集合（知识库限定范围时用）；None 表示全量。
-        范围外的分数置 -inf 再取 top-k——不能先取全库 top-k 再过滤，
-        否则限定到小范围时会把范围内的内容整体挤掉。"""
+        按 query_vec 维度匹配同维度矩阵，避免切换 embedding 模型后维度冲突崩溃。"""
         import numpy as np
         self._ensure_loaded()
         with self._lock:
-            ids = self._ids
-            matrix = self._matrix
-            if ids is None or matrix is None or len(ids) == 0:
+            q = np.asarray(query_vec, dtype=np.float32).reshape(-1)
+            if q.size == 0:
+                return []
+            dim = int(q.size)
+            slot = (self._by_dim or {}).get(dim)
+            if (self._ids is not None and self._matrix is not None
+                    and self._matrix.ndim == 2 and self._matrix.shape[1] == dim
+                    and (slot is None or self._ids is not slot[0])):
+                slot = (self._ids, self._matrix)
+            if slot is None:
+                return []
+            ids, matrix = slot
+            if len(ids) == 0:
                 return []
             mask = None
             if allowed is not None:
@@ -1152,7 +1196,6 @@ class VectorIndex:
                 mask = np.isin(ids, np.fromiter(allowed, dtype=np.int64))
                 if not mask.any():
                     return []
-            q = np.asarray(query_vec, dtype=np.float32).reshape(-1)
             n = np.linalg.norm(q)
             if n == 0:
                 return []

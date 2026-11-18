@@ -25,7 +25,7 @@ def check(name, cond, detail=""):
         print(f" FAIL {name} {detail}")
 
 
-def make_heic(path, size=(320, 240), color=(200, 90, 40), exif_dt=None):
+def make_heic(path, size=(320, 240), color=(200, 90, 40), exif_dt=None, sub_ifd=False):
     from PIL import Image
     from pillow_heif import register_heif_opener
     register_heif_opener()      # 注册后 PIL 可直接写 HEIF
@@ -37,7 +37,10 @@ def make_heic(path, size=(320, 240), color=(200, 90, 40), exif_dt=None):
     kw = {"format": "HEIF"}
     if exif_dt:
         exif = im.getexif()
-        exif[36867] = exif_dt          # DateTimeOriginal
+        if sub_ifd:
+            exif.get_ifd(0x8769)[36867] = exif_dt   # 标准相机/手机 Exif Sub-IFD 存放位置
+        else:
+            exif[36867] = exif_dt                   # IFD0 兼容位置
         kw["exif"] = exif.tobytes()
     im.save(path, **kw)
     return path
@@ -70,9 +73,14 @@ def main():
     th = thumbserver.generate_thumb(p)
     check("缩略图生成成功", bool(th) and os.path.exists(th), str(th))
 
-    # 5) EXIF 拍摄时间入库
+    # 5) EXIF 拍摄时间入库（IFD0 与标准 Exif Sub-IFD 0x8769 双路径）
     ts = fileindex._photo_time_of(p)
-    check("EXIF 拍摄时间可读", bool(ts), str(ts))
+    check("EXIF 拍摄时间可读 (IFD0)", bool(ts), str(ts))
+    p_sub = make_heic(os.path.join(d, "sub_ifd.heic"), exif_dt="2022:08:15 09:45:00", sub_ifd=True)
+    ts_sub = fileindex._photo_time_of(p_sub)
+    check("EXIF 拍摄时间可读 (Sub-IFD 0x8769)",
+          bool(ts_sub) and imgdecode.exif_datetime_str(p_sub).startswith("2022:08:15"),
+          str(ts_sub))
 
     # 6) dHash（相似图片检测）
     h = simimg.dhash(p)

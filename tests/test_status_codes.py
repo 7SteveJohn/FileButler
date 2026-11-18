@@ -6,12 +6,18 @@
 """
 import os
 import re
+import shutil
 import sys
+import tempfile
+
+_SANDBOX = tempfile.mkdtemp(prefix="fb_captest_status_")
+os.environ["APPDATA"] = _SANDBOX
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from backend import llm, model_rec  # noqa: E402
+from backend import db, llm, model_rec  # noqa: E402
+db.init_db()
 
 PASS = 0
 FAIL = 0
@@ -163,9 +169,13 @@ def test_locale_keys():
         check(f"en 有 sub.{key}", re.search(rf"\b{key}:\s*'", EN) is not None)
 
 
-test_chat_status_codes()
-test_recommend_tier_codes()
-test_locale_keys()
+try:
+    test_chat_status_codes()
+    test_recommend_tier_codes()
+    test_locale_keys()
+finally:
+    db.close_all_conns()
+    shutil.rmtree(_SANDBOX, ignore_errors=True)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -185,6 +185,7 @@ class Api:
         self._scan_stop = threading.Event()  # 恢复备份/搬迁前叫停全量扫描
         self._scan_thread = None     # 在飞的全量扫描线程（配合 _scan_stop 等它退出）
         self._quit_handler = None    # main.py 注入：退出应用（自动更新装完后用）
+        self._hotkey_handler = None  # main.py 注入：Win32 全局热键控制器 apply(enabled, combo)
         self._updating = False       # 自动更新下载中（防重入）
         self._kb_cancel = {}         # folder_id -> Event（知识库索引可取消）
 
@@ -209,6 +210,10 @@ class Api:
     def set_quit_handler(self, fn):
         """main.py 注入：退出应用（自动更新拉起安装器后调用）。"""
         self._quit_handler = fn
+
+    def set_hotkey_handler(self, fn):
+        """main.py 注入：动态应用全局热键（RegisterHotKey / UnregisterHotKey）。"""
+        self._hotkey_handler = fn
 
     # ---------- 自绘标题栏的窗口控制（frameless 窗口） ----------
     # 注意：WinForms 控件只能由 UI 线程操作——必须走 pywebview 的
@@ -297,8 +302,10 @@ class Api:
                 indexer.sync_auto_folders()
                 if self._auto_kb_enabled():
                     self.index_all_auto_folders()
-                if self._img_semantic_enabled() and imgsearch.vl_ready():
-                    self.describe_backlog()
+                if self._img_semantic_enabled():
+                    from backend.knowledge import winocr as _winocr
+                    if imgsearch.vl_ready() or _winocr.available():
+                        self.describe_backlog()
             except Exception as e:
                 print("after_scan error:", e)
             # 预热重缓存：dir_tree / space_analysis 各要全表聚合 2-5s（机械盘），
@@ -908,7 +915,7 @@ class Api:
         # 扫描版 PDF（无文本层）→ 直接调底层 describe_image 拿描述字符串
         # imgsearch.describe_files 返回 dict（计数），不返回 descr 文本
         if not text.strip():
-            if ext in ("pdf", "png", "jpg", "jpeg", "bmp", "webp") and _imgsearch.vl_ready():
+            if ext in ("pdf", "png", "jpg", "jpeg", "bmp", "webp", "heic", "heif", "tif", "tiff") and _imgsearch.vl_ready():
                 try:
                     chat = llm_mod.get_chat_client()
                     descr, ocr = chat.describe_image(path, _imgsearch.vl_model())
@@ -970,7 +977,7 @@ class Api:
 
     # ---------- 文件工具（右键菜单「工具」） ----------
 
-    _OCR_EXTS = ("jpg", "jpeg", "png", "bmp", "webp", "tif", "tiff", "gif")
+    _OCR_EXTS = ("jpg", "jpeg", "png", "bmp", "webp", "tif", "tiff", "gif", "heic", "heif")
 
     def ocr_status(self):
         """系统 OCR 可用性（轻量，结果在后端缓存；供右键菜单置灰用）。"""
@@ -1087,13 +1094,13 @@ class Api:
         try:
             n = 0
             for r in data.get("rules", []):
-                if not r.get("pattern"):
+                pat = str(r.get("pattern") or "").strip().lower().lstrip(".")
+                if not pat:
                     continue
-                cur = conn.execute("SELECT 1 FROM rules WHERE pattern=? AND category=? AND sub IS ?",
-                                   (r["pattern"], r.get("category") or "其他", r.get("sub") or "")).fetchone()
-                if not cur:
-                    conn.execute("INSERT INTO rules(pattern,category,sub,enabled) VALUES(?,?,?,1)",
-                                 (r["pattern"], r.get("category") or "其他", r.get("sub") or ""))
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO rules(pattern,category,sub,enabled) VALUES(?,?,?,1)",
+                    (pat, r.get("category") or "其他", r.get("sub") or ""))
+                if cur.rowcount:
                     n += 1
             counts["rules"] = n
             n = 0
@@ -1283,16 +1290,21 @@ class Api:
 
     def rename_files(self, rows):
         """批量重命名（改文件名，目录不变）。rows: [{src, new_name}]。
-        冲突自动加 (1) 序号绝不覆盖；记入操作日志可撤销。"""
+        支持仅大小写改名（readme.md -> README.md）；真实冲突自动加 (1) 序号绝不覆盖；记入操作日志可撤销。"""
         batch_id = db.new_batch_id()
         results = []
         for r in rows:
             src = r["src"]
             new_name = (r.get("new_name") or "").strip()
             try:
-                if not new_name or os.path.basename(src) == new_name:
+                old_name = os.path.basename(src)
+                if not new_name or old_name == new_name:
                     continue
-                dst = planner._unique_path(os.path.join(os.path.dirname(src), new_name))
+                raw_dst = os.path.join(os.path.dirname(src), new_name)
+                if os.path.normcase(old_name) == os.path.normcase(new_name):
+                    dst = raw_dst
+                else:
+                    dst = planner._unique_path(raw_dst)
                 os.rename(src, dst)
                 db.log_operation(batch_id, "rename", src, dst)
                 try:
@@ -1363,23 +1375,37 @@ class Api:
                 dst = os.path.join(dest, os.path.basename(src))
                 if os.path.normcase(src) == os.path.normcase(dst):
                     raise ValueError("源与目标在同一位置")
+                was_dir = os.path.isdir(src)
                 dst = planner._unique_path(dst)
                 if mode == "copy":
-                    if os.path.isdir(src):
+                    if was_dir:
                         shutil.copytree(src, dst)
                     else:
                         shutil.copy2(src, dst)
                     db.log_operation(batch_id, "copy", src, dst)
                     try:
-                        fileindex.upsert_file(dst)
+                        if was_dir:
+                            for dp, dns, fns in os.walk(dst):
+                                dns[:] = [d for d in dns if d.lower() not in scanner.SKIP_DIRS]
+                                for fn in fns:
+                                    fileindex.upsert_file(os.path.join(dp, fn))
+                        else:
+                            fileindex.upsert_file(dst)
                     except Exception:
                         pass
                 else:
                     shutil.move(src, dst)
                     db.log_operation(batch_id, "move", src, dst)
                     try:
-                        fileindex.remove_file(src)
-                        fileindex.upsert_file(dst)
+                        if was_dir:
+                            fileindex.remove_under(src)
+                            for dp, dns, fns in os.walk(dst):
+                                dns[:] = [d for d in dns if d.lower() not in scanner.SKIP_DIRS]
+                                for fn in fns:
+                                    fileindex.upsert_file(os.path.join(dp, fn))
+                        else:
+                            fileindex.remove_file(src)
+                            fileindex.upsert_file(dst)
                     except Exception:
                         pass  # 索引更新失败不影响文件操作，watcher/下轮扫描自愈
                 results.append({"src": src, "dst": dst, "ok": True})
@@ -1457,8 +1483,8 @@ class Api:
         try:
             cond, params = "", []
             if root:
-                cond = "WHERE path LIKE ?"
-                params = [root.rstrip("/\\") + "%"]
+                cond = "WHERE path LIKE ? ESCAPE '\\'"
+                params = [fileindex.like_dir_prefix(root)]
             # 游标迭代代替 fetchall：不把 83 万行一次性搬进 Python 内存
             for r in conn.execute(
                     f"SELECT path, size, category FROM file_index {cond}", params):
@@ -2366,21 +2392,25 @@ class Api:
             pass
 
     def set_img_semantic(self, enabled):
-        """图片语义搜索开关。开启时若无视觉模型返回提示。"""
+        """图片语义搜索开关。支持 VL 视觉模型或 Windows 系统 OCR 兜底。"""
         from backend import llm as llm_mod
+        from backend.knowledge import winocr as _winocr
         db.set_setting("img_semantic", "1" if enabled else "0")
         if enabled:
-            if llm_mod.chat_available() and imgsearch.vl_ready():
+            vl_ok = bool(llm_mod.chat_available() and imgsearch.vl_ready())
+            ocr_ok = bool(_winocr.available())
+            if vl_ok or ocr_ok:
                 self.describe_backlog()
-                return {"ok": True, "model_ready": True}
-            return {"ok": True, "model_ready": False,
+            return {"ok": True, "model_ready": vl_ok, "winocr_ready": ocr_ok,
                     "vl_model": imgsearch.vl_model()}
         return {"ok": True}
 
     def img_semantic_status(self):
+        from backend.knowledge import winocr as _winocr
         return {"enabled": self._img_semantic_enabled(),
                 "vl_model": imgsearch.vl_model(),
                 "model_ready": imgsearch.vl_ready(),
+                "winocr_ready": _winocr.available(),
                 "described": db.img_index_stats(),
                 "pending": len(imgsearch.pending_images(limit=100000))}
 
@@ -2523,8 +2553,13 @@ class Api:
         if ext in ("mp4", "m4v", "webm", "mov"):
             # 浏览器可直接解码的容器才给内置播放（mkv/avi 不支持，走系统打开）
             return {"type": "video",
-                    "url": f"http://127.0.0.1:{base}/preview?p={p}"}
-        if ext in ("docx", "xlsx", "pptx"):
+                    "url": f"http://127.0.0.1:{base}/preview?p={p}",
+                    "name": os.path.basename(path)}
+        if ext in ("mp3", "wav", "flac", "ogg", "m4a", "aac"):
+            return {"type": "audio",
+                    "url": f"http://127.0.0.1:{base}/preview?p={p}",
+                    "name": os.path.basename(path)}
+        if ext in ("docx", "xlsx", "pptx", "zip", "tar", "gz", "tgz", "bz2", "xz"):
             try:
                 from backend import office_preview
                 content = office_preview.to_html(path, ext)
@@ -2633,6 +2668,14 @@ class Api:
         keep_paths：对比预览里人工指定要保留的文件，优先于 keep_rule。"""
         return cleanup.dedupe_cleanup(groups, keep_rule=keep_rule, dry_run=dry_run,
                                       keep_paths=keep_paths)
+
+    def quarantine_status(self):
+        """查看「待清理」隔离区的批次列表与空间占用。"""
+        return cleanup.list_quarantine()
+
+    def quarantine_purge(self, names=None):
+        """把「待清理」指定批次（names=None 表示全部）送入系统回收站释放空间。"""
+        return cleanup.purge_quarantine(names)
 
     # ---------- 每周报告 ----------
 
@@ -2778,11 +2821,18 @@ class Api:
                 "hotkey": db.get_setting("hotkey_combo", "Alt+Space")}
 
     def set_hotkey(self, enabled, combo="Alt+Space"):
+        from backend import hotkey as hotkey_mod
+        combo = (combo or "Alt+Space").strip() or "Alt+Space"
+        if enabled and not hotkey_mod.parse_combo(combo):
+            return {"ok": False, "error": f"无效的快捷键格式：{combo}"}
+        if self._hotkey_handler is not None:
+            res = self._hotkey_handler(bool(enabled), combo)
+            if isinstance(res, dict) and not res.get("ok", True):
+                return res
         db.set_setting("hotkey_enabled", "1" if enabled else "0")
         db.set_setting("hotkey_combo", combo)
-        # 通知 main.py 热键线程
-        self._emit("hotkey_changed", {"enabled": enabled, "combo": combo})
-        return {"ok": True}
+        self._emit("hotkey_changed", {"enabled": bool(enabled), "combo": combo})
+        return {"ok": True, "enabled": bool(enabled), "hotkey": combo}
 
     # ---------- 自定义排除目录 ----------
 

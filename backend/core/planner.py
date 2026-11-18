@@ -4,30 +4,32 @@ import os
 from backend.core import rules as rules_mod
 
 
-def _unique_path(dst):
-    """目标已存在时追加序号，绝不覆盖。"""
-    if not os.path.exists(dst):
+def _unique_path(dst, reserved=None):
+    """目标已存在（或已被同批次其他文件预占）时追加序号，绝不覆盖。"""
+    def _taken(p):
+        if os.path.exists(p):
+            return True
+        return reserved is not None and os.path.normcase(os.path.abspath(p)) in reserved
+
+    if not _taken(dst):
         return dst
     base, ext = os.path.splitext(dst)
     for i in range(1, 10000):
         cand = f"{base} ({i}){ext}"
-        if not os.path.exists(cand):
+        if not _taken(cand):
             return cand
     return None
 
 
 def _image_subdir(src, by_year):
-    """图片可选按拍摄年份分子目录（读 EXIF，失败退回文件修改时间）。"""
+    """图片可选按拍摄年份分子目录（读 EXIF，读不到的归入「未知年份」）。"""
     if not by_year:
         return ""
     year = None
     try:
         from backend import imgdecode
-        with imgdecode.open_image(src) as im:
-            exif = im.getexif()
-            # 0x9003 = DateTimeOriginal
-            dt = exif.get(0x9003) or exif.get(0x0132)
-        if dt and len(dt) >= 4:
+        dt = imgdecode.exif_datetime_str(src)
+        if dt and len(dt) >= 4 and dt[:4].isdigit():
             year = dt[:4]
     except Exception:
         pass
@@ -45,8 +47,17 @@ def build_plan(files, target_root, category_map=None, by_year_images=None, rules
     """
     rules = rules or rules_mod.load_user_rules()
     if by_year_images is None:
-        by_year_images = os.environ.get("FB_IMAGES_BY_YEAR", "1") == "1"
+        env_v = os.environ.get("FB_IMAGES_BY_YEAR")
+        if env_v is not None:
+            by_year_images = env_v == "1"
+        else:
+            try:
+                from backend import db
+                by_year_images = db.get_setting("images_by_year", "1") == "1"
+            except Exception:
+                by_year_images = True
     category_map = category_map or {}
+    reserved = set()
     plan = []
     for fi in files:
         src = fi["path"]
@@ -78,11 +89,12 @@ def build_plan(files, target_root, category_map=None, by_year_images=None, rules
             plan.append({"src": src, "dst": dst, "category": cat, "sub": sub,
                          "action": "skip", "size": fi["size"]})
             continue
-        dst = _unique_path(dst)
+        dst = _unique_path(dst, reserved=reserved)
         if dst is None:
             plan.append({"src": src, "dst": "", "category": cat, "sub": sub,
                          "action": "error", "size": fi["size"]})
             continue
+        reserved.add(os.path.normcase(os.path.abspath(dst)))
         plan.append({"src": src, "dst": dst, "category": cat, "sub": sub,
                      "action": "move", "size": fi["size"]})
     return plan

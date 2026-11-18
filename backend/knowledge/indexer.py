@@ -227,10 +227,12 @@ def _index_file_into_kb(client, fi, folder_id):
     # 每块前置文件名，块向量携带文档上下文
     pieces = chunker.chunk_text(text, title=os.path.splitext(os.path.basename(fi["path"]))[0])
     if not pieces:
+        _mark_parse_failed(folder_id, fi)
         return "failed"
     try:
         vectors = client.embed(pieces)
     except Exception:
+        _mark_parse_failed(folder_id, fi)
         return "failed"
 
     conn = db.get_conn()
@@ -257,6 +259,8 @@ def _index_file_into_kb(client, fi, folder_id):
 def _mark_parse_failed(folder_id, fi):
     conn = db.get_conn()
     try:
+        conn.execute("DELETE FROM chunks WHERE file_id IN "
+                     "(SELECT id FROM kb_files WHERE path=?)", (fi["path"],))
         conn.execute("DELETE FROM kb_files WHERE path=?", (fi["path"],))
         conn.execute(
             "INSERT INTO kb_files(folder_id,path,mtime,size,hash,status,parse_ver) "
@@ -266,6 +270,7 @@ def _mark_parse_failed(folder_id, fi):
         conn.commit()
     finally:
         conn.close()
+    db.vec_index.invalidate()
 
 
 def index_files(paths, progress_cb=None):

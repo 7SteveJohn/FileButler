@@ -31,6 +31,39 @@ def is_heic(path):
     return os.path.splitext(path)[1].lstrip(".").lower() in ("heic", "heif")
 
 
+def needs_jpeg_transcode(path):
+    """浏览器或视觉模型原生不支持、需转码为 JPEG 的图片后缀（HEIC/HEIF/TIFF）。"""
+    return os.path.splitext(path)[1].lstrip(".").lower() in ("heic", "heif", "tif", "tiff")
+
+
+def exif_datetime_str(path):
+    """读取图片 EXIF 拍摄时间原始字符串（如 '2021:05:04 12:30:00'）；无则返回 None。
+
+    注意：Pillow 10+ 的公开 getexif() 顶层仅暴露 IFD0，而标准 EXIF 2.3 中相机/手机
+    写入的 DateTimeOriginal(36867) 与 DateTimeDigitized(36868) 均存放在 Exif Sub-IFD
+    (0x8769) 内，必须先查 get_ifd(0x8769)，再回退顶层 36867/36868/306(DateTime)。
+    """
+    try:
+        with open_image(path) as im:
+            exif = im.getexif()
+            if not exif:
+                return None
+            raw = None
+            try:
+                sub = exif.get_ifd(0x8769) or {}
+                raw = sub.get(36867) or sub.get(36868)
+            except Exception:
+                raw = None
+            if not raw:
+                raw = exif.get(36867) or exif.get(36868) or exif.get(306)
+            if not raw:
+                return None
+            s = str(raw).strip().rstrip("\x00").strip()
+            return s or None
+    except Exception:
+        return None
+
+
 def open_image(path):
     """打开为 PIL Image（含 HEIC）。调用方负责 close / with。"""
     _register()

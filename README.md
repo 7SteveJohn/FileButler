@@ -41,7 +41,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 
 ## Quick start
 
-1. Grab `FileButler-Setup-1.4.4.exe` from [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) (~61 MB) and run it — **no administrator rights needed**, it installs into your user profile
+1. Grab `FileButler-Setup-1.4.5.exe` from [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) (~61 MB) and run it — **no administrator rights needed**, it installs into your user profile
 2. On first launch it scans your user folders — Desktop / Documents / Downloads / Pictures / Videos / Music — and you can search within seconds
 3. Want Q&A and semantic search? Install [Ollama](https://ollama.com); the settings page recommends models for your GPU and downloads them in one click (`qwen3` family plus the `bge-m3` embedding model)
 4. Already running LM Studio or a cloud API? Switch the backend in Settings — Ollama is optional
@@ -66,29 +66,29 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 ### 🔍 Finding files — more than filename matching
 
 - **Automatic cataloging (Everything-style, read-only)**: scans your user folders — Desktop / Documents / Downloads / Pictures / Videos / Music — on startup, watches for changes in the background, new files become searchable within seconds
-- **Search syntax**: `ext:pdf`, `size:>100mb`, `dm:week`, `path:Desktop`, `cat:图片`, freely combined with keywords — `path:` matches the real on-disk path (Windows user folders are literally named `Desktop`; unlike `dm:`/`cat:` it takes no translated values). Long tokens go through an FTS5 full-text index, with pinyin and pinyin-initials matching for Chinese filenames (`baogao`, `bg` → 报告), sortable by relevance. Date keywords accept English (`today` / `week` / `month` / `year`) or Chinese (`本周` / `本月`); `cat:` values are the backend's fixed Chinese labels (`图片`, `文档`, …) in either UI language — the category tags shown in the list are display-only translations
+- **Search syntax**: `ext:pdf`, `size:>100mb`, `dm:week`, `path:Desktop`, `path:"D:\Project Files"`, `cat:图片`, freely combined with keywords — `path:` matches the real on-disk path (wrap paths containing spaces in quotes; Windows user folders are literally named `Desktop`, and unlike `dm:`/`cat:` it takes no translated values). Long tokens go through an FTS5 full-text index, with pinyin and pinyin-initials matching for Chinese filenames (`baogao`, `bg` → 报告), sortable by relevance. Date keywords accept English (`today` / `week` / `month` / `year`) or Chinese (`本周` / `本月`); `cat:` values are the backend's fixed Chinese labels (`图片`, `文档`, …) in either UI language — the category tags shown in the list are display-only translations
 - **Real capture dates for photos**: date filters prefer EXIF capture time, so copying or reorganizing files never scrambles a photo timeline; files without EXIF fall back to modified time. iPhone HEIC works too — thumbnails, full-size preview, capture date and similar-image detection
 - **Natural-language search**: "that quote from last month" resolves through a local vector index (requires Ollama)
 - **Semantic image search + OCR**: a vision model (qwen2.5vl) captions images and transcribes the text inside them — search "sunset" for photos, search an invoice number for a screenshot. Without a vision model it degrades to the built-in Windows OCR (off by default; enable it in Settings)
-- **Built-in preview**: plain text and source code inline, rendered Markdown, PDFs opened in-window, full-size image preview; `Ctrl+F` focuses search, double-click opens the file; opening a content-search hit jumps straight to the matching PDF page and highlights the term in text files
+- **Built-in preview**: plain text and source code inline, rendered Markdown, Office documents (`docx`/`xlsx`/`pptx`), read-only archive contents (`zip`/`tar.*`), in-window PDFs, full-size images (including HEIC/TIFF), and audio/video playback with HTTP Range seeking; `Ctrl+F` focuses search, double-click opens the file; opening a content-search or Q&A citation jumps straight to the matching PDF page and highlights the term in text files
 - **Filters you don't have to rebuild**: save the current filter set and reopen it later; star, tag and annotate files you return to
-- **Batch operations**: multi-select to move / copy / rename / delete (to Recycle Bin) / copy path
+- **Batch operations**: multi-select to move / copy / rename (numbering, `{date}_{parent}_{seq:03}` templates, find & replace, or AI suggestions) / delete (to Recycle Bin) / copy path
 - **Two small utilities**: OCR text extraction from images, and SHA-256 checksums for any file
 - **English / 简体中文 UI**: switch under Settings → Appearance; the choice is stored in the app's own settings, not the browser locale
 
 ### 💬 Asking your documents — a knowledge base that answers
 
 - **Automatic knowledge base**: off by default — flip the switch and new documents in watched folders are parsed, chunked and embedded on arrival, so content search and Q&A work without building an index by hand (while off you can still index a folder manually). Supported formats include PDF, Office documents (except legacy `.doc` — save it as `.docx` first), `.eml` mail, HTML, plain text and source code
-- **Q&A plus retrieval**: search raw passages only, or have a local model answer grounded in them. Retrieval fuses vectors with keyword search (reciprocal rank fusion), so keyword hits still work — with citations — even with no model installed. Follow-up questions rewrite the retrieval query automatically, and answers cite their sources (file · section · page). You can scope a question to one library folder or a single file
+- **Q&A plus retrieval**: search raw passages only, or have a local model answer grounded in them. Retrieval fuses vectors with keyword search (reciprocal rank fusion), so keyword hits still work — with citations — even with no model installed. Follow-up questions rewrite the retrieval query automatically; answers cite their sources (file · section · page/sheet), highlight passages actually cited in the answer, and open an in-window preview straight to the matching PDF page when clicked. You can scope a question to one library folder or a single file
 - **Optional reranking**: a local reranker (bge-reranker-v2-m3, CPU inference) can re-read and reorder the top results for tighter precision. Off by default, and any failure falls back to plain fusion ranking
 - **Index any folder**: add directories to the knowledge base manually
 - **Conversation history**: sessions are saved; revisit, continue or delete them from the sidebar
 
 ### 🗂️ Organizing and cleaning — you see the plan first
 
-- **Smart organizing**: triggered manually; rules plus a local LLM classify files in bulk → a plan is generated → you review and tick each item → moves are executed → **the whole batch can be undone** (and redone). Plans can be saved as templates
-- **Duplicate detection with safe cleanup**: three-level hashing finds duplicates → keep-rules (newest / oldest / shortest path) pick the survivor → the rest move to a quarantine folder (not deleted, fully undoable). Each group can be opened in a **side-by-side compare** view so you pick the keeper yourself
-- **Two extra health checks**: find large files, detect conflicting copies
+- **Smart organizing**: triggered manually; rules plus a local LLM classify files in bulk (with per-file category overrides right in the scan table) → a plan is generated → you review and tick each item → moves are executed → **the whole batch can be undone** (and redone). Plans can be saved as templates
+- **Duplicate & similar-photo cleanup + Quarantine manager**: three-level hashing finds exact duplicates and 64-bit perceptual hashing (`dHash`) catches resized / re-compressed / burst photos → keep-rules or **side-by-side compare** pick the survivor → the rest move to a quarantine folder (not deleted, undoable). The **Quarantine** tab shows space used per batch and sends verified batches to the Windows Recycle Bin in one click
+- **Extra health checks**: find large files, detect sync/numbered conflict copies, and clean empty folders
 - **Never a silent move**: every operation is logged (time / source path / destination path) and undoable per batch
 
 ### 🖥️ Daily ergonomics
@@ -116,7 +116,7 @@ Search, preview, organizing and deduplication **do not depend on AI** — they k
 |---|---|
 | **Dashboard** | Library size, weekly activity, disk usage ranking |
 | **Files** | Search, preview, stars and tags, batch operations — the daily driver |
-| **Organizer** | Build plans, detect duplicates, run large-file and conflict checks, undo batches |
+| **Organizer** | Build plans, detect duplicates & similar photos, manage quarantine, run large-file / conflict / empty-folder checks, undo batches |
 | **Knowledge base** | Pick folders, ask questions, search only, review past sessions |
 | **Settings** | Model backends and downloads, watched folders and exclusions, data migration, backups, updates |
 
@@ -200,7 +200,9 @@ backend/
   db.py               SQLite + vector search (document chunks and image captions)
   fileindex.py        master file index (auto cataloging + filename search)
   watcher.py          watchdog live watching (debounce + auto KB and image queues)
-  thumbserver.py      thumbnail/preview server (127.0.0.1 only, whitelist validated)
+  hotkey.py           native Win32 global hotkey listener (RegisterHotKey, zero hook overhead)
+  office_preview.py   built-in HTML preview for Office documents and zip/tar archives
+  thumbserver.py      thumbnail/preview server (127.0.0.1 only, whitelist validated, HTTP Range)
   core/               scanning / rules / batch classification / plans / undoable execution / dedupe
   knowledge/          parsing / chunking / indexing / RAG / image semantics
 frontend/             Vue 3 + Naive UI (Vite build, embedded as a single file)
@@ -243,21 +245,19 @@ cd frontend && npm run dev
 
 ```bash
 cd frontend && npm run build && cd ..
-.venv\Scripts\python -m PyInstaller --noconfirm --onedir --windowed --name FileButler ^
-  --add-data "frontend/dist;frontend/dist" --collect-all webview main.py
+.venv\Scripts\python -m PyInstaller --noconfirm FileButler.spec
+.venv\Scripts\python scripts\release.py --version 1.4.5 --build
 ```
 
 ### Tests
 
 ```bash
+.venv\Scripts\python tests\run_all.py           # run all offline test suites in isolated sandboxes
 .venv\Scripts\python tests\test_core.py         # organizing engine (no Ollama needed)
 .venv\Scripts\python tests\test_fileindex.py    # auto scan/watch/thumbnails (no Ollama needed)
-.venv\Scripts\python tests\test_batch2.py       # syntax search/FTS/cleanup/preview/QA history/weekly report/backup/templates
-.venv\Scripts\python tests\test_datadir.py      # data directory switching
-.venv\Scripts\python tests\test_hardening.py    # connection recycling/backup restore/watcher fallback/Host validation (needs a one-off APPDATA)
-.venv\Scripts\python tests\test_upgrade.py      # batch indexing/auto knowledge base/autostart (needs Ollama)
-.venv\Scripts\python tests\test_ai_classify.py  # AI classification, end to end
-.venv\Scripts\python tests\test_rag.py          # knowledge base, end to end
+.venv\Scripts\python tests\test_maint_v145.py   # hotkey/rules/archive & audio preview/quarantine/i18n parity
+.venv\Scripts\python tests\test_ai_classify.py  # AI classification, end to end (needs Ollama)
+.venv\Scripts\python tests\test_rag.py          # knowledge base, end to end (needs Ollama + bge-m3)
 ```
 
 </details>

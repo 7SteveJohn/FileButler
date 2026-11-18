@@ -12,17 +12,26 @@ except ImportError:
     Image = None
 
 # 参与检测的图片扩展名（与 fileindex.IMAGE_EXTS 一致）
-SIM_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "tiff", "ico"}
+SIM_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "tif", "tiff", "ico"}
+
+# 64 位 dHash 切成 11 个不相交段（9×6bit + 2×5bit = 64bit）：
+# 由抽屉原理，任意两张汉明距离 <= 10 的图片必至少有 1 段完全相同（0 漏检）
+_LSH_SLICES = (
+    (0, 0x3F), (6, 0x3F), (12, 0x3F), (18, 0x3F), (24, 0x3F),
+    (30, 0x3F), (36, 0x3F), (42, 0x3F), (48, 0x3F), (54, 0x1F), (59, 0x1F),
+)
 
 
 def dhash(path, hash_size=8):
-    """感知哈希：resize 到 (hash_size+1, hash_size) 灰度，相邻像素比较 → 64bit 整数。
+    """感知哈希：EXIF 方向矫正后 resize 到 (hash_size+1, hash_size) 灰度，相邻像素比较 → 64bit 整数。
     缩放版 / 压缩版会在大多数位保持一致，汉明距离小。失败返回 None。"""
     if Image is None:
         return None
     try:
+        from PIL import ImageOps
         from backend import imgdecode
         with imgdecode.open_image(path) as im:
+            im = ImageOps.exif_transpose(im)
             im = im.convert("L").resize((hash_size + 1, hash_size), Image.LANCZOS)
         px = im.load()
         h = 0
@@ -67,12 +76,7 @@ def find_similar(files, threshold=10, progress_cb=None):
     if len(hashes) < 2:
         return []
 
-    # 双桶分桶（前 12 位 / 中间 12 位），任意一致才做两两比较，避免全量 O(n²)
-    buckets = defaultdict(list)
-    for p, h in hashes:
-        buckets[(0, h >> 52)].append((p, h))
-        buckets[(1, (h >> 40) & 0xFFF)].append((p, h))
-
+    # 11 段不相交分桶（阈值 <= 10 时抽屉原理保证 100% 召回），较大阈值或极小集合直接两两比较
     parent = {p: p for p, _ in hashes}
 
     def find(p):
@@ -81,15 +85,26 @@ def find_similar(files, threshold=10, progress_cb=None):
             p = parent[p]
         return p
 
-    for items in buckets.values():
+    if threshold > 10 or len(hashes) <= 64:
+        candidate_groups = [hashes]
+    else:
+        buckets = defaultdict(list)
+        for p, h in hashes:
+            for band, (shift, mask) in enumerate(_LSH_SLICES):
+                buckets[(band, (h >> shift) & mask)].append((p, h))
+        candidate_groups = buckets.values()
+
+    for items in candidate_groups:
+        if len(items) < 2:
+            continue
         for i in range(len(items)):
             pi, hi = items[i]
             for j in range(i + 1, len(items)):
                 pj, hj = items[j]
+                if find(pi) == find(pj):
+                    continue
                 if hamming(hi, hj) <= threshold:
-                    ri, rj = find(pi), find(pj)
-                    if ri != rj:
-                        parent[rj] = ri
+                    parent[find(pj)] = find(pi)
 
     groups = defaultdict(list)
     for p, _ in hashes:

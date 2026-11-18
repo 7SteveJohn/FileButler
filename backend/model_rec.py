@@ -174,7 +174,7 @@ def recommend_local(ram_gb=None, vram_gb=None):
         ram_gb, vram_gb = cfg["ram_gb"], cfg["vram_gb"]
     if vram_gb >= 4.0:
         for tier in LOCAL_GPU_TIERS:
-            if vram_gb >= tier["min_vram"]:
+            if vram_gb >= tier["min_vram"] and ram_gb >= tier["min_ram"]:
                 return {"model": tier["model"], "size_gb": tier["size_gb"],
                         "note": tier["note"], "tier": tier["id"], "gpu": True,
                         "reason_code": "rec_gpu",

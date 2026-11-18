@@ -7,6 +7,9 @@ import shutil
 import sys
 import tempfile
 
+_SANDBOX = tempfile.mkdtemp(prefix="fb_captest_winocr_")
+os.environ["APPDATA"] = _SANDBOX
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend import db
@@ -54,16 +57,21 @@ def main():
     if not winocr.available():
         print("SKIP: 系统无 OCR 语言包（设置→语言→选项→光学字符识别）")
         return 0
-    check("ocr available + language", bool(winocr.languages()))
+    langs = winocr.languages()
+    has_zh = any(str(x).lower().startswith("zh") for x in langs)
+    check("ocr available + language", bool(langs))
     db.init_db()   # 本套件要写 img_index；不自己建表的话只能蹭别的套件建好的库
 
     tmp = tempfile.mkdtemp(prefix="fb_winocr_")
     try:
-        # 1. 图片中文 OCR + 归一化（可被关键词搜索）
+        # 1. 图片 OCR + 归一化（英文 CI runner 可能无 zh 语言包，按语言包动态断言中文）
         img = os.path.join(tmp, "发票截图.png")
         make_cn_image(img, ["发票号码 20260823-7749", "FileButler OCR Test 001"])
         text = winocr.ocr_file(img)
-        check("chinese ocr", "发票号" in text and "7749" in text, repr(text))
+        if has_zh:
+            check("chinese ocr", "发票号" in text and "7749" in text, repr(text))
+        else:
+            check("numeric ocr (no zh pack)", "7749" in text, repr(text))
         check("latin ocr", "001" in text, repr(text))
 
         # 2. 无文字层扫描版 PDF 端到端（parse_file 自动走 Windows OCR）
@@ -91,4 +99,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        db.close_all_conns()
+        shutil.rmtree(_SANDBOX, ignore_errors=True)

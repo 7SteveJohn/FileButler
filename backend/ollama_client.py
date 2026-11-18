@@ -227,11 +227,17 @@ class OllamaClient:
         # 未设置时自动挑一个已安装的对话模型（用 30s 缓存的模型列表，避免每次 HTTP）
         models = self._list_models() or []
         candidates = [m for m in models if "embed" not in m and "bge" not in m]
-        for m in candidates:
+        # 排除专用 OCR / 纯视觉模型（如 xiaomi-ocr-0、qwen2.5vl），避免未装对话模型时误当对话模型
+        chat_cands = [
+            m for m in candidates
+            if "ocr" not in m.lower() and "vl" not in m.split(":")[0].lower()
+        ]
+        pool = chat_cands or candidates
+        for m in pool:
             if "qwen" in m.split(":")[0].lower():
                 return m
-        if candidates:
-            return sorted(candidates)[0]
+        if pool:
+            return sorted(pool)[0]
         return "qwen2.5:7b"
 
     def embed_model(self):
@@ -445,8 +451,8 @@ class OllamaClient:
         """用视觉模型生成图片中文描述 + 图中文字转录（用于图片语义搜索）。"""
         import base64
         from backend import imgdecode
-        # HEIC 模型不认，先转 JPEG；其它格式保持原样上传，避免改变既有识别质量
-        if imgdecode.is_heic(image_path):
+        # HEIC/TIFF 等模型不直认，先转 JPEG；其它格式保持原样上传，避免改变既有识别质量
+        if imgdecode.needs_jpeg_transcode(image_path):
             raw = imgdecode.jpeg_bytes(image_path)
         else:
             with open(image_path, "rb") as f:

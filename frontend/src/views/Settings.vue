@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, h } from 'vue'
 import {
   NCard, NButton, NSpace, NInput, NText, NTag, NDataTable, NSelect, NSwitch,
   NAlert, NProgress, NInputGroup, useMessage, NModal, NForm, NFormItem, NDescriptions, NDescriptionsItem,
@@ -21,7 +21,7 @@ function pickLang(k) {
   lang.value = k
 }
 
-// ---------- 外观/主题 ----------
+// ---------- 外观/主题（监听全局主题切换事件，防止从标题栏/Ctrl+K 切主题后本页卡片状态滞后） ----------
 const themeKey = ref(loadThemeKey())
 const themeList = Object.values(THEMES)
 
@@ -30,11 +30,25 @@ function pickTheme(k) {
   saveThemeKey(k)
   window.dispatchEvent(new CustomEvent('fb-theme', { detail: k }))
 }
+
+function syncThemeKey(e) {
+  const k = e?.detail || loadThemeKey()
+  if (k && themeKey.value !== k) themeKey.value = k
+}
+onMounted(() => window.addEventListener('fb-theme', syncThemeKey))
+onUnmounted(() => window.removeEventListener('fb-theme', syncThemeKey))
+onActivated(() => {
+  themeKey.value = loadThemeKey()
+  lang.value = currentLocale()
+  loadDbMaint()
+  loadImgSem()
+})
+
 // ---------- Ollama ----------
 const status = ref(null)
 // 本地模型的提示只在「确实在用本地」时才打扰：切到云端 API 后不该再报 Ollama 未运行
 const ollamaMode = computed(() => status.value?.llm?.mode === 'ollama')
-const ollamaDown = computed(() => ollamaMode.value && !status.value.ollama.running)
+const ollamaDown = computed(() => ollamaMode.value && !status.value?.ollama?.running)
 const apiNoKey = computed(() => status.value?.llm?.chat?.code === 'api_no_key')
 // 已经存好云端配置（地址+密钥+模型）只是没切模式：不报错，直接给一键切换
 const hasApiConfig = computed(() => {
@@ -242,12 +256,12 @@ async function addRule() {
   message.success(t('settings.m.ruleAdded'))
   showAdd.value = false
   newRule.value = { pattern: '', category: '文档', sub: '' }
-  loadRules()
+  loadRules().then(applyFilter)
 }
 
 async function delRule(pattern) {
   await api('delete_rule', pattern)
-  loadRules()
+  loadRules().then(applyFilter)
 }
 
 // ---------- 数据目录管理 ----------
@@ -516,12 +530,19 @@ async function backupNow() {
   else message.error(t('settings.m.backupFail', { e: r.error }))
 }
 
+const backupRestored = ref(false)
+
 async function restoreBk(b) {
   const ok = window.confirm(t('settings.m.restoreConfirm', { f: b.file }))
   if (!ok) return
   const r = await api('restore_backup', b.path)
-  if (r.ok) message.success(t('settings.m.restored'))
-  else message.error(t('settings.m.restoreFail', { e: r.error }))
+  if (r.ok) {
+    backupRestored.value = true
+    restartPending.value = true
+    message.success(t('settings.m.restored'))
+  } else {
+    message.error(t('settings.m.restoreFail', { e: r.error }))
+  }
 }
 
 // ---------- 模型管理（含删除权） ----------
@@ -666,6 +687,8 @@ async function toggleImgSem(v) {
   }
   if (r.model_ready) {
     message.success(t('settings.m.imgSemOn'))
+  } else if (r.winocr_ready) {
+    message.info(t('settings.m.imgSemOcrOnly', { m: r.vl_model }))
   } else {
     message.warning(t('settings.m.imgSemNoModel', { m: r.vl_model }))
   }
@@ -936,7 +959,12 @@ async function toggleRerank(v) {
   if (v && !rerank.value.active) message.warning(t('settings.m.rerankNotReady'))
 }
 async function rerankDownload() {
-  rerank.value = await api('rerank_download')
+  const r = await api('rerank_download')
+  if (r && r.ok === false) {
+    message.error(r.error || t('settings.m.dlFailShort'))
+    return
+  }
+  await refreshRerank()
   if (rerankTimer) clearInterval(rerankTimer)
   rerankTimer = setInterval(async () => {
     await refreshRerank()
@@ -947,6 +975,9 @@ async function rerankDownload() {
     }
   }, 1000)
 }
+onUnmounted(() => {
+  if (rerankTimer) { clearInterval(rerankTimer); rerankTimer = null }
+})
 async function rerankDelete() {
   await api('rerank_delete')
   message.success(t('settings.m.rerankDeleted'))
@@ -979,7 +1010,8 @@ onMounted(() => {
     <n-space vertical size="large">
       <!-- ============ Ollama ============ -->
       <n-card :title="t('settings.ollamaTitle')">
-        <n-space vertical size="large" :key="'ollama-' + (status ? status.ollama.models.length : 0)">
+        <!-- 保留动态 key（见 commit e0430cb）：Naive UI n-space 在异步状态切换 v-if 分支时局部 patch 会重复插入子节点 -->
+        <n-space vertical size="large" :key="'ollama-' + (status ? status.ollama.models.length + '-' + (status.ollama.running ? 1 : 0) + '-' + (status.llm?.mode || '') : 'init')">
           <n-alert v-if="ollamaDown" :type="hasApiConfig ? 'warning' : 'error'">
             {{ hasApiConfig
               ? t('settings.ollamaDownHasApi', { m: status.llm.api_chat_model })
@@ -1375,6 +1407,10 @@ onMounted(() => {
               </template>
             </n-text>
           </n-space>
+          <n-alert v-if="backupRestored" type="warning" :bordered="false">
+            {{ t('settings.restoredBanner') }}
+            <n-button size="small" type="primary" style="margin-left:10px" @click="restartNow">{{ t('settings.restartNow') }}</n-button>
+          </n-alert>
           <n-list v-if="backups.length" bordered size="small">
             <n-list-item v-for="b in backups" :key="b.file">
               <n-space justify="space-between" style="width:100%" align="center">
@@ -1459,7 +1495,7 @@ onMounted(() => {
             :show-indicator="false" :height="5" :border-radius="3" processing />
           <n-text depth="3" style="font-size:12px">
             {{ t('settings.ciStat', { ok: ci?.status?.indexed?.ok ?? 0 }) }}
-            {{ t('settings.ciBody', { b: fmtBody(ci?.status?.indexed?.bytes ?? 0) }) }}
+            {{ t('settings.ciBody', { b: fmtBody(ci?.status?.indexed?.body_bytes ?? 0) }) }}
             {{ t('settings.ciFail', { f: ci?.status?.indexed?.failed ?? 0 }) }}
             <span v-if="ciRunning && ci?.status?.total"> · {{ ciPct }}%</span>
           </n-text>
@@ -1593,7 +1629,7 @@ onMounted(() => {
                 <n-button v-if="!imgSem.model_ready" size="tiny" type="primary" ghost @click="pullVl">
                   {{ t('settings.imgDownload') }}
                 </n-button>
-                <n-button v-else-if="imgSem.pending" size="tiny" @click="api('describe_backlog')">
+                <n-button v-if="imgSem.pending && (imgSem.model_ready || winOcrOk)" size="tiny" @click="api('describe_backlog')">
                   {{ t('settings.imgBackfill') }}
                 </n-button>
               </n-space>
@@ -1680,7 +1716,7 @@ onMounted(() => {
             <n-text depth="3">{{ t('settings.ruleCount', { n: rules.rules.length }) }}</n-text>
           </n-space>
           <n-data-table :columns="ruleColumns" :data="filteredRules" :max-height="360" size="small"
-            :row-key="(r) => r.pattern" virtual-scroll />
+            :row-key="(r) => r.pattern" />
         </n-space>
       </n-card>
 

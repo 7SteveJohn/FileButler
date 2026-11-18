@@ -248,11 +248,17 @@ class OpenAICompatClient:
 
     def describe_image(self, image_path, vl_model=None):
         import base64
-        with open(image_path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode("ascii")
-        ext = image_path.rsplit(".", 1)[-1].lower()
-        mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp",
-                "gif": "gif", "bmp": "bmp"}.get(ext, "jpeg")
+        from backend import imgdecode
+        if imgdecode.needs_jpeg_transcode(image_path):
+            raw = imgdecode.jpeg_bytes(image_path)
+            mime = "jpeg"
+        else:
+            with open(image_path, "rb") as f:
+                raw = f.read()
+            ext = image_path.rsplit(".", 1)[-1].lower()
+            mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp",
+                    "gif": "gif", "bmp": "bmp"}.get(ext, "jpeg")
+        b64 = base64.b64encode(raw).decode("ascii")
         content = [
             {"type": "text", "text":
                 "请分析这张图片，严格按以下两部分输出，不要多余内容：\n"

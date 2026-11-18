@@ -53,7 +53,8 @@ def describe_files(paths, progress_cb=None):
         return {"error": "视觉模型未安装且系统 OCR 不可用（可在设置页下载视觉模型，"
                          "或在系统设置→语言 中添加 OCR 语言包）"}
 
-    client = chat_client  # 统一命名，供循环内 describe_image / embed_one 使用
+    client = chat_client  # 对话/视觉客户端（describe_image 用）
+    embed_client = llm.get_embed_client() if vl_ok else None  # 混搭模式下向量客户端可能独立走本地 bge-m3
     existing = db.img_rows_by_paths(paths)
     described = skipped = failed = ocr_only = 0
     for i, path in enumerate(paths):
@@ -73,7 +74,7 @@ def describe_files(paths, progress_cb=None):
                 if not desc:
                     failed += 1
                     continue
-                vec = client.embed_one(
+                vec = embed_client.embed_one(
                     f"图片描述：{desc}\n图中文字：{ocr}" if ocr else f"图片描述：{desc}")
                 db.upsert_img(path, stt.st_mtime, stt.st_size, desc, vec, ocr=ocr or "")
                 described += 1
@@ -102,7 +103,7 @@ def pending_images(limit=100000):
         rows = conn.execute(
             "SELECT f.path, f.mtime FROM file_index f "
             "LEFT JOIN img_index i ON i.path = f.path "
-            "WHERE f.ext IN ('jpg','jpeg','png','gif','bmp','webp') "
+            "WHERE f.ext IN ('jpg','jpeg','png','gif','bmp','webp','heic','heif','tif','tiff') "
             "AND (i.path IS NULL OR ABS(i.mtime - f.mtime) >= 1) "
             "LIMIT ?", (limit,)).fetchall()
         return [r["path"] for r in rows]

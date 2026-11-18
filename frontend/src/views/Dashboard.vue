@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated } from 'vue'
 import {
   NCard, NGrid, NGi, NStatistic, NTag, NSpace, NButton, NText, NSpin, NAlert,
   NList, NListItem, NResult, NIcon,
@@ -62,11 +62,21 @@ async function loadLib() {
 }
 
 let offOllamaReady = null
+let lastLoadedAt = 0
 // Ollama 后台拉起就绪后后端会推事件：首屏先按离线渲染，就绪自动转在线（不再干等）
 onMounted(() => {
   offOllamaReady = on('ollama_ready', refresh)
+  lastLoadedAt = Date.now()
   refresh()
   loadLib()
+})
+onActivated(() => {
+  // KeepAlive 切回概览时刷新最新统计（首次挂载同 tick 内不重复拉）
+  if (Date.now() - lastLoadedAt > 2500) {
+    lastLoadedAt = Date.now()
+    refresh()
+    loadLib()
+  }
 })
 onUnmounted(() => { if (offOllamaReady) offOllamaReady() })
 
@@ -134,7 +144,7 @@ function pct(n) {
             <b>{{ report?.data?.new_count ?? '—' }}</b><span>{{ t('dashboard.statNew') }}</span>
           </div>
           <div class="fb-hello-stat">
-            <b>{{ fmtCount(status.kb.chunks) }}</b><span>{{ t('dashboard.statChunks') }}</span>
+            <b>{{ fmtCount(status.kb?.chunks ?? 0) }}</b><span>{{ t('dashboard.statChunks') }}</span>
           </div>
           <div class="fb-hello-stat">
             <b :class="status.llm?.chat?.ok ? 'fb-hello-online' : 'fb-hello-offline'">
@@ -165,7 +175,7 @@ function pct(n) {
                 </n-tag>
               </n-space>
               <n-text depth="3" class="mono" style="font-size:12px">
-                {{ status.llm?.mode === 'api' ? (status.llm.api_base || t('dashboard.noBase')) : status.ollama.host }}
+                {{ status.llm?.mode === 'api' ? (status.llm.api_base || t('dashboard.noBase')) : (status.ollama?.host || '') }}
               </n-text>
               <n-space>
                 <n-button v-if="!status.llm?.chat?.ok || !status.llm?.embed?.ok"
@@ -307,8 +317,8 @@ function pct(n) {
       </n-grid>
 
       <div class="fb-footnote">
-        {{ t('dashboard.audit', { n: status.kb.operations }) }}
-        {{ t('dashboard.dbLine', { p: status.kb.db_path }) }}
+        {{ t('dashboard.audit', { n: status.kb?.operations ?? 0 }) }}
+        {{ t('dashboard.dbLine', { p: status.kb?.db_path ?? '' }) }}
       </div>
     </n-spin>
   </div>

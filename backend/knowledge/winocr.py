@@ -171,9 +171,11 @@ def ocr_image(pil_im):
 
 
 def ocr_file(path):
-    """图片文件 → 识别文本。"""
+    """图片文件 → 识别文本（先按 EXIF Orientation 矫正方向，避免手机竖拍图横置识别失败）。"""
+    from PIL import ImageOps
     from backend import imgdecode
     with imgdecode.open_image(path) as im:
+        im = ImageOps.exif_transpose(im)
         return ocr_image(im)
 
 

@@ -210,15 +210,18 @@ def _ensure_context_menu():
 
 
 def _startup_bg_color():
-    """窗口初始背景色取上次使用的主题底色，避免深色主题启动时白屏闪烁。"""
+    """窗口初始背景色取上次使用的主题底色，避免深色/靛蓝主题启动时闪白帧。"""
     try:
         from backend import db as _db
-        if _db.get_setting("ui_dark", "0") == "1":
-            bg = _db.get_setting("ui_caption_bg", "") or "#0b0e14"
-            return bg if bg.startswith("#") else "#0b0e14"
+        theme = (_db.get_setting("ui_theme", "") or "").strip()
+        if theme == "cyber" or _db.get_setting("ui_dark", "0") == "1":
+            bg = _db.get_setting("ui_caption_bg", "") or "#0b0e13"
+            return bg if bg.startswith("#") else "#0b0e13"
+        if theme == "indigo":
+            return "#f3f5fa"
     except Exception:
         pass
-    return "#f5f7f6"
+    return "#f4f6f4"
 
 
 def _handle_set_data_dir() -> bool:
@@ -400,6 +403,10 @@ def main():
     def _teardown(stop_backup=False):
         """停止后台服务 + 释放单实例锁。退出与重启共用。"""
         try:
+            hk_ctrl.stop()
+        except Exception:
+            pass
+        try:
             if api.watch_engine:
                 api.watch_engine.stop()
             if api.thumb.server:
@@ -439,77 +446,36 @@ def main():
 
     _start_single_server(window, api)  # 监听后续进程的 SendTo/右键路径
 
-    # ---------- 全局热键（pynput，后台线程） ----------
+    # ---------- 全局热键（Win32 RegisterHotKey，零轮询、零钩子） ----------
+    from backend import hotkey as _hotkey
 
-    def _start_hotkey():
+    def _on_hotkey_trigger():
         try:
-            import pynput.keyboard as kb
-        except ImportError:
-            return
+            api.set_visible(True)
+            window.show()
+            # 直通搜索：呼出即弹快速搜索层（Listary/PowerToys Run 的
+            # 「呼出即搜、即搜即走」——而不是开一个还要找入口的主窗口）
+            window.evaluate_js(
+                'window.dispatchEvent(new CustomEvent("fb-open-launcher"))')
+        except Exception:
+            pass
 
-        def _on_trigger():
-            try:
-                api.set_visible(True)
-                window.show()
-                # 直通搜索：呼出即弹快速搜索层（Listary/PowerToys Run 的
-                # 「呼出即搜、即搜即走」——而不是开一个还要找入口的主窗口）
-                window.evaluate_js(
-                    'window.dispatchEvent(new CustomEvent("fb-open-launcher"))')
-            except Exception:
-                pass
+    hk_ctrl = _hotkey.HotkeyController(_on_hotkey_trigger)
+    api.set_hotkey_handler(hk_ctrl.apply)
 
-        def _run():
-            """持续运行，每 5 秒检查设置变化并重建监听器（触发本身即时，
-            轮询只影响设置变更的生效延迟，无需 1s 高频）。"""
-            def _norm_combo(c):
-                """pynput 用 cmd 表示 Win 键，把用户输入的 Win 规范化。"""
-                parts = []
-                for p in c.replace(" ", "").split("+"):
-                    p = p.strip()
-                    parts.append("cmd" if p.lower() == "win" else p)
-                return "+".join(parts)
+    def _init_hotkey():
+        try:
+            from backend import db as _db
+            enabled = _db.get_setting("hotkey_enabled", "0") == "1"
+            combo = _db.get_setting("hotkey_combo", "Alt+Space") or "Alt+Space"
+            if enabled:
+                res = hk_ctrl.apply(True, combo)
+                if not res.get("ok"):
+                    applog.get().warning("hotkey init failed: %s", res.get("error"))
+        except Exception:
+            pass
 
-            listener = None
-            last_combo = None
-            while True:
-                try:
-                    from backend import db as _db
-                    enabled = _db.get_setting("hotkey_enabled", "0") == "1"
-                    combo = _norm_combo(_db.get_setting("hotkey_combo", "Alt+Space"))
-                except Exception:
-                    enabled, combo = False, "Alt+Space"
-
-                if not enabled or not combo:
-                    if listener:
-                        try:
-                            listener.stop()
-                        except Exception:
-                            pass
-                        listener = None
-                    time.sleep(5)
-                    continue
-
-                if combo != last_combo or listener is None:
-                    if listener:
-                        try:
-                            listener.stop()
-                        except Exception:
-                            pass
-                    try:
-                        hotkey_map = {combo: _on_trigger}
-                        listener = kb.GlobalHotKeys(hotkey_map)
-                        listener.start()
-                        last_combo = combo
-                    except Exception:
-                        listener = None
-                        time.sleep(5)
-                        continue
-
-                time.sleep(5)
-
-        threading.Thread(target=_run, daemon=True, name="fb-hotkey").start()
-
-    _start_hotkey()
+    _init_hotkey()
 
     def on_loaded():
         # 窗口就绪后再启动后台服务：全量索引 + 实时监控 + 缩略图服务
@@ -528,7 +494,8 @@ def main():
                 try:
                     last_scan = float(_db.get_setting("last_full_scan_at", "0") or "0")
                     if time.time() - last_scan >= 7 * 86400:
-                        api.set_visible(True)  # 扫描事件需要能推给前端
+                        # 不强改 _visible：若窗口正在托盘隐藏，保持静默不向隐藏 WebView 推事件；
+                        # 用户下次唤起窗口时 set_visible(True) 会发 lib_resync 自动同步
                         api.rescan_library()
                 except Exception:
                     pass

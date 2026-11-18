@@ -13,24 +13,35 @@ def chunk_text(text, target=800, overlap=120, title=""):
     paras = [p.strip() for p in text.split("\n") if p.strip()]
     raw = []      # (内容, 所在标题)；内容不含前缀，最后统一加
     buf = ""
-    heading = ""
+    loc = ""      # 页码或工作表标记（[第N页] / [工作表 X]）
+    sec = ""      # 章节标题（# 标题）
+
+    def cur_heading():
+        if loc and sec:
+            return f"{loc} {sec}"
+        return loc or sec
 
     def flush():
         nonlocal buf
         if buf:
-            raw.append((buf, heading))
+            raw.append((buf, cur_heading()))
             buf = ""
 
     for p in paras:
-        if p.startswith("#") or p.startswith("[第"):
+        if p.startswith("[第") or p.startswith("[工作表 "):
             flush()
-            heading = p.lstrip("#").strip()
+            loc = p.strip()
+            sec = ""
+            continue
+        if p.startswith("#"):
+            flush()
+            sec = p.lstrip("#").strip()
             continue
         # 超长段落硬切
         while len(p) > target * 2:
             if buf:
                 flush()
-            raw.append((p[:target * 2], heading))
+            raw.append((p[:target * 2], cur_heading()))
             p = p[target * 2:]
         if len(buf) + len(p) + 1 <= target:
             buf = (buf + "\n" + p) if buf else p
@@ -39,7 +50,7 @@ def chunk_text(text, target=800, overlap=120, title=""):
             # 携带上一块尾部作为重叠上下文
             buf = (raw[-1][0][-overlap:] + "\n" + p) if raw and overlap else p
             if len(buf) > target * 2:
-                raw.append((buf[:target * 2], heading))
+                raw.append((buf[:target * 2], cur_heading()))
                 buf = buf[target * 2:]
     flush()
 

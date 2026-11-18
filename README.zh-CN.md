@@ -40,7 +40,7 @@ AI 默认跑在你本机的 [Ollama](https://ollama.com) 开源模型上——�
 
 ## 30 秒上手
 
-1. 到 [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) 下载 `FileButler-Setup-1.4.4.exe`（约 61 MB），双击安装——**不需要管理员权限**，装在当前用户目录下
+1. 到 [Releases](https://github.com/7SteveJohn/FileButler/releases/latest) 下载 `FileButler-Setup-1.4.5.exe`（约 61 MB），双击安装——**不需要管理员权限**，装在当前用户目录下
 2. 首次启动自动扫描桌面 / 文档 / 下载 / 图片 / 视频 / 音乐，几秒后就能搜到东西
 3. 想要「问答」和「按意思搜」：装 [Ollama](https://ollama.com)，设置页按显卡推荐一键下载模型（`qwen3` 系列 + 向量模型 `bge-m3`）
 4. 已经有 LM Studio 或云端 API？设置页「模型接入方式」直接切，不必装 Ollama
@@ -65,29 +65,29 @@ AI 默认跑在你本机的 [Ollama](https://ollama.com) 开源模型上——�
 ### 🔍 找文件：比「只看文件名」多懂一点
 
 - **自动文件编目（Everything 式，只读）**：启动自动扫描桌面 / 文档 / 下载 / 图片 / 视频 / 音乐等用户目录，后台实时监控增删改，新文件几秒内可搜
-- **搜索语法**：`ext:pdf`、`size:>100mb`、`dm:本周`、`path:Desktop`、`cat:图片`，可与关键词混用；`path:` 按磁盘上的真实路径匹配（Windows 的用户目录实际叫 Desktop，不认中文别名，与 `dm:`/`cat:` 支持中文取值不同）；长词走 FTS5 全文索引，支持全拼 / 拼音首字母搜中文名（`baogao`、`bg` → 报告），可按相关度排序。日期关键词接受英文（`today` / `week` / `month` / `year`）或中文（`本周` / `本月`）；`cat:` 的取值固定用后端的中文分类名（`图片`、`文档`……），两种界面语言通用——列表里的分类标签只是翻译显示
+- **搜索语法**：`ext:pdf`、`size:>100mb`、`dm:本周`、`path:Desktop`、`path:"D:\项目 资料"`、`cat:图片`，可与关键词混用；`path:` 按磁盘上的真实路径匹配（含空格的路径加双引号即可；Windows 的用户目录实际叫 Desktop，不认中文别名，与 `dm:`/`cat:` 支持中文取值不同）；长词走 FTS5 全文索引，支持全拼 / 拼音首字母搜中文名（`baogao`、`bg` → 报告），可按相关度排序。日期关键词接受英文（`today` / `week` / `month` / `year`）或中文（`本周` / `本月`）；`cat:` 的取值固定用后端的中文分类名（`图片`、`文档`……），两种界面语言通用——列表里的分类标签只是翻译显示
 - **照片认拍摄时间**：时间筛选优先按 EXIF 拍摄时间（拷贝、整理文件不会打乱照片的时间线），没有拍摄时间的文件退回修改时间；iPhone 的 HEIC 同样支持缩略图、预览、拍摄时间与相似图检测
 - **自然语言搜索**：搜「上个月那份报价单」也能命中，走本地向量索引（需 Ollama）
 - **图片语义搜索 + OCR**：视觉模型（qwen2.5vl）为图片生成描述并转录图中文字，搜「日落」找照片、搜发票号找截图；没有视觉模型时自动降级到 Windows 内置 OCR（该功能默认关闭，需在设置页开启）
-- **内置预览**：文本 / 代码直接看，Markdown 渲染，PDF 窗口内打开，图片大图预览；`Ctrl+F` 聚焦搜索，双击打开文件；从内容搜索结果点进去会**直接定位到 PDF 的命中页、文本里高亮命中词**
+- **内置预览**：文本 / 代码直接看，Markdown 渲染，Office 文档（`docx`/`xlsx`/`pptx`）与压缩包（`zip`/`tar.*`）免解压目录预览，PDF 窗口内打开，图片（含 HEIC/TIFF）大图预览，音视频内置播放与拖动；`Ctrl+F` 聚焦搜索，双击打开文件；从内容搜索或问答引用点进去会**直接定位到 PDF 的命中页、文本里高亮命中词**
 - **筛完不用重来**：当前筛选条件可一键保存，下次点开即用；常看的文件加星收藏、打标签、写备注
-- **批量操作**：多选后移动到 / 复制到 / 重命名 / 删除（进回收站）、复制路径
+- **批量操作**：多选后移动到 / 复制到 / 重命名（序列编号、`{date}_{parent}_{seq:03}` 模板命名、查找替换、AI 建议）/ 删除（进回收站）、复制路径
 - **两个顺手工具**：对图片「OCR 取字」直接抄文字；对任意文件「哈希校验」算 SHA-256
 - **中英双语界面**：设置 → 外观 可切换简体中文 / English，选择会记住（跟着应用走，不依赖浏览器语言）
 
 ### 💬 问文档：把资料变成会回答的知识库
 
 - **自动知识库**：默认关闭，打开开关后监控目录里的新文档会自动解析、切块、向量化入库，不用手动建索引即可内容搜索与问答（关着时仍可手动「索引」建库）；支持 PDF / Office（旧版 `.doc` 除外，请另存为 `.docx`）/ 邮件 eml / 网页 HTML / 文本 / 代码等格式
-- **问答 + 检索**：知识库页既能只搜原文片段（仅搜索），也能让本地模型基于原文作答；检索是「向量 + 关键词」双路融合（没装模型也能按关键词命中并引用原文），多轮追问自动改写检索词，回答附带来源（文件 · 章节 · 页码）；可把范围限定在某个库文件夹或单个文件，只在这份资料里问
+- **问答 + 检索**：知识库页既能只搜原文片段（仅搜索），也能让本地模型基于原文作答；检索是「向量 + 关键词」双路融合（没装模型也能按关键词命中并引用原文），多轮追问自动改写检索词，回答附带来源（文件 · 章节 · 页码/工作表）并高亮正文实际引用的条目，点击引用直接在窗口内预览并翻到对应 PDF 页；可把范围限定在某个库文件夹或单个文件，只在这份资料里问
 - **检索精排（可选）**：设置页可按需下载本地 rerank 模型（bge-reranker-v2-m3，CPU 推理）对检索结果读原文重排，进一步压准排序；默认关闭，任何不可用情况自动回退纯融合排序
 - **任意目录建库**：手动添加文件夹即可纳入知识库
 - **问答历史**：对话自动保存，左侧栏回看 / 继续 / 删除历史会话
 
 ### 🗂️ 整理与清理：动手前先给你看一遍
 
-- **智能文件整理**：手动触发，规则 + 本地大模型批量分类 → 生成整理计划 → 逐条预览勾选 → 执行移动 → **全程可撤销**（也能重做）；整理方案可存为模板
-- **重复文件检测与安全清理**：三级哈希找重 → 按规则（最新 / 最早 / 路径最短）保留 → 移入「待清理」文件夹（不删除，可撤销）；每组可打开**对比预览**并排看清再亲自指定留哪一份
-- **顺带两个体检**：查找大文件、检测冲突副本
+- **智能文件整理**：手动触发，规则 + 本地大模型批量分类（扫描表支持逐行手动微调目标分类）→ 生成整理计划 → 逐条预览勾选 → 执行移动 → **全程可撤销**（也能重做）；整理方案可存为模板
+- **重复文件 / 相似图片清理 + 待清理区管理**：三级哈希找精确重复，64 位感知哈希（`dHash`）找缩放 / 重压缩 / 连拍相似图 → 按规则或**组内并排对比预览**指定保留项 → 其余移入「待清理」隔离区（不删除，可撤销）；在**「待清理区」**标签页可随时查看各批次占用空间，确认无误后一键送入系统回收站彻底腾出磁盘
+- **顺带三个体检**：查找大文件、检测同步/编号冲突副本、清理空文件夹
 - **绝不静默移动**：每一步操作写入日志（时间 / 原路径 / 新路径），可按批次一键撤销
 
 ### 🖥️ 用起来顺手
@@ -115,7 +115,7 @@ AI 默认跑在你本机的 [Ollama](https://ollama.com) 开源模型上——�
 |---|---|
 | **概览** | 库规模、本周动态、空间占用排行 |
 | **文件** | 搜索 + 预览 + 收藏标签 + 批量操作，日常主战场 |
-| **文件整理** | 生成整理计划、重复检测、大文件与冲突副本体检、批次撤销 |
+| **文件整理** | 生成整理计划、重复与相似图检测、待清理区管理、大文件 / 冲突副本 / 空文件夹体检、批次撤销 |
 | **知识库** | 选文件夹建库、问答、仅搜索、历史会话 |
 | **设置** | 模型接入与下载、监控与排除目录、数据迁移、备份、更新 |
 
@@ -204,7 +204,9 @@ backend/
   db.py               SQLite + 向量检索（文档块 + 图片描述两套索引）
   fileindex.py        文件总索引（自动编目 + 文件名搜索）
   watcher.py          watchdog 实时监控（防抖 + 自动知识库/图片队列）
-  thumbserver.py      缩略图/预览服务（仅 127.0.0.1，白名单校验）
+  hotkey.py           Win32 原生全局热键（RegisterHotKey，零键盘钩子开销）
+  office_preview.py   Office 文档与 zip/tar 压缩包只读 HTML 预览
+  thumbserver.py      缩略图/预览服务（仅 127.0.0.1，白名单校验，支持 HTTP Range）
   core/               扫描 / 规则 / 批量分类 / 计划 / 执行撤销 / 去重
   knowledge/          解析 / 切块 / 索引 / RAG / 图片语义
 frontend/             Vue 3 + Naive UI（Vite 构建为单文件内嵌）
@@ -247,21 +249,19 @@ cd frontend && npm run dev
 
 ```bash
 cd frontend && npm run build && cd ..
-.venv\Scripts\python -m PyInstaller --noconfirm --onedir --windowed --name FileButler ^
-  --add-data "frontend/dist;frontend/dist" --collect-all webview main.py
+.venv\Scripts\python -m PyInstaller --noconfirm FileButler.spec
+.venv\Scripts\python scripts\release.py --version 1.4.5 --build
 ```
 
 ### 测试
 
 ```bash
+.venv\Scripts\python tests\run_all.py           # 统一测试入口（自动沙盒隔离跑全部离线套件）
 .venv\Scripts\python tests\test_core.py         # 整理引擎（不需要 Ollama）
 .venv\Scripts\python tests\test_fileindex.py    # 自动扫描/监控/缩略图（不需要 Ollama）
-.venv\Scripts\python tests\test_batch2.py       # 语法搜索/FTS/清理/预览/QA历史/周报/备份/模板
-.venv\Scripts\python tests\test_datadir.py      # 数据目录切换
-.venv\Scripts\python tests\test_hardening.py    # 连接回收/恢复备份/watcher兜底/Host校验（需一次性 APPDATA）
-.venv\Scripts\python tests\test_upgrade.py      # 批量索引/自动知识库/自启（需 Ollama）
-.venv\Scripts\python tests\test_ai_classify.py  # AI 分类实测
-.venv\Scripts\python tests\test_rag.py          # 知识库端到端
+.venv\Scripts\python tests\test_maint_v145.py   # 热键/规则/音频与压缩包预览/隔离区/双语对称守卫
+.venv\Scripts\python tests\test_ai_classify.py  # AI 分类实测（需 Ollama）
+.venv\Scripts\python tests\test_rag.py          # 知识库端到端（需 Ollama + bge-m3）
 ```
 
 </details>

@@ -5,6 +5,28 @@ import shutil
 from backend import db
 
 
+def _same_win_path(a, b):
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def _sync_index_after_move(old_path, new_path):
+    """移动/撤销/重做后即时同步 file_index，避免 watcher 防抖前搜出过期路径。"""
+    try:
+        from backend import fileindex
+        from backend.core import scanner
+        if os.path.isdir(new_path):
+            fileindex.remove_under(old_path)
+            for dp, dns, fns in os.walk(new_path):
+                dns[:] = [d for d in dns if d.lower() not in scanner.SKIP_DIRS]
+                for fn in fns:
+                    fileindex.upsert_file(os.path.join(dp, fn))
+        else:
+            fileindex.remove_file(old_path)
+            fileindex.upsert_file(new_path)
+    except Exception:
+        pass
+
+
 def execute(plan_rows, batch_id=None):
     """
     执行勾选的计划行（action=move）。返回每行结果。
@@ -20,15 +42,20 @@ def execute(plan_rows, batch_id=None):
             if not os.path.exists(src):
                 raise FileNotFoundError("源文件不存在")
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            # 目标路径在执行期间被占用 → 换名重试一次
-            if os.path.exists(dst):
+            same_case = _same_win_path(src, dst)
+            # 目标路径在执行期间被占用 → 换名重试一次（仅大小写改名不算冲突）
+            if os.path.exists(dst) and not same_case:
                 base, ext = os.path.splitext(dst)
                 i = 1
                 while os.path.exists(dst) and i < 1000:
                     dst = f"{base} ({i}){ext}"
                     i += 1
-            shutil.move(src, dst)
+            if same_case:
+                os.rename(src, dst)
+            else:
+                shutil.move(src, dst)
             db.log_operation(batch_id, "move", src, dst)
+            _sync_index_after_move(src, dst)
             results.append({"src": src, "dst": dst, "ok": True})
         except Exception as e:
             results.append({"src": src, "dst": dst, "ok": False, "error": str(e)})
@@ -76,17 +103,22 @@ def undo(batch_id):
                 raise FileNotFoundError(f"目标不存在：{dst}")
             os.makedirs(os.path.dirname(src), exist_ok=True)
             final_src = src
-            if os.path.exists(src):
+            same_case = _same_win_path(dst, src)
+            if os.path.exists(src) and not same_case:
                 base, ext = os.path.splitext(src)
                 i = 1
                 while os.path.exists(final_src) and i < 1000:
                     final_src = f"{base} ({i}){ext}"
                     i += 1
-            shutil.move(dst, final_src)
+            if same_case:
+                os.rename(dst, final_src)
+            else:
+                shutil.move(dst, final_src)
+            _sync_index_after_move(dst, final_src)
             undone += 1
         except Exception:
             failed += 1
-    if failed == 0:
+    if failed == 0 and undone > 0:
         db.mark_undone(batch_id)
     return {"batch_id": batch_id, "undone": undone, "failed": failed,
             "skipped": skipped, "recycle_bin": in_bin}
@@ -111,17 +143,22 @@ def redo(batch_id):
                 raise FileNotFoundError(f"文件不在原位置：{src}")
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             final_dst = dst
-            if os.path.exists(dst):
+            same_case = _same_win_path(src, dst)
+            if os.path.exists(dst) and not same_case:
                 base, ext = os.path.splitext(dst)
                 i = 1
                 while os.path.exists(final_dst) and i < 1000:
                     final_dst = f"{base} ({i}){ext}"
                     i += 1
-            shutil.move(src, final_dst)
+            if same_case:
+                os.rename(src, final_dst)
+            else:
+                shutil.move(src, final_dst)
+            _sync_index_after_move(src, final_dst)
             redone += 1
         except Exception:
             failed += 1
-    if failed == 0:
+    if failed == 0 and redone > 0:
         conn = db.get_conn()
         try:
             conn.execute("UPDATE operations SET undone=0 WHERE batch_id=?", (batch_id,))

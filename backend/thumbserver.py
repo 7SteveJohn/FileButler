@@ -249,16 +249,16 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(500)
 
     def _serve_preview(self, qs):
-        """大图/文档预览：图片与 PDF，同样受监控目录白名单约束。"""
+        """大图/文档/音视频预览：受监控目录白名单约束，支持 HTTP Range 拖动进度。"""
         src = unquote(qs.get("p", [""])[0])
         if not src or not self._allowed(src):
             self.send_error(403)
             return
         ext = os.path.splitext(src)[1].lstrip(".").lower()
-        if ext in ("heic", "heif"):
-            # 浏览器不解 HEIC：转成 JPEG 再发，这是 iPhone 照片唯一可预览的路径
+        from backend import imgdecode
+        if imgdecode.needs_jpeg_transcode(src):
+            # 浏览器不原生解 HEIC/HEIF/TIFF：转成 JPEG 再发
             try:
-                from backend import imgdecode
                 data = imgdecode.jpeg_bytes(src)
             except Exception:
                 self.send_error(404)
@@ -276,6 +276,8 @@ class _Handler(BaseHTTPRequestHandler):
             "pdf": "application/pdf",  # 内置预览用（WebView2 原生渲染）
             "mp4": "video/mp4", "m4v": "video/mp4",
             "webm": "video/webm", "mov": "video/quicktime",
+            "mp3": "audio/mpeg", "wav": "audio/wav", "flac": "audio/flac",
+            "ogg": "audio/ogg", "m4a": "audio/mp4", "aac": "audio/aac",
         }.get(ext)
         if not ctype:
             self.send_error(403)
@@ -285,17 +287,52 @@ class _Handler(BaseHTTPRequestHandler):
             if size > 100 * 1024 * 1024:
                 self.send_error(413)
                 return
-            self.send_response(200)
+            rng = (self.headers.get("Range") or "").strip()
+            start, end = 0, size - 1
+            partial = False
+            if rng.startswith("bytes=") and size > 0:
+                spec = rng[6:].split(",", 1)[0].strip()
+                if "-" in spec:
+                    s_str, e_str = spec.split("-", 1)
+                    try:
+                        if s_str == "":
+                            suffix = int(e_str)
+                            start = max(0, size - suffix)
+                        else:
+                            start = int(s_str)
+                            if e_str:
+                                end = min(size - 1, int(e_str))
+                        if 0 <= start <= end < size:
+                            partial = True
+                        else:
+                            self.send_response(416)
+                            self.send_header("Content-Range", f"bytes */{size}")
+                            self.end_headers()
+                            return
+                    except ValueError:
+                        partial = False
+            length = (end - start + 1) if size > 0 else 0
+            self.send_response(206 if partial else 200)
             self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(size))
+            self.send_header("Accept-Ranges", "bytes")
+            if partial:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Content-Length", str(length))
             self.end_headers()
+            if length <= 0:
+                return
             with open(src, "rb") as f:
-                # 分块发送：整文件读进内存（最大 100MB）纯属浪费
-                while True:
-                    chunk = f.read(1 << 20)
+                if start:
+                    f.seek(start)
+                remain = length
+                while remain > 0:
+                    chunk = f.read(min(1 << 20, remain))
                     if not chunk:
                         break
                     self.wfile.write(chunk)
+                    remain -= len(chunk)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            pass
         except OSError:
             self.send_error(404)
 

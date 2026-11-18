@@ -1,5 +1,6 @@
 """每周文件报告：本周新增/大文件/类别分布，存库供 Dashboard 展示。"""
 import datetime
+import html
 import json
 import time
 
@@ -119,20 +120,25 @@ def export_html(report_data=None, week_start=None):
         week_start = r["week_start"]
         report_data = r["data"]
     d = report_data
+    ws_esc = html.escape(str(week_start or ""))
     cat_rows = ""
     for cat, v in (d.get("by_category") or {}).items():
-        cat_rows += f'<tr><td>{cat}</td><td>+{v["n"]}</td><td>{_fmt_size(v["size"])}</td></tr>\n'
+        cat_rows += f'<tr><td>{html.escape(str(cat or ""))}</td><td>+{int(v.get("n", 0))}</td><td>{_fmt_size(v.get("size", 0))}</td></tr>\n'
 
     sample_rows = ""
     for f in (d.get("new_sample") or [])[:10]:
-        sample_rows += f'<tr><td>{f["name"]}</td><td>{f.get("category","")}</td><td>{_fmt_size(f["size"])}</td></tr>\n'
+        fn = html.escape(str(f.get("name", "")))
+        fc = html.escape(str(f.get("category", "")))
+        sample_rows += f'<tr><td>{fn}</td><td>{fc}</td><td>{_fmt_size(f.get("size", 0))}</td></tr>\n'
 
     big_rows = ""
     for f in (d.get("big_files") or [])[:5]:
-        big_rows += f'<tr><td>{f["name"]}</td><td>{f.get("category","")}</td><td>{_fmt_size(f["size"])}</td></tr>\n'
+        fn = html.escape(str(f.get("name", "")))
+        fc = html.escape(str(f.get("category", "")))
+        big_rows += f'<tr><td>{fn}</td><td>{fc}</td><td>{_fmt_size(f.get("size", 0))}</td></tr>\n'
 
     return f"""<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>FileButler 周报 · {week_start}</title>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>FileButler 周报 · {ws_esc}</title>
 <style>
 body {{ font-family: -apple-system, "Microsoft YaHei", sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; background: #fafafa; }}
 h1 {{ color: #18a058; border-bottom: 2px solid #18a058; padding-bottom: 8px; }}
@@ -146,7 +152,7 @@ th {{ background: #f5f5f5; }}
 .footer {{ margin-top: 30px; color: #999; font-size: 12px; }}
 </style></head><body>
 <h1>📂 FileButler 周报</h1>
-<p style="color:#666">周起始：{week_start} · 由 FileButler 自动生成</p>
+<p style="color:#666">周起始：{ws_esc} · 由 FileButler 自动生成</p>
 
 <div style="margin:16px 0">
 <div class="stat"><b>{d.get("new_count", 0)}</b><span>本周新增</span></div>

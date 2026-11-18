@@ -105,6 +105,29 @@ def main():
     check("检查器能抓到断线按钮",
           "fbGhostHandler" in _bound_names(tpl), str(_bound_names(tpl)))
 
+    # UI 稳定性守卫：禁止在 App.vue 中用 <transition mode="out-in"> 包裹 <KeepAlive>
+    # （隐藏/遮挡 WebView2 不推进 rAF/transitionend，会导致切页永久卡死）
+    app_vue = open(os.path.join(_SRC, "App.vue"), encoding="utf-8").read()
+    check("App.vue 未使用易卡死的 out-in transition 包裹 KeepAlive",
+          not re.search(r'<transition[^>]*mode="out-in"[^>]*>\s*<KeepAlive', app_vue))
+
+    # 样式完整性守卫：所有 fb-* 自定义类名（除纯语义根包装 fb-dash-root）必须在 CSS 中有定义
+    css_all = open(os.path.join(_SRC, "style.css"), encoding="utf-8").read()
+    for p in files:
+        t_src = open(p, encoding="utf-8").read()
+        for blk in re.findall(r"<style[^>]*>(.*?)</style>", t_src, re.S):
+            css_all += "\n" + blk
+    defined_cls = set(re.findall(r"\.([a-zA-Z0-9_-]+)", css_all))
+    used_fb = set()
+    for p in files:
+        t_src = open(p, encoding="utf-8").read()
+        for m in re.findall(r"class\s*[:=]\s*['\"]([^'\"]+)['\"]", t_src):
+            for c in m.split():
+                if c.startswith("fb-") and c != "fb-dash-root":
+                    used_fb.add(c)
+    unstyled = sorted(used_fb - defined_cls)
+    check("全部 fb-* 自定义样式类均在 CSS 中有定义", not unstyled, f"未定义样式: {unstyled}")
+
     print(f"\n{'ALL PASS' if FAIL == 0 else 'FAILURES: ' + str(FAIL)} ({PASS} passed, {FAIL} failed)")
     return 1 if FAIL else 0
 

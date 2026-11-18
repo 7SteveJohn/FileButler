@@ -16,7 +16,8 @@ BUILTIN_RULES = {
     "one": ("文档", "笔记"), "xmind": ("文档", "思维导图"),
     # 图片
     "jpg": ("图片", ""), "jpeg": ("图片", ""), "png": ("图片", ""), "gif": ("图片", ""),
-    "bmp": ("图片", ""), "webp": ("图片", ""), "heic": ("图片", ""), "tiff": ("图片", ""),
+    "bmp": ("图片", ""), "webp": ("图片", ""), "heic": ("图片", ""), "heif": ("图片", ""),
+    "tif": ("图片", ""), "tiff": ("图片", ""),
     "svg": ("图片", ""), "ico": ("图片", ""), "psd": ("图片", ""), "raw": ("图片", ""),
     # 视频
     "mp4": ("视频", ""), "avi": ("视频", ""), "mkv": ("视频", ""), "mov": ("视频", ""),
@@ -73,9 +74,21 @@ def classify_by_ext(ext, rules=None):
 
 
 def all_rules():
-    """用于设置页展示：内置 + 用户标记。"""
-    user_ids = {r["pattern"] for r in db.get_rules()}
+    """用于设置页展示：内置规则 + 用户自定义规则（覆盖内置项显示新值，新增扩展名一并展示）。"""
+    merged = dict(BUILTIN_RULES)
+    user_patterns = set()
+    for r in db.get_rules():
+        pat = (r["pattern"] or "").lstrip(".").lower()
+        if not pat:
+            continue
+        merged[pat] = (r["category"], r.get("sub") or "")
+        user_patterns.add(pat)
     result = []
-    for ext, (cat, sub) in sorted(BUILTIN_RULES.items()):
-        result.append({"pattern": ext, "category": cat, "sub": sub, "custom": ext in user_ids})
+    for ext, (cat, sub) in sorted(merged.items()):
+        result.append({
+            "pattern": ext,
+            "category": cat,
+            "sub": sub,
+            "custom": ext in user_patterns,
+        })
     return {"categories": CATEGORIES, "rules": result}

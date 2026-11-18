@@ -26,11 +26,16 @@ html, body {
 /* 视图滚动容器（App 自管理滚动位置） */
 .fb-view-scroll { height: 100%; overflow: auto; }
 
-/* 页面切换过渡：轻淡入 + 微上移，out-in 避免两页同屏 */
-.fb-view-enter-active { transition: opacity .14s ease, transform .14s ease; }
-.fb-view-leave-active { transition: opacity .1s ease; }
-.fb-view-enter-from { opacity: 0; transform: translateY(5px); }
-.fb-view-leave-to { opacity: 0; }
+/* 页面切换动效：直接挂在 .fb-page 上，不依赖 Vue <transition mode="out-in">。
+   原因：WebView2 隐藏到托盘或被遮挡时不推进 rAF/transitionend，out-in 偶发卡死在离开帧导致切页失灵 */
+@keyframes fb-page-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fb-page {
+  padding: 20px 22px 28px;
+  animation: fb-page-in .14s ease-out;
+}
 
 /* 主题切换时面板底色平滑过渡 */
 .fb-titlebar, .fb-sider {
@@ -57,8 +62,8 @@ html, body {
 .fb-tb-left {
   display: flex; align-items: center;
   min-width: 0;
-  /* 这块落在侧栏色上，得用侧栏文字色，不然深色主题下看不见 */
-  color: var(--fb-side-text, inherit);
+  color: var(--fb-titlebar-fg, inherit);
+  pointer-events: none;
 }
 .fb-tb-center {
   position: absolute;
@@ -257,6 +262,7 @@ html, body {
   position: absolute; bottom: 24px; left: 0; right: 0;
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 0 12px;
+  pointer-events: none;
 }
 .fb-theme-dot {
   width: 12px; height: 12px; border-radius: 4px; display: inline-block;
@@ -333,6 +339,8 @@ html, body {
 .fb-hello-stats {
   display: flex;
   align-items: stretch;
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 .fb-hello-stat {
   display: flex;
@@ -536,7 +544,6 @@ html, body {
 .theme-card-body span { font-size: 11.5px; opacity: .6; }
 
 /* ---------- 统计/卡片 ---------- */
-.fb-page { padding: 20px 22px 28px; }
 .fb-stat-card { text-align: left; }
 .fb-stat-ico {
   width: 36px; height: 36px; border-radius: 10px;
@@ -574,12 +581,49 @@ html, body {
   color: hsl(var(--h, 220) 55% 68%);
 }
 
-/* ---------- 搜索框 ---------- */
-.fb-search .n-input {
-  border-radius: 10px;
+/* ---------- 搜索工具栏（自适应折行，防止窄窗/高 DPI 挤压搜索框） ---------- */
+.fb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-.fb-search .n-input .n-input__input-el {
-  font-size: 14.5px;
+.fb-toolbar-search {
+  flex: 1 1 280px;
+  min-width: 220px;
+}
+.fb-toolbar-search .n-auto-complete { width: 100%; }
+.fb-toolbar-search .n-input { border-radius: 10px; }
+.fb-toolbar-search .n-input .n-input__input-el { font-size: 14.5px; }
+.fb-toolbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 批量操作条与重命名表格输入框（此前未定义样式，深色模式下重命名框会退化成白底原生 input） */
+.fb-batchbar {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--fb-accent, #888) 26%, transparent);
+  background: color-mix(in srgb, var(--fb-accent, #888) 7%, transparent);
+}
+.fb-rename-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--fb-border, rgba(127, 127, 127, .28));
+  background: var(--fb-body-bg, transparent);
+  color: var(--fb-text, inherit);
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color .15s ease;
+}
+.fb-rename-input:focus {
+  border-color: var(--fb-accent, #0a7d54);
 }
 
 /* ---------- 图片墙卡片 ---------- */
@@ -706,7 +750,7 @@ html, body {
 .fb-tlsize { font-size: 11.5px; opacity: .55; flex-shrink: 0; }
 
 /* ---------- 对话 ---------- */
-.chat-scroll { flex: 1; overflow-y: auto; padding: 16px 20px; }
+.chat-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px; }
 .chat-bubble {
   max-width: 82%;
   padding: 10px 14px;

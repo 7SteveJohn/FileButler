@@ -74,14 +74,21 @@ watchEffect(() => {
 
 function setTheme(k) {
   if (k === AUTO_KEY) sysDark.value = resolveThemeKey(AUTO_KEY) === 'cyber'
+  if (themeKey.value !== k) {
+    themeKey.value = k
+    window.dispatchEvent(new CustomEvent('fb-theme', { detail: k }))
+  }
+}
+
+function onThemeEvent(e) {
+  const k = e.detail
+  if (!k || themeKey.value === k) return
+  if (k === AUTO_KEY) sysDark.value = resolveThemeKey(AUTO_KEY) === 'cyber'
   themeKey.value = k
 }
 
-// 设置页「外观」卡片也会改主题
-window.addEventListener('fb-theme', (e) => {
-  if (e.detail === AUTO_KEY) setTheme(AUTO_KEY)
-  else themeKey.value = e.detail
-})
+// 设置页「外观」卡片 / 快速唤起也会改主题
+window.addEventListener('fb-theme', onThemeEvent)
 
 // ---------- 后台编目活动指示器（标题栏） ----------
 const scanning = ref(false)
@@ -90,18 +97,14 @@ on('lib_scan_done', () => { scanning.value = false })
 on('lib_scan_error', () => { scanning.value = false })
 
 // ---------- 页面滚动位置记忆（每页独立） ----------
-// out-in 模式下新页在 leave 结束后才挂载，必须在 after-enter 恢复才有效
 const scrollEl = ref(null)
 const scrollMap = {}
-const pendingView = ref(null)
 watch(view, (nv, ov) => {
-  if (ov) scrollMap[ov] = scrollEl.value ? scrollEl.value.scrollTop : 0
-  pendingView.value = nv
+  if (ov && scrollEl.value) scrollMap[ov] = scrollEl.value.scrollTop
+  nextTick(() => {
+    if (scrollEl.value) scrollEl.value.scrollTop = scrollMap[nv] || 0
+  })
 })
-function restoreScroll() {
-  const v = pendingView.value
-  if (v && scrollEl.value) scrollEl.value.scrollTop = scrollMap[v] || 0
-}
 
 // ---------- 首次运行引导（标记存后端，跨重启稳定） ----------
 const themeList = Object.values(THEMES)
@@ -129,11 +132,14 @@ function winToggleMax() {
 function winClose() { api('win_close').catch(() => {}) }
 
 function onTitleDblclick(e) {
-  if (e.target.closest('.fb-titlebar-actions')) return
+  if (e.target.closest('.fb-tb-right')) return
   winToggleMax()
 }
 
-onMounted(refreshMaximized)
+onMounted(() => {
+  refreshMaximized()
+  window.addEventListener('resize', refreshMaximized)
+})
 
 // 自定义 render-label：当前主题前显示 ✓（n-dropdown 2.45 没有 show-check 属性）
 function renderThemeLabel(option) {
@@ -175,10 +181,14 @@ const components = { dashboard: Dashboard, files: Files, organizer: Organizer, k
 // 全局状态刷新事件
 const refreshKey = ref(0)
 function onGlobalRefresh() { refreshKey.value++ }
+function onGotoView(e) { view.value = e.detail }
 window.addEventListener('fb-refresh', onGlobalRefresh)
-window.addEventListener('fb-goto', (e) => { view.value = e.detail })
+window.addEventListener('fb-goto', onGotoView)
 onUnmounted(() => {
   window.removeEventListener('fb-refresh', onGlobalRefresh)
+  window.removeEventListener('fb-goto', onGotoView)
+  window.removeEventListener('fb-theme', onThemeEvent)
+  window.removeEventListener('resize', refreshMaximized)
 })
 
 // 接收后端 SendTo/右键 文件入库通知：dispatch 事件让 Files.vue 处理
@@ -213,7 +223,7 @@ window.__fbSendToIngest = (names) => {
             </svg>
             <span class="fb-tb-crumb">{{ viewLabel }}</span>
           </div>
-          <div class="fb-tb-right">
+          <div class="fb-tb-right" @mousedown.stop>
             <n-dropdown :value="themeKey" :options="themeOptions" :render-label="renderThemeLabel"
               trigger="click" :show-arrow="false" @select="(k) => setTheme(k)">
               <button class="fb-tb-btn" :title="t('theme.label')">
@@ -277,14 +287,11 @@ window.__fbSendToIngest = (names) => {
             </div>
           </n-layout-sider>
           <n-layout-content content-style="height:100%;overflow:auto" style="background:transparent">
-            <!-- KeepAlive + 过渡：切页保留状态，带轻量淡入动效；
-                 滚动容器自己管理（各页滚动位置独立保存/恢复） -->
+            <!-- KeepAlive 切页保留状态；入场动效由 .fb-page CSS keyframes 驱动，避免 out-in 在隐藏/遮挡 WebView2 中卡死 -->
             <div ref="scrollEl" class="fb-view-scroll">
-              <transition name="fb-view" mode="out-in" @after-enter="restoreScroll">
-                <KeepAlive :max="10">
-                  <component :is="components[view]" :key="view + '-' + refreshKey" />
-                </KeepAlive>
-              </transition>
+              <KeepAlive :max="10">
+                <component :is="components[view]" :key="view + '-' + refreshKey" />
+              </KeepAlive>
             </div>
           </n-layout-content>
         </n-layout>

@@ -101,7 +101,7 @@ class _Handler(FileSystemEventHandler):
 
     def on_moved(self, event):
         if event.is_directory:
-            self.engine.remove_dir(event.src_path)
+            self.engine.move_dir(event.src_path, event.dest_path)
         else:
             self.engine.move(event.src_path, event.dest_path)
 
@@ -194,6 +194,9 @@ class WatchEngine:
     def remove_dir(self, path):
         self._queue.put(("removed_dir", path, None))
 
+    def move_dir(self, src, dst):
+        self._queue.put(("moved_dir", src, dst))
+
     def move(self, src, dst):
         if not is_temp_file(dst) and not _is_app_internal(dst):
             with self._lock:
@@ -218,10 +221,33 @@ class WatchEngine:
             # 1s：文件稳定判定本身要 3s，无需 0.5s 高频轮询（降低空闲唤醒）
             time.sleep(1.0)
 
+    def _clean_under_dir(self, dir_path):
+        """目录被删除或移走时，同步清理其下的知识库文件与图片语义索引。"""
+        prefix = fileindex.like_dir_prefix(dir_path)
+        conn = _db.get_conn()
+        try:
+            kb_ids = [r["id"] for r in conn.execute(
+                "SELECT id FROM kb_files WHERE path LIKE ? ESCAPE '\\'", (prefix,)
+            ).fetchall()]
+            if kb_ids:
+                marks = ",".join("?" * len(kb_ids))
+                conn.execute(f"DELETE FROM chunks WHERE file_id IN ({marks})", kb_ids)
+                conn.execute(f"DELETE FROM kb_files WHERE id IN ({marks})", kb_ids)
+            img_del = conn.execute(
+                "DELETE FROM img_index WHERE path LIKE ? ESCAPE '\\'", (prefix,)
+            ).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        if kb_ids:
+            _db.vec_index.invalidate()
+        if img_del:
+            _db.img_vec_index.invalidate()
+
     def _drain_queue(self):
         while True:
             try:
-                kind, path, _ = self._queue.get_nowait()
+                kind, path, extra = self._queue.get_nowait()
             except queue.Empty:
                 return
             try:
@@ -234,8 +260,26 @@ class WatchEngine:
                         self.on_removed(path)
                 elif kind == "removed_dir":
                     fileindex.remove_under(path)
+                    self._clean_under_dir(path)
+                elif kind == "moved_dir":
+                    fileindex.remove_under(path)
+                    self._clean_under_dir(path)
+                    if extra and not _is_app_internal(extra) and os.path.isdir(extra):
+                        from backend.core import scanner as _scanner
+                        for fi in _scanner.iter_scan_folder(extra, max_files=20000):
+                            p = fi["path"]
+                            if is_temp_file(p) or _is_app_internal(p):
+                                continue
+                            cat = fileindex.upsert_file(p)
+                            if cat:
+                                ext = fi.get("ext") or ""
+                                if ext in _DOC_EXTS:
+                                    self._doc_queue.append(p)
+                                elif ext in fileindex.IMAGE_EXTS:
+                                    self._img_queue.append(p)
                 if self.on_event:
-                    self.on_event(kind, path, None)
+                    self.on_event("added" if kind == "moved_dir" else kind,
+                                  extra if kind == "moved_dir" and extra else path, None)
             except Exception as e:
                 # 单个事件失败不能断整个监控，但也不能无声：留痕便于发现索引漂移
                 _log(f"event {kind} error {path!r}: {e!r}")
@@ -317,7 +361,7 @@ class WatchEngine:
 
 # 可自动进知识库的文档扩展名（与 knowledge.parsers.SUPPORTED 一致；此处复制避免 core→knowledge 依赖）
 _DOC_EXTS = {
-    "pdf", "docx", "pptx", "xlsx", "doc", "md", "markdown", "txt", "csv", "eml",
+    "pdf", "docx", "pptx", "xlsx", "md", "markdown", "txt", "csv", "eml",
     "log", "ini", "cfg", "conf", "tsv", "json", "xml", "yaml", "yml", "toml",
     "py", "js", "ts", "jsx", "tsx", "html", "htm", "css", "scss", "java",
     "c", "h", "cpp", "hpp", "cs", "go", "rs", "rb", "php", "swift", "sh",

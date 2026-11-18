@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onUnmounted, h, onMounted } from 'vue'
+import { ref, computed, onUnmounted, h, onMounted, onActivated, onDeactivated } from 'vue'
 import {
   NCard, NButton, NSpace, NInput, NTag, NDataTable, NEmpty, NSpin, NAlert,
   NRadioGroup, NRadioButton, NPagination, NModal, NTooltip, useMessage, NProgress, NSelect,
@@ -74,23 +74,42 @@ async function renameTag(tg) {
   message.success(t('files.msg.tagRenamed'))
 }
 
+function initRowTagSel(r) {
+  const names = (r.tags || '').split('|').filter(Boolean)
+  tagSel.value[r.path] = tagOptions.value.filter((o) => names.includes(o.label)).map((o) => o.value)
+}
+
+function createTag(label) {
+  const trimmed = (label || '').trim()
+  return { label: trimmed, value: 'new:' + trimmed }
+}
+
 async function saveTags(r) {
-  const ids = tagSel.value[r.path] || []
+  const raw = tagSel.value[r.path] || []
+  const ids = []
+  let createdAny = false
+  for (const v of raw) {
+    if (typeof v === 'string' && v.startsWith('new:')) {
+      const name = v.slice(4).trim()
+      if (name) {
+        const added = await api('add_tag', name)
+        if (added && added.id) { ids.push(added.id); createdAny = true }
+      }
+    } else if (v != null) {
+      ids.push(v)
+    }
+  }
+  if (createdAny) await loadTags()
   const ok = await api('set_file_tags', r.path, ids)
   if (ok && ok.ok !== false) {
     const names = tagOptions.value.filter((o) => ids.includes(o.value)).map((o) => o.label)
     r.tags = names.length ? names.join('|') : null
+    tagSel.value[r.path] = ids
     message.success(names.length ? t('files.msg.tagSaved') : t('files.msg.tagCleared'))
     loadTags()
   } else {
     message.error(t('files.msg.saveFailed'))
   }
-}
-
-async function createTag(label) {
-  const r = await api('add_tag', label)
-  await loadTags()
-  return r.id
 }
 
 // ---------- 保存的智能筛选 ----------
@@ -121,6 +140,7 @@ async function saveCurrentSearch() {
 function applySaved(s) {
   query.value = s.query
   currentDir.value = null
+  page.value = 1
   refresh()
   searchContent()
 }
@@ -179,6 +199,7 @@ const checkedRows = ref([])
 const renameModal = ref(false)
 const renameMode = ref('seq')
 const renamePrefix = ref(t('files.defaultPrefix'))
+const renameTpl = ref('{date}_{name}_{seq:02}')
 const renameStart = ref(1)
 const renameFind = ref('')
 const renameReplace = ref('')
@@ -230,23 +251,80 @@ function startSingleRename(path) {
   renameModal.value = true
 }
 
+function _splitFileParts(it) {
+  const full = baseName(it.path)
+  const dot = full.lastIndexOf('.')
+  if (dot > 0) return { stem: full.slice(0, dot), ext: full.slice(dot + 1) }
+  return { stem: full, ext: '' }
+}
+
+function _fmtDateYmd(ts) {
+  const d = ts ? new Date(ts * 1000) : new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function _parentName(p) {
+  const parts = (p || '').split(/[\\/]/).filter(Boolean)
+  return parts.length >= 2 ? parts[parts.length - 2].replace(':', '') : 'root'
+}
+
 function genRenameRows() {
   if (renameMode.value === 'single') return  // 单文件：保持预填行，用户在输入框里改
   const sel = checkedRowObjs()
   if (renameMode.value === 'seq') {
-    renameRows.value = sel.map((it, i) => ({
-      src: it.path,
-      new_name: renamePrefix.value + (renameStart.value + i) + '.' + it.ext,
-    }))
-  } else {
-    renameRows.value = sel.map((it) => ({
-      src: it.path,
-      new_name: it.name.replaceAll(renameFind.value || '', renameReplace.value),
-    }))
+    renameRows.value = sel.map((it, i) => {
+      const { ext } = _splitFileParts(it)
+      return {
+        src: it.path,
+        new_name: renamePrefix.value + ((renameStart.value ?? 1) + i) + (ext ? '.' + ext : ''),
+      }
+    })
+  } else if (renameMode.value === 'tpl') {
+    const tpl = (renameTpl.value || '{name}_{seq:02}').trim() || '{name}_{seq:02}'
+    renameRows.value = sel.map((it, i) => {
+      const { stem, ext } = _splitFileParts(it)
+      const seqNum = (renameStart.value ?? 1) + i
+      let out = tpl
+        .replace(/\{date\}/gi, _fmtDateYmd(it.photo_time || it.mtime))
+        .replace(/\{parent\}/gi, _parentName(it.path))
+        .replace(/\{name\}/gi, stem)
+        .replace(/\{seq:0?(\d+)\}/gi, (_, w) => String(seqNum).padStart(Math.min(8, Number(w) || 1), '0'))
+        .replace(/\{seq\}/gi, String(seqNum))
+      if (ext && !out.toLowerCase().endsWith('.' + ext.toLowerCase())) {
+        out += '.' + ext
+      }
+      return { src: it.path, new_name: out }
+    })
+  } else if (renameMode.value === 'replace') {
+    renameRows.value = sel.map((it) => {
+      const full = it.name || baseName(it.path)
+      return {
+        src: it.path,
+        new_name: renameFind.value ? full.replaceAll(renameFind.value, renameReplace.value) : full,
+      }
+    })
   }
 }
 
+const _ILLEGAL_NAME_RE = /[\\/:*?"<>|]/
+const renameWarn = computed(() => {
+  let illegal = 0
+  let dup = 0
+  const seen = new Set()
+  for (const r of renameRows.value) {
+    const nm = (r.new_name || '').trim()
+    if (!nm) continue
+    if (_ILLEGAL_NAME_RE.test(nm)) illegal++
+    const dir = (r.src || '').replace(/[\\/][^\\/]*$/, '').toLowerCase()
+    const key = dir + '/' + nm.toLowerCase()
+    if (seen.has(key)) dup++
+    else seen.add(key)
+  }
+  return { illegal, dup }
+})
+
 async function doRename() {
+  if (renameWarn.value.illegal > 0) return
   const rows = renameRows.value
     .filter((r) => r.new_name && r.new_name.trim() && r.new_name.trim() !== baseName(r.src))
     .map((r) => ({ src: r.src, new_name: r.new_name.trim() }))
@@ -366,7 +444,7 @@ function openMenu(e, row) {
 function menuPaths() {
   const row = menuRow.value
   if (row && checkedRows.value.includes(row.path) && checkedRows.value.length > 1) {
-    return checkedRows.value.map((x) => x.path)
+    return [...checkedRows.value]
   }
   return [row.path]
 }
@@ -468,6 +546,7 @@ const historyOptions = computed(() =>
   searchHistory.value.map((h) => ({ label: h, value: h })))
 function pickHistory(v) {
   query.value = v
+  page.value = 1
   refresh()
   searchContent()
 }
@@ -475,7 +554,11 @@ function pickHistory(v) {
 // 目录树 → 点击过滤（path: 语法，searchContent 会对 path: 前缀做内容搜索，无需内容匹配时跳过）
 function pickDir(dir) {
   currentDir.value = dir || null
-  query.value = dir ? `path:${dir}` : ''
+  if (!dir) {
+    query.value = ''
+  } else {
+    query.value = /\s/.test(dir) ? `path:"${dir}"` : `path:${dir}`
+  }
   page.value = 1
   refresh()
   if (dir) searchContent()
@@ -521,6 +604,7 @@ function onQueryInput() {
     currentDir.value = null
     contentResults.value = null
   }
+  page.value = 1
   clearTimeout(searchTimer)
   // 120ms：Everything 式「输入即结果」——防抖过长会打断打字节奏
   searchTimer = setTimeout(() => {
@@ -629,12 +713,12 @@ function dayLabel(d) {
   return t('files.dayYear', { y: s.getFullYear(), date, w })
 }
 
-// 按本地日期分组（时间线视图用）；items 已由后端按 mtime 倒序返回
+// 按本地日期分组（时间线视图用；图片优先用 EXIF photo_time）
 const groupedByDay = computed(() => {
   const out = []
   const map = new Map()
   for (const it of items.value) {
-    const d = new Date((it.mtime || 0) * 1000)
+    const d = new Date(((it.photo_time || it.mtime) || 0) * 1000)
     const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
     if (!map.has(key)) {
       const g = { key, label: dayLabel(d), items: [] }
@@ -666,7 +750,9 @@ async function exportCsv() {
   exporting.value = false
 }
 
+let refreshSeq = 0
 async function refresh() {
+  const seq = ++refreshSeq
   loading.value = true
   try {
     if (!thumbBase.value) {
@@ -675,19 +761,30 @@ async function refresh() {
       const tb = await api('thumb_base')
       thumbBase.value = tb.base
     }
-    const r = await api('browse_files', query.value || null, category.value, null,
+    let r = await api('browse_files', query.value || null, category.value, null,
       (page.value - 1) * pageSize, pageSize, sortBy.value, sortOrder.value,
       tagFilter.value.length ? tagFilter.value : null,
       mtimeRange.value.from, mtimeRange.value.to)
+    if (seq !== refreshSeq) return
+    // 页码越界自愈（如在末页删除文件或筛选缩小后当前页为空）：自动退回最后一页重取
+    if (!r.items.length && r.total > 0 && page.value > 1) {
+      page.value = Math.max(1, Math.ceil(r.total / pageSize))
+      r = await api('browse_files', query.value || null, category.value, null,
+        (page.value - 1) * pageSize, pageSize, sortBy.value, sortOrder.value,
+        tagFilter.value.length ? tagFilter.value : null,
+        mtimeRange.value.from, mtimeRange.value.to)
+      if (seq !== refreshSeq) return
+    }
     items.value = r.items
     total.value = r.total
     totalCapped.value = !!r.total_capped
   } catch (e) {
+    if (seq !== refreshSeq) return
     // SQLite 错误（IntegrityError 等）通常是临时状态，只 console 不打扰用户
     console.error('refresh failed:', e)
     message.warning(t('files.msg.listFail'))
   }
-  loading.value = false
+  if (seq === refreshSeq) loading.value = false
 }
 
 function pickCategory(c) {
@@ -699,7 +796,17 @@ function pickCategory(c) {
 const CATEGORIES = ['文档', '图片', '视频', '音频', '压缩包', '安装包', '代码', '数据', '字体', '其他']
 // 分类值是后端返回的中文常量，只翻译显示，筛选仍按原值传（catLabel 见 lib/i18n）
 
-const isImg = (it) => ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'ico', 'svg', 'tiff', 'heic'].includes(it.ext)
+const isImg = (it) => ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'ico', 'svg', 'tif', 'tiff', 'heic', 'heif'].includes((it.ext || '').toLowerCase())
+// 缩略图容错：Pillow 不解 SVG，且破损图 / 监控根外的 SendTo 文件 /thumb 会回 403/404，
+// 失败路径记入 brokenThumbs 自动回退彩色扩展名徽章，杜绝界面出现碎图图标
+const brokenThumbs = ref(new Set())
+const canThumb = (it) => isImg(it) && (it.ext || '').toLowerCase() !== 'svg' && !!thumbBase.value && !brokenThumbs.value.has(it.path)
+function markThumbBroken(p) {
+  if (!p || brokenThumbs.value.has(p)) return
+  const next = new Set(brokenThumbs.value)
+  next.add(p)
+  brokenThumbs.value = next
+}
 
 const thumbUrl = (it) => `${thumbBase.value}/thumb?p=${encodeURIComponent(it.path)}`
 const previewUrl = (it) => `${thumbBase.value}/preview?p=${encodeURIComponent(it.path)}`
@@ -732,7 +839,11 @@ const summaryText = ref(null)   // {ok, summary?, error?}
 
 // AI 总结仅对"可文本提取"格式开放（与 backend/knowledge/parsers.py SUPPORTED 对齐）。
 // png/jpg/mp4 等二进制/媒体文件不显示该按钮，避免误导用户。
-const SUMMARY_EXTS = new Set(['pdf', 'docx', 'pptx', 'xlsx', 'txt'])
+const SUMMARY_EXTS = new Set([
+  'pdf', 'docx', 'pptx', 'xlsx', 'txt', 'md', 'markdown', 'rst', 'log',
+  'csv', 'tsv', 'json', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'xml', 'html', 'htm', 'eml',
+  'py', 'js', 'ts', 'vue', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'cs', 'sql', 'sh', 'ps1', 'bat',
+])
 const canSummarize = computed(() => {
   const p = filePreview.value?.path
   if (!p) return false
@@ -765,13 +876,16 @@ async function copySummary() {
 
 async function previewFile(it, opts = {}) {
   previewLoading.value = true
+  summaryText.value = null               // 切换文件时清空上一份文档的 AI 摘要
   previewQuery.value = opts.q || ''      // 只有从内容搜索进来才高亮，普通打开不留旧词
   try {
     const r = await api('preview_file', it.path)
-    if (r.type === 'image' || r.type === 'pdf') {
-      r.url = `http://127.0.0.1:${thumbBase.value.split(':').pop()}/preview?p=${encodeURIComponent(it.path)}`
+    if ((r.type === 'image' || r.type === 'pdf') && !r.url && thumbBase.value) {
+      r.url = `${thumbBase.value}/preview?p=${encodeURIComponent(it.path)}`
+    }
+    if (r.type === 'pdf' && r.url && opts.page) {
       // PDF 命中页码：Chromium 内置阅读器认 #page=N（片断不发往服务端）
-      if (r.type === 'pdf' && opts.page) r.url += `#page=${opts.page}`
+      r.url += `#page=${opts.page}`
     }
     r.path = it.path
     filePreview.value = r
@@ -801,8 +915,9 @@ const previewHits = computed(() => {
 })
 
 function renderMd(src) {
-  // 轻量 Markdown 渲染（无外部依赖）：标题/加粗/代码/链接/列表
-  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // 轻量 Markdown 渲染（无外部依赖）：转义引号 + 仅放行 http(s)/mailto 外链
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   let html = esc(src)
   html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre class="md-code">${code}</pre>`)
   html = html.replace(/^###### (.*)$/gm, '<h6>$1</h6>').replace(/^##### (.*)$/gm, '<h5>$1</h5>')
@@ -811,13 +926,28 @@ function renderMd(src) {
   html = html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>')
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
   html = html.replace(/^[-*] (.*)$/gm, '• $1')
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => {
+    if (/^(https?:\/\/|mailto:)/i.test(url)) {
+      return `<a href="${url}" data-ext-link="1">${label}</a>`
+    }
+    return `${label} (${url})`
+  })
   return html
 }
 
-// ---------- 快捷键 ----------
+function onMdClick(e) {
+  const a = e.target?.closest?.('a[data-ext-link]')
+  if (!a) return
+  e.preventDefault()
+  const href = a.getAttribute('href')
+  if (href) api('open_url', href)
+}
+
+// ---------- 快捷键（仅在本页激活且快速唤起层未打开时响应，防止 KeepAlive 下跨页劫持按键） ----------
+const isActive = ref(true)
 const searchInput = ref(null)
 function onKeydown(e) {
+  if (!isActive.value || document.querySelector('.fb-ql-backdrop')) return
   const tag = e.target?.tagName
   const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
@@ -899,6 +1029,7 @@ function onKeydown(e) {
 // Space 的开/关都在 keyup 处理：keydown 阶段复选框尚未消费空格，
 // 此时切状态会被 keyup 的默认激活行为立刻翻回去
 function onKeyUp(e) {
+  if (!isActive.value || document.querySelector('.fb-ql-backdrop')) return
   if (e.key !== ' ') return
   const tag = e.target?.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return
@@ -917,6 +1048,15 @@ function onKeyUp(e) {
   const row = items.value.find((x) => x.path === p) || { path: p }
   isImg(row) ? openPreview(row) : previewFile(row)
 }
+onActivated(() => {
+  isActive.value = true
+  loadTags()
+  loadFavs()
+})
+onDeactivated(() => {
+  isActive.value = false
+  menuShow.value = false
+})
 onMounted(() => {
   // 捕获阶段：赶在聚焦的复选框等控件消费按键之前处理列表快捷键
   window.addEventListener('keydown', onKeydown, true)
@@ -956,17 +1096,25 @@ const rowProps = (row) => ({
 // 内容搜索（知识库文档 + 图片语义描述）
 const contentResults = ref(null)
 const contentLoading = ref(false)
+let contentSeq = 0
 async function searchContent() {
   if (!query.value.trim()) {
+    contentSeq++
     contentResults.value = null
+    contentLoading.value = false
     return
   }
+  const seq = ++contentSeq
   contentLoading.value = true
   try {
     const r = await api('global_search', query.value)
+    if (seq !== contentSeq) return
     contentResults.value = r.content
-  } catch (e) { message.error(String(e)) }
-  contentLoading.value = false
+  } catch (e) {
+    if (seq !== contentSeq) return
+    message.error(String(e))
+  }
+  if (seq === contentSeq) contentLoading.value = false
 }
 // 内容命中：图片走灯箱，其余走内置预览；PDF 按命中块的 [第N页] 直接定位
 function openContentFile(p, hint) {
@@ -976,7 +1124,7 @@ function openContentFile(p, hint) {
     q: (query.value || '').trim() })
 }
 function isContentImg(r) {
-  return r.type === 'image' || /\.(jpe?g|png|gif|bmp|webp)$/i.test(r.file_path || '')
+  return r.type === 'image' || /\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?)$/i.test(r.file_path || '')
 }
 const contentThumb = (r) => thumbBase.value ? `${thumbBase.value}/thumb?p=${encodeURIComponent(r.file_path)}` : ''
 function openPreviewByPath(p) {
@@ -990,9 +1138,9 @@ const _HUES = CATEGORY_HUES
 // 列表列
 const columns = computed(() => [
   { title: ' ', key: 'thumb', width: 56,
-    render: (r) => isImg(r)
+    render: (r) => canThumb(r)
       ? h('div', { class: 'fb-row-thumb' },
-          h('img', { src: thumbUrl(r), loading: 'lazy', alt: r.name }))
+          h('img', { src: thumbUrl(r), loading: 'lazy', alt: '', onError: () => markThumbBroken(r.path) }))
       : h('div', {
           class: 'fb-ext-badge',
           style: { '--h': String(_HUES[r.category] || 220) },
@@ -1012,7 +1160,10 @@ const columns = computed(() => [
   { title: t('files.col.category'), key: 'category', width: 90, render: (r) => h(NTag, { size: 'small', bordered: false }, { default: () => catLabel(r.category) }) },
   { title: t('files.col.size'), key: 'size', width: 100, render: (r) => fmtSize(r.size) },
   { title: t('files.col.mtime'), key: 'mtime', width: 160, render: (r) => new Date(r.mtime * 1000).toLocaleString() },
-  { title: t('files.col.tags'), key: 'tags', width: 140, render: (r) => h(NPopover, { trigger: 'click', placement: 'left' }, {
+  { title: t('files.col.tags'), key: 'tags', width: 140, render: (r) => h(NPopover, {
+      trigger: 'click', placement: 'left',
+      onUpdateShow: (v) => { if (v) initRowTagSel(r) },
+    }, {
       trigger: () => h('span', {
         style: 'cursor:pointer;font-size:12px;color:#5a9cf8;display:inline-block;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
         title: t('files.tag.editHint'),
@@ -1052,70 +1203,74 @@ refresh()
   <div class="fb-page">
     <n-card>
       <n-space vertical size="large">
-        <!-- 搜索栏 -->
-        <n-space :wrap="false" align="center" class="fb-search">
-          <n-auto-complete v-model:value="query" :options="historyOptions" size="large"
-            :style="{ flex: 1 }" clearable round
-            :placeholder="t('files.ph.search')"
-            @select="pickHistory" @update:value="onQueryInput"
-            @keydown.enter="onSearchEnter">
-            <template #prefix>
-              <n-icon :component="SearchOutline" size="15" style="opacity:.45" />
-            </template>
-          </n-auto-complete>
-          <n-select v-model:value="sortBy" :options="sortOptions" size="small" style="width:112px"
-            @update:value="() => { page = 1; refresh() }" />
-          <n-select v-model:value="sortOrder" :options="orderOptions" size="small" style="width:88px"
-            @update:value="() => { page = 1; refresh() }" />
-          <n-select v-model:value="tagFilter" :options="tagOptions" multiple size="small"
-            style="width:150px" :placeholder="t('files.ph.tagFilter')" clearable
-            @update:value="() => { page = 1; refresh() }" />
-          <n-popover trigger="click" placement="bottom" :width="300" v-model:show="showTagMgr">
-            <template #trigger>
-              <n-button size="small" secondary>🏷</n-button>
-            </template>
-            <div v-if="tagList.length" style="max-height:300px;overflow:auto">
-              <div v-for="tg in tagList" :key="tg.id"
-                style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed rgba(127,127,127,.2)">
-                <span style="flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                  {{ tg.name }}<n-text depth="3" style="font-size:11px">（{{ tg.c }}）</n-text>
-                </span>
-                <n-button size="tiny" quaternary @click="renameTag(tg)">{{ t('files.tag.rename') }}</n-button>
-                <n-button size="tiny" quaternary type="error" @click="deleteTag(tg)">{{ t('files.tag.del') }}</n-button>
-              </div>
-            </div>
-            <n-empty v-else size="small" :description="t('files.tag.empty')" style="padding:14px 0" />
-          </n-popover>
-          <n-popover trigger="click" placement="bottom-end" :width="460">
-            <template #trigger>
-              <n-button size="small" secondary>
-                {{ t('files.fav.title') }}{{ favList.length ? ' ' + favList.length : '' }}
-              </n-button>
-            </template>
-            <div v-if="favList.length" style="max-height:320px;overflow:auto">
-              <div v-for="f in favList" :key="f.path"
-                style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed rgba(127,127,127,.2)">
-                <div style="flex:1;min-width:0">
-                  <div class="mono" style="cursor:pointer;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                    :title="f.path" @click="openFav(f.path)">{{ f.path }}</div>
-                  <div v-if="f.note" style="font-size:11.5px;opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                    :title="f.note">{{ f.note }}</div>
+        <!-- 搜索栏（响应式两段式弹性布局，窄窗/高缩放比例下自动换行不挤扁输入框） -->
+        <div class="fb-toolbar">
+          <div class="fb-toolbar-search">
+            <n-auto-complete ref="searchInput" v-model:value="query" :options="historyOptions" size="large"
+              clearable round
+              :placeholder="t('files.ph.search')"
+              @select="pickHistory" @update:value="onQueryInput"
+              @keydown.enter="onSearchEnter">
+              <template #prefix>
+                <n-icon :component="SearchOutline" size="15" style="opacity:.45" />
+              </template>
+            </n-auto-complete>
+          </div>
+          <div class="fb-toolbar-controls">
+            <n-select v-model:value="sortBy" :options="sortOptions" size="small" style="width:112px"
+              @update:value="() => { page = 1; refresh() }" />
+            <n-select v-model:value="sortOrder" :options="orderOptions" size="small" style="width:88px"
+              @update:value="() => { page = 1; refresh() }" />
+            <n-select v-model:value="tagFilter" :options="tagOptions" multiple size="small"
+              style="width:146px" :placeholder="t('files.ph.tagFilter')" clearable
+              @update:value="() => { page = 1; refresh() }" />
+            <n-popover trigger="click" placement="bottom" :width="300" v-model:show="showTagMgr">
+              <template #trigger>
+                <n-button size="small" secondary>🏷</n-button>
+              </template>
+              <div v-if="tagList.length" style="max-height:300px;overflow:auto">
+                <div v-for="tg in tagList" :key="tg.id"
+                  style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed rgba(127,127,127,.2)">
+                  <span style="flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    {{ tg.name }}<n-text depth="3" style="font-size:11px">（{{ tg.c }}）</n-text>
+                  </span>
+                  <n-button size="tiny" quaternary @click="renameTag(tg)">{{ t('files.tag.rename') }}</n-button>
+                  <n-button size="tiny" quaternary type="error" @click="deleteTag(tg)">{{ t('files.tag.del') }}</n-button>
                 </div>
-                <n-button size="tiny" quaternary @click="editFavNote(f)">{{ t('files.fav.note') }}</n-button>
-                <n-button size="tiny" quaternary @click="removeFav(f.path)">{{ t('files.fav.remove') }}</n-button>
               </div>
-            </div>
-            <n-empty v-else size="small" :description="t('files.fav.empty')" style="padding:18px 0" />
-          </n-popover>
-          <n-button size="small" secondary :loading="exporting" @click="exportCsv">
-            {{ t('files.toolbar.exportCsv') }}
-          </n-button>
-          <n-radio-group :value="viewMode" size="small" @update:value="setViewMode">
-            <n-radio-button value="list">{{ t('files.toolbar.list') }}</n-radio-button>
-            <n-radio-button value="grid">{{ t('files.toolbar.grid') }}</n-radio-button>
-            <n-radio-button value="timeline">{{ t('files.toolbar.timeline') }}</n-radio-button>
-          </n-radio-group>
-        </n-space>
+              <n-empty v-else size="small" :description="t('files.tag.empty')" style="padding:14px 0" />
+            </n-popover>
+            <n-popover trigger="click" placement="bottom-end" :width="460">
+              <template #trigger>
+                <n-button size="small" secondary>
+                  {{ t('files.fav.title') }}{{ favList.length ? ' ' + favList.length : '' }}
+                </n-button>
+              </template>
+              <div v-if="favList.length" style="max-height:320px;overflow:auto">
+                <div v-for="f in favList" :key="f.path"
+                  style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed rgba(127,127,127,.2)">
+                  <div style="flex:1;min-width:0">
+                    <div class="mono" style="cursor:pointer;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                      :title="f.path" @click="openFav(f.path)">{{ f.path }}</div>
+                    <div v-if="f.note" style="font-size:11.5px;opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                      :title="f.note">{{ f.note }}</div>
+                  </div>
+                  <n-button size="tiny" quaternary @click="editFavNote(f)">{{ t('files.fav.note') }}</n-button>
+                  <n-button size="tiny" quaternary @click="removeFav(f.path)">{{ t('files.fav.remove') }}</n-button>
+                </div>
+              </div>
+              <n-empty v-else size="small" :description="t('files.fav.empty')" style="padding:18px 0" />
+            </n-popover>
+            <n-button size="small" secondary :loading="exporting" @click="exportCsv">
+              {{ t('files.toolbar.exportCsv') }}
+            </n-button>
+            <n-radio-group :value="viewMode" size="small" @update:value="setViewMode">
+              <n-radio-button value="list">{{ t('files.toolbar.list') }}</n-radio-button>
+              <n-radio-button value="grid">{{ t('files.toolbar.grid') }}</n-radio-button>
+              <n-radio-button value="timeline">{{ t('files.toolbar.timeline') }}</n-radio-button>
+            </n-radio-group>
+          </div>
+        </div>
 
         <!-- 扫描进度 -->
         <div v-if="scanning" class="fb-scanbar">
@@ -1219,8 +1374,9 @@ refresh()
                   @dblclick="openItem(r)">
                   <div class="fb-grid-check" :class="{ on: isChecked(r.path) }" :title="t('files.grid.select')"
                     @click.stop="toggleCheck(r.path)">{{ isChecked(r.path) ? '✓' : '' }}</div>
-                  <span class="fb-tltime mono">{{ fmtClock(r.mtime) }}</span>
-                  <img v-if="isImg(r)" :src="thumbUrl(r)" class="fb-tlthumb" loading="lazy" alt="" />
+                  <span class="fb-tltime mono">{{ fmtClock(r.photo_time || r.mtime) }}</span>
+                  <img v-if="canThumb(r)" :src="thumbUrl(r)" class="fb-tlthumb" loading="lazy" alt=""
+                    @error="markThumbBroken(r.path)" />
                   <span v-else class="fb-ext-badge fb-tlbadge"
                     :style="{ '--h': String(_HUES[r.category] || 220) }">
                     {{ (r.ext || 'file').slice(0, 3).toUpperCase() }}
@@ -1243,7 +1399,7 @@ refresh()
             @dblclick="openItem(r)">
                   <div class="fb-grid-check" :class="{ on: isChecked(r.path) }" :title="t('files.grid.select')"
                     @click.stop="toggleCheck(r.path)">{{ isChecked(r.path) ? '✓' : '' }}</div>
-            <img v-if="isImg(r)" :src="thumbUrl(r)" loading="lazy" alt="" />
+            <img v-if="canThumb(r)" :src="thumbUrl(r)" loading="lazy" alt="" @error="markThumbBroken(r.path)" />
             <div v-else class="fb-ext-badge fb-grid-badge"
               :style="{ '--h': String(_HUES[r.category] || 220) }">
               {{ (r.ext || 'file').slice(0, 4).toUpperCase() }}
@@ -1271,25 +1427,28 @@ refresh()
         <n-card v-if="contentResults && (contentResults.results.length || contentResults.images.length)"
           size="small" :title="t('files.content.title')">
           <template #header-extra>
-            <n-tag size="small" :type="contentResults.mode === 'vector' ? 'success' : 'warning'">
-              {{ contentResults.mode === 'vector' ? t('files.content.semantic') : t('files.content.keyword') }}
+            <n-tag size="small" :type="['hybrid', 'vector'].includes(contentResults.mode) ? 'success' : (contentResults.mode === 'fts' ? 'info' : 'warning')">
+              {{ contentResults.mode === 'hybrid' ? t('files.content.hybrid')
+                : contentResults.mode === 'vector' ? t('files.content.semantic') : t('files.content.keyword') }}
             </n-tag>
           </template>
           <!-- 图片语义命中 -->
           <div v-if="contentResults.images.length" class="content-imgs">
             <div v-for="(img, i) in contentResults.images" :key="i" class="thumb-card"
               style="width:150px" @click="openPreviewByPath(img.file_path)" :title="img.descr || img.text">
-              <img :src="contentThumb(img)" loading="lazy" />
+              <img v-if="!brokenThumbs.has(img.file_path)" :src="contentThumb(img)" loading="lazy" alt=""
+                @error="markThumbBroken(img.file_path)" />
+              <div v-else class="fb-ext-badge fb-grid-badge" style="--h:152">IMG</div>
               <div class="thumb-name">{{ (img.file_path.split(/[\\/]/).pop()) }}</div>
             </div>
           </div>
           <div style="max-height:300px;overflow:auto">
             <div v-for="(r, i) in contentResults.results" :key="i"
-              style="padding:6px 0;border-bottom:1px dashed #eee">
-              <n-text class="mono" style="cursor:pointer;color:#5a9cf8" @click="openContentFile(r.file_path, r.text)">
+              style="padding:6px 0;border-bottom:1px dashed var(--fb-border, rgba(127,127,127,.22))">
+              <n-text class="mono" style="cursor:pointer;color:var(--fb-accent, #5a9cf8)" @click="openContentFile(r.file_path, r.text)">
                 📄 {{ r.file_path }}
               </n-text>
-              <div style="color:#666;font-size:12px;margin-top:2px">{{ (r.text || '').slice(0, 160) }}…</div>
+              <div style="color:var(--fb-text-dim, rgba(127,127,127,.78));font-size:12px;margin-top:2px">{{ (r.text || '').slice(0, 160) }}…</div>
             </div>
           </div>
         </n-card>
@@ -1365,6 +1524,7 @@ refresh()
       <n-space vertical>
         <n-radio-group :value="renameMode" @update:value="(v) => { renameMode = v; genRenameRows() }">
           <n-radio-button value="seq">{{ t('files.rename.seq') }}</n-radio-button>
+          <n-radio-button value="tpl">{{ t('files.rename.tpl') }}</n-radio-button>
           <n-radio-button value="replace">{{ t('files.rename.replace') }}</n-radio-button>
           <n-radio-button value="ai">{{ t('files.rename.ai') }}</n-radio-button>
           <n-radio-button v-if="renameMode === 'single'" value="single">{{ t('files.rename.single') }}</n-radio-button>
@@ -1375,6 +1535,16 @@ refresh()
           <n-input-number v-model:value="renameStart" :min="0" :max="99999" style="width:110px" />
           <n-button size="small" @click="genRenameRows">{{ t('files.rename.gen') }}</n-button>
         </n-space>
+
+        <div v-else-if="renameMode === 'tpl'">
+          <n-space align="center">
+            <n-input v-model:value="renameTpl" :placeholder="t('files.rename.tplPh')" style="width:290px" class="mono"
+              @keyup.enter="genRenameRows" />
+            <n-input-number v-model:value="renameStart" :min="0" :max="99999" style="width:105px" />
+            <n-button size="small" @click="genRenameRows">{{ t('files.rename.gen') }}</n-button>
+          </n-space>
+          <n-text depth="3" style="font-size:11.5px;display:block;margin-top:4px">{{ t('files.rename.tplHint') }}</n-text>
+        </div>
 
         <n-space v-else-if="renameMode === 'replace'" align="center">
           <n-input v-model:value="renameFind" :placeholder="t('files.ph.find')" style="width:200px" />
@@ -1401,9 +1571,16 @@ refresh()
             }) },
         ]" :data="renameRows" :max-height="380" size="small" :row-key="(r) => r.src" />
 
+        <n-alert v-if="renameWarn.illegal > 0" type="error" :bordered="false" style="font-size:12px">
+          {{ t('files.rename.warnIllegal', { n: renameWarn.illegal }) }}
+        </n-alert>
+        <n-alert v-else-if="renameWarn.dup > 0" type="warning" :bordered="false" style="font-size:12px">
+          {{ t('files.rename.warnDup', { n: renameWarn.dup }) }}
+        </n-alert>
+
         <n-space justify="end">
           <n-button @click="renameModal = false">{{ t('files.rename.cancel') }}</n-button>
-          <n-button type="primary" :disabled="!renameRows.length" @click="doRename">
+          <n-button type="primary" :disabled="!renameRows.length || renameWarn.illegal > 0" @click="doRename">
             {{ t('files.rename.run', { n: renameRows.length }) }}
           </n-button>
         </n-space>
@@ -1426,7 +1603,7 @@ refresh()
           <span style="white-space:pre-wrap">{{ summaryText.ok ? summaryText.summary : summaryText.error }}</span>
         </n-alert>
         <div v-if="filePreview?.type === 'markdown'" class="md-body"
-          v-html="renderMd(filePreview.content)"></div>
+          v-html="renderMd(filePreview.content)" @click="onMdClick"></div>
         <div v-else-if="filePreview?.type === 'html'" class="fb-office"
           v-html="filePreview.content"></div>
         <pre v-else-if="filePreview?.type === 'text'" class="mono"
@@ -1435,6 +1612,8 @@ refresh()
           style="width:100%;height:70vh;border:0;border-radius:6px"></iframe>
         <video v-else-if="filePreview?.type === 'video'" :src="filePreview.url"
           controls autoplay style="width:100%;max-height:68vh;border-radius:8px;background:#000"></video>
+        <audio v-else-if="filePreview?.type === 'audio'" :src="filePreview.url"
+          controls autoplay style="width:100%;margin:24px 0"></audio>
         <div v-else-if="filePreview?.type === 'image'" class="fb-modal-image">
           <img :src="filePreview.url" :alt="filePreview.name" />
         </div>
@@ -1474,9 +1653,10 @@ refresh()
   font-size: 12px;
   margin-left: 8px;
 }
-.fb-office { font-size: 13px; line-height: 1.7; padding: 4px 2px; }
+.fb-office { font-size: 13px; line-height: 1.7; padding: 4px 2px; overflow-x: auto; }
 .fb-office :deep(table) { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 12.5px; }
-.fb-office :deep(td), .fb-office :deep(th) { border: 1px solid rgba(127,127,127,.35); padding: 4px 8px; }
+.fb-office :deep(td), .fb-office :deep(th) { border: 1px solid rgba(127,127,127,.35); padding: 4px 8px; text-align: left; }
+.fb-office :deep(th) { background: rgba(127,127,127,.12); font-weight: 600; }
 .fb-office :deep(h1) { font-size: 1.35em; margin: .5em 0 .25em; }
 .fb-office :deep(h2) { font-size: 1.2em; margin: .5em 0 .25em; }
 .fb-office :deep(h3) { font-size: 1.05em; margin: .6em 0 .2em; }
